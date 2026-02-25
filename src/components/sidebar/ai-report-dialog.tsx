@@ -8,7 +8,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { SignalRadarChart } from './signal-radar-chart';
 import { AlertTriangle } from 'lucide-react';
@@ -110,8 +109,8 @@ export function AiReportDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl h-[85vh] flex flex-col p-0 gap-0">
-        <DialogHeader className="px-6 pt-6 pb-4">
+      <DialogContent className="max-w-5xl w-[95vw] h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
+        <DialogHeader className="px-6 pt-6 pb-4 shrink-0">
           <DialogTitle className="text-xl">
             AI Signal Analysis Report
           </DialogTitle>
@@ -120,10 +119,10 @@ export function AiReportDialog({
           </p>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 px-6 pb-6">
+        <div className="flex-1 overflow-y-auto px-6 pb-6">
           <div className="space-y-6">
-            {/* ── Overview ── */}
-            <div className="grid grid-cols-2 gap-4">
+            {/* Overview */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="rounded-xl border border-border bg-card p-5">
                 <p className={`text-5xl font-bold tabular-nums ${colors.score}`}>
                   {result.compositeScore.toFixed(2)}
@@ -189,13 +188,15 @@ export function AiReportDialog({
               </div>
             </div>
 
-            {/* ── Radar Chart ── */}
+            {/* Radar Chart — larger in the dialog */}
             <div className="rounded-xl border border-border bg-card p-5">
               <h2 className="text-base font-semibold mb-2">Signal Radar</h2>
-              <SignalRadarChart signals={result.signals} />
+              <div style={{ height: 420 }}>
+                <SignalRadarChart signals={result.signals} size="large" />
+              </div>
             </div>
 
-            {/* ── Top Issues ── */}
+            {/* Top Issues */}
             {topIssues.length > 0 && (
               <div className="rounded-xl border border-border bg-card p-5">
                 <div className="flex items-center gap-2 mb-3">
@@ -230,7 +231,7 @@ export function AiReportDialog({
 
             <Separator />
 
-            {/* ── All 21 Signals ── */}
+            {/* All 21 Signals */}
             <div>
               <h2 className="text-base font-semibold mb-3">
                 All 21 Signals
@@ -242,7 +243,7 @@ export function AiReportDialog({
               </div>
             </div>
           </div>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );

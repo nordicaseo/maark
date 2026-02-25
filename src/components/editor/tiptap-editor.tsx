@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
 import type { Editor } from '@tiptap/react';
@@ -28,6 +28,7 @@ interface TiptapEditorProps {
 export function TiptapEditor({ document, onSave, onEditorReady }: TiptapEditorProps) {
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
   const docIdRef = useRef(document.id);
+  const [formatting, setFormatting] = useState(false);
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -105,11 +106,47 @@ export function TiptapEditor({ document, onSave, onEditorReady }: TiptapEditorPr
     };
   }, []);
 
+  const handleFixFormatting = useCallback(async () => {
+    if (!editor) return;
+    setFormatting(true);
+    try {
+      const html = editor.getHTML();
+      const res = await fetch('/api/ai/format', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html }),
+      });
+      if (!res.ok) {
+        setFormatting(false);
+        return;
+      }
+      const reader = res.body?.getReader();
+      if (!reader) { setFormatting(false); return; }
+      const decoder = new TextDecoder();
+      let result = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        result += decoder.decode(value, { stream: true });
+      }
+      // Set the formatted HTML back into the editor
+      editor.chain().focus().clearContent().insertContent(result).run();
+      // Trigger a save
+      const content = editor.getJSON();
+      const text = editor.getText();
+      const words = text.split(/\s+/).filter(Boolean).length;
+      onSave(content, text, words);
+    } catch (err) {
+      console.error('Format error:', err);
+    }
+    setFormatting(false);
+  }, [editor, onSave]);
+
   if (!editor) return null;
 
   return (
     <div>
-      <EditorToolbar editor={editor} />
+      <EditorToolbar editor={editor} onFixFormatting={handleFixFormatting} formatting={formatting} />
 
       {editor && (
         <BubbleMenu

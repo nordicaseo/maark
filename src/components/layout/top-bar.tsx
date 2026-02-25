@@ -10,6 +10,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -17,7 +23,10 @@ import {
   Loader2,
   BarChart3,
   Check,
-  Save,
+  Download,
+  FileText,
+  FileCode,
+  FileType,
 } from 'lucide-react';
 import type { Document, ContentType, DocumentStatus } from '@/types/document';
 import { CONTENT_TYPE_LABELS, STATUS_LABELS } from '@/types/document';
@@ -28,6 +37,7 @@ interface TopBarProps {
   analyzing: boolean;
   onAnalyze: () => void;
   onUpdate: (updates: Partial<Document>) => void;
+  onExport: (format: 'html' | 'markdown' | 'text') => void;
   leftOpen: boolean;
   rightOpen: boolean;
   onToggleLeft: () => void;
@@ -40,6 +50,7 @@ export function TopBar({
   analyzing,
   onAnalyze,
   onUpdate,
+  onExport,
   leftOpen,
   rightOpen,
   onToggleLeft,
@@ -167,6 +178,30 @@ export function TopBar({
               </>
             )}
           </span>
+
+          {/* Export */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-1.5 h-8">
+                <Download className="h-3.5 w-3.5" />
+                Export
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => onExport('html')}>
+                <FileCode className="h-4 w-4 mr-2" />
+                HTML Document
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onExport('markdown')}>
+                <FileType className="h-4 w-4 mr-2" />
+                Markdown
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onExport('text')}>
+                <FileText className="h-4 w-4 mr-2" />
+                Plain Text
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           {/* Analyze */}
           <Button

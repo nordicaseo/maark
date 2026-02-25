@@ -13,6 +13,7 @@ import type { SignalResult } from '@/types/analysis';
 
 interface SignalRadarChartProps {
   signals: SignalResult[];
+  size?: 'small' | 'large';
 }
 
 const SHORT_NAMES: Record<number, string> = {
@@ -50,9 +51,10 @@ interface CustomTickProps {
   y?: number;
   payload?: { value: string; index: number };
   signals?: SignalResult[];
+  fontSize?: number;
 }
 
-function CustomTick({ x = 0, y = 0, payload, signals = [] }: CustomTickProps) {
+function CustomTick({ x = 0, y = 0, payload, signals = [], fontSize = 9 }: CustomTickProps) {
   if (!payload) return null;
   const signal = signals[payload.index];
   const color = signal ? getScoreColor(signal.score) : '#888';
@@ -64,7 +66,7 @@ function CustomTick({ x = 0, y = 0, payload, signals = [] }: CustomTickProps) {
       textAnchor="middle"
       dominantBaseline="central"
       fill={color}
-      fontSize={9}
+      fontSize={fontSize}
       fontWeight={500}
     >
       {payload.value}
@@ -91,7 +93,7 @@ function CustomTooltip({ active, payload }: any) {
   );
 }
 
-export function SignalRadarChart({ signals }: SignalRadarChartProps) {
+export function SignalRadarChart({ signals, size = 'small' }: SignalRadarChartProps) {
   const data = signals.map((s) => ({
     name: SHORT_NAMES[s.signalId] || s.name,
     fullName: `#${s.signalId} ${s.name}`,
@@ -99,23 +101,28 @@ export function SignalRadarChart({ signals }: SignalRadarChartProps) {
     weight: s.weight,
   }));
 
+  const isLarge = size === 'large';
+  const height = isLarge ? '100%' : 280;
+  const outerRadius = isLarge ? '68%' : '72%';
+  const labelFontSize = isLarge ? 11 : 9;
+
   return (
-    <div className="w-full" style={{ height: 280 }}>
+    <div className="w-full" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
-        <RadarChart data={data} cx="50%" cy="50%" outerRadius="72%">
+        <RadarChart data={data} cx="50%" cy="50%" outerRadius={outerRadius}>
           <PolarGrid
             stroke="#333"
             strokeDasharray="2 4"
           />
           <PolarAngleAxis
             dataKey="name"
-            tick={<CustomTick signals={signals} />}
+            tick={<CustomTick signals={signals} fontSize={labelFontSize} />}
             tickLine={false}
           />
           <PolarRadiusAxis
             domain={[0, 5]}
             tickCount={6}
-            tick={{ fontSize: 8, fill: '#555' }}
+            tick={{ fontSize: isLarge ? 10 : 8, fill: '#555' }}
             axisLine={false}
           />
           <Tooltip content={<CustomTooltip />} />
@@ -126,7 +133,7 @@ export function SignalRadarChart({ signals }: SignalRadarChartProps) {
             fill="#8b5cf6"
             fillOpacity={0.15}
             dot={{
-              r: 3,
+              r: isLarge ? 4 : 3,
               fill: '#8b5cf6',
               stroke: '#0a0a0a',
               strokeWidth: 1.5,

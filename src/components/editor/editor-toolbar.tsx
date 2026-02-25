@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { type Editor } from '@tiptap/react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -22,20 +23,26 @@ import {
   Highlighter,
   Table,
   Trash2,
+  Wand2,
+  Loader2,
 } from 'lucide-react';
 
 interface EditorToolbarProps {
   editor: Editor;
+  onFixFormatting?: () => void;
+  formatting?: boolean;
 }
 
 function ToolbarButton({
   onClick,
   active,
+  disabled,
   children,
   title,
 }: {
   onClick: () => void;
   active?: boolean;
+  disabled?: boolean;
   children: React.ReactNode;
   title: string;
 }) {
@@ -45,6 +52,7 @@ function ToolbarButton({
       size="icon"
       className={`h-8 w-8 ${active ? 'bg-accent text-accent-foreground' : ''}`}
       onClick={onClick}
+      disabled={disabled}
       title={title}
     >
       {children}
@@ -52,7 +60,7 @@ function ToolbarButton({
   );
 }
 
-export function EditorToolbar({ editor }: EditorToolbarProps) {
+export function EditorToolbar({ editor, onFixFormatting, formatting }: EditorToolbarProps) {
   return (
     <div className="flex items-center gap-0.5 py-2 border-b border-border mb-2 flex-wrap">
       <ToolbarButton
@@ -192,6 +200,27 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
       >
         <Redo className="h-4 w-4" />
       </ToolbarButton>
+
+      {onFixFormatting && (
+        <>
+          <Separator orientation="vertical" className="mx-1 h-6" />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            onClick={onFixFormatting}
+            disabled={formatting}
+            title="Fix article formatting using AI"
+          >
+            {formatting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Wand2 className="h-3.5 w-3.5" />
+            )}
+            Fix Formatting
+          </Button>
+        </>
+      )}
     </div>
   );
 }
