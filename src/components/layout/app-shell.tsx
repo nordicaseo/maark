@@ -46,6 +46,33 @@ export function AppShell({ documentId }: AppShellProps) {
     } catch {}
   }, []);
 
+  const handleReplaceContent = useCallback((text: string) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    // Replace entire editor content with the rewritten markdown text
+    editor.chain().focus().clearContent().insertContent(text).run();
+    // Trigger a save after replace
+    const content = editor.getJSON();
+    const newText = editor.getText();
+    const words = newText.split(/\s+/).filter(Boolean).length;
+    if (document) {
+      setPlainText(newText);
+      setSaveStatus('saving');
+      fetch(`/api/documents/${document.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, plainText: newText, wordCount: words }),
+      }).then(async (res) => {
+        if (res.ok) {
+          const updated = await res.json();
+          setDocument(updated);
+          setSaveStatus('saved');
+          fetchDocuments();
+        }
+      }).catch(() => setSaveStatus('idle'));
+    }
+  }, [document, fetchDocuments]);
+
   const fetchDocument = useCallback(async (id: number) => {
     try {
       const res = await fetch(`/api/documents/${id}`);
@@ -227,6 +254,7 @@ export function AppShell({ documentId }: AppShellProps) {
           analyzing={analyzing}
           plainText={plainText}
           onInsertAiText={handleInsertAiText}
+          onReplaceContent={handleReplaceContent}
         />
       </div>
     </div>

@@ -133,8 +133,8 @@
 }
 
 .tiptap p {
-  margin-bottom: 0.75rem;
-  line-height: 1.75;
+  margin-bottom: 0.5rem;
+  line-height: 1.7;
 }
 
 .tiptap h1 {
@@ -248,6 +248,68 @@
 .tiptap ul[data-type="taskList"] li input[type="checkbox"] {
   margin-top: 0.35rem;
   accent-color: oklch(0.488 0.243 264.376);
+}
+
+/* Tables */
+.tiptap table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 1rem;
+  overflow: hidden;
+  border-radius: 0.375rem;
+  border: 1px solid oklch(1 0 0 / 10%);
+}
+
+.tiptap table td,
+.tiptap table th {
+  border: 1px solid oklch(1 0 0 / 10%);
+  padding: 0.5rem 0.75rem;
+  vertical-align: top;
+  position: relative;
+  min-width: 80px;
+}
+
+.tiptap table th {
+  font-weight: 600;
+  text-align: left;
+  background: oklch(0.274 0.006 286.033);
+}
+
+.tiptap table td {
+  background: transparent;
+}
+
+.tiptap table tr:nth-child(even) td {
+  background: oklch(1 0 0 / 2%);
+}
+
+.tiptap table .selectedCell {
+  background: oklch(0.488 0.243 264.376 / 15%);
+}
+
+.tiptap table .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: oklch(0.488 0.243 264.376);
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.tiptap .tableWrapper {
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+
+/* Reduce excessive spacing */
+.tiptap p + p {
+  margin-top: 0;
+}
+
+.tiptap p:empty {
+  margin-bottom: 0.25rem;
 }
 
 /* AI Highlight */

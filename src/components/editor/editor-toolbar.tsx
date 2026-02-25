@@ -20,6 +20,8 @@ import {
   Undo,
   Redo,
   Highlighter,
+  Table,
+  Trash2,
 } from 'lucide-react';
 
 interface EditorToolbarProps {
@@ -156,6 +158,25 @@ export function EditorToolbar({ editor }: EditorToolbarProps) {
       >
         <Minus className="h-4 w-4" />
       </ToolbarButton>
+
+      <Separator orientation="vertical" className="mx-1 h-6" />
+
+      <ToolbarButton
+        onClick={() =>
+          editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
+        }
+        title="Insert Table"
+      >
+        <Table className="h-4 w-4" />
+      </ToolbarButton>
+      {editor.isActive('table') && (
+        <ToolbarButton
+          onClick={() => editor.chain().focus().deleteTable().run()}
+          title="Delete Table"
+        >
+          <Trash2 className="h-4 w-4 text-destructive" />
+        </ToolbarButton>
+      )}
 
       <Separator orientation="vertical" className="mx-1 h-6" />
 

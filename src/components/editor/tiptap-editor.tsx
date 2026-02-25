@@ -12,6 +12,10 @@ import Highlight from '@tiptap/extension-highlight';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import Link from '@tiptap/extension-link';
+import { Table } from '@tiptap/extension-table';
+import { TableRow } from '@tiptap/extension-table-row';
+import { TableCell } from '@tiptap/extension-table-cell';
+import { TableHeader } from '@tiptap/extension-table-header';
 import { EditorToolbar } from './editor-toolbar';
 import type { Document } from '@/types/document';
 
@@ -40,6 +44,13 @@ export function TiptapEditor({ document, onSave, onEditorReady }: TiptapEditorPr
       TaskList,
       TaskItem.configure({ nested: true }),
       Link.configure({ openOnClick: false }),
+      Table.configure({
+        resizable: true,
+        HTMLAttributes: { class: 'tiptap-table' },
+      }),
+      TableRow,
+      TableCell,
+      TableHeader,
     ],
     content: document.content || {
       type: 'doc',
@@ -48,6 +59,15 @@ export function TiptapEditor({ document, onSave, onEditorReady }: TiptapEditorPr
     editorProps: {
       attributes: {
         class: 'tiptap prose prose-invert max-w-none focus:outline-none',
+      },
+      // Improve paste handling for HTML content (tables, formatting)
+      handlePaste(view, event) {
+        const html = event.clipboardData?.getData('text/html');
+        if (html) {
+          // Let TipTap handle HTML paste natively with table support
+          return false;
+        }
+        return false;
       },
     },
     onUpdate: ({ editor }) => {

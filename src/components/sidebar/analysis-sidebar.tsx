@@ -8,6 +8,7 @@ import { AiReportDialog } from './ai-report-dialog';
 import { SemanticPanel } from './semantic-panel';
 import { QualityPanel } from './quality-panel';
 import { AiWritingPanel } from '@/components/ai/ai-writing-panel';
+import { AiRewriterPanel } from '@/components/ai/ai-rewriter-panel';
 import type { Document } from '@/types/document';
 import type { AiDetectionResult, ContentQualityResult, SemanticResult } from '@/types/analysis';
 import type { SerpData } from '@/types/serp';
@@ -21,6 +22,7 @@ interface AnalysisSidebarProps {
   analyzing: boolean;
   plainText: string;
   onInsertAiText: (text: string) => void;
+  onReplaceContent: (text: string) => void;
 }
 
 export function AnalysisSidebar({
@@ -32,6 +34,7 @@ export function AnalysisSidebar({
   analyzing,
   plainText,
   onInsertAiText,
+  onReplaceContent,
 }: AnalysisSidebarProps) {
   const [reportOpen, setReportOpen] = useState(false);
 
@@ -46,9 +49,10 @@ export function AnalysisSidebar({
   return (
     <div className="flex flex-col h-full">
       <Tabs defaultValue="write" className="flex flex-col h-full">
-        <TabsList className="mx-3 mt-3 grid grid-cols-4">
+        <TabsList className="mx-3 mt-3 grid grid-cols-5">
           <TabsTrigger value="write" className="text-xs">Write</TabsTrigger>
           <TabsTrigger value="ai" className="text-xs">AI Score</TabsTrigger>
+          <TabsTrigger value="rewrite" className="text-xs">Rewrite</TabsTrigger>
           <TabsTrigger value="seo" className="text-xs">SEO</TabsTrigger>
           <TabsTrigger value="quality" className="text-xs">Quality</TabsTrigger>
         </TabsList>
@@ -69,6 +73,25 @@ export function AnalysisSidebar({
               analyzing={analyzing}
               onOpenReport={() => setReportOpen(true)}
             />
+          </TabsContent>
+
+          <TabsContent value="rewrite" className="p-3 mt-0">
+            {aiResult ? (
+              <AiRewriterPanel
+                aiResult={aiResult}
+                plainText={plainText}
+                contentType={document.contentType}
+                targetKeyword={document.targetKeyword}
+                onReplace={onReplaceContent}
+              />
+            ) : (
+              <div className="text-center py-12 text-muted-foreground">
+                <p className="text-sm">Run AI detection first</p>
+                <p className="text-xs mt-1">
+                  The rewriter uses signal analysis to fix AI patterns
+                </p>
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="seo" className="p-3 mt-0">
