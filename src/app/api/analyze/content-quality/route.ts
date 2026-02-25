@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/db';
+import { db, ensureDb } from '@/db';
 import { documents } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { analyzeContentQuality } from '@/lib/analyzers/content-quality';
 
 export async function POST(req: NextRequest) {
+  await ensureDb();
   try {
     const { documentId, text, contentType } = await req.json();
 

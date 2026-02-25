@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/db';
+import { db, ensureDb } from '@/db';
 import { documents } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 
@@ -7,6 +7,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  await ensureDb();
   const { id } = await params;
   try {
     const [doc] = await db
@@ -28,6 +29,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  await ensureDb();
   const { id } = await params;
   try {
     const body = await req.json();
@@ -62,6 +64,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  await ensureDb();
   const { id } = await params;
   try {
     await db.delete(documents).where(eq(documents.id, parseInt(id, 10)));

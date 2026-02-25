@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/db';
+import { db, ensureDb } from '@/db';
 import { documents } from '@/db/schema';
 import { desc, eq } from 'drizzle-orm';
 import { getTemplateById } from '@/lib/templates';
 
 export async function GET(req: NextRequest) {
+  await ensureDb();
   const status = req.nextUrl.searchParams.get('status');
 
   try {
@@ -24,6 +25,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  await ensureDb();
   try {
     const body = await req.json();
     const { title, contentType, targetKeyword } = body;

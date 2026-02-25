@@ -3,7 +3,6 @@ const isVercel = !!process.env.POSTGRES_URL;
 let _initPromise: Promise<void> | null = null;
 
 async function initPostgres(sql: any) {
-  // Auto-create tables on first use (no manual migration needed)
   await sql.query(`
     DO $$ BEGIN
       CREATE TYPE document_status AS ENUM ('draft','in_progress','review','published');
@@ -57,11 +56,12 @@ function createDb() {
     const { drizzle } = require('drizzle-orm/vercel-postgres');
     const pgSchema = require('./schema-pg');
 
-    // Run auto-migration once (fire-and-forget on cold start)
+    // Start table init once (awaited by ensureDb before first query)
     if (!_initPromise) {
-      _initPromise = initPostgres(sql).catch((err: any) =>
-        console.error('DB init error:', err)
-      );
+      _initPromise = initPostgres(sql).catch((err: any) => {
+        console.error('DB init error:', err);
+        _initPromise = null; // allow retry on next request
+      });
     }
 
     return drizzle(sql, { schema: pgSchema });
@@ -117,3 +117,12 @@ function createDb() {
 }
 
 export const db = createDb() as any;
+
+/**
+ * Await this before any DB query in API routes.
+ * Ensures Postgres tables exist before the first query runs.
+ * No-op for SQLite (tables created synchronously above).
+ */
+export async function ensureDb() {
+  if (_initPromise) await _initPromise;
+}

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/db';
+import { db, ensureDb } from '@/db';
 import { documents, serpCache } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { scrapeSerpContent } from '@/lib/serp/scraper';
@@ -7,6 +7,7 @@ import { TfIdf, extractEntities } from '@/lib/serp/tfidf';
 import { analyzeSemanticCoverage } from '@/lib/analyzers/semantic';
 
 async function getSerpData(keyword: string) {
+  await ensureDb();
   // Check cache first
   const [cached] = await db
     .select()
@@ -80,6 +81,7 @@ async function getSerpData(keyword: string) {
 }
 
 export async function POST(req: NextRequest) {
+  await ensureDb();
   try {
     const { documentId, text, keyword } = await req.json();
 
