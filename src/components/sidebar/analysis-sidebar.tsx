@@ -6,7 +6,9 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogTitle,
 } from '@/components/ui/dialog';
+import { VisuallyHidden } from 'radix-ui';
 import { AiDetectionPanel } from './ai-detection-panel';
 import { AiReportDialog } from './ai-report-dialog';
 import { SemanticPanel } from './semantic-panel';
@@ -175,6 +177,9 @@ export function AnalysisSidebar({
       {/* Expanded Dialog */}
       <Dialog open={expanded} onOpenChange={setExpanded}>
         <DialogContent className="max-w-4xl w-[90vw] h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
+          <VisuallyHidden.Root>
+            <DialogTitle>Analysis Panel</DialogTitle>
+          </VisuallyHidden.Root>
           <div className="flex items-center justify-between px-5 pt-4 pb-2 shrink-0 border-b border-border">
             <span className="text-sm font-semibold">Analysis Panel</span>
             <Button
