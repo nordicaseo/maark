@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
+import { dbNow } from '@/db/utils';
 import { documents } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
         .set({
           aiDetectionScore: result.compositeScore,
           aiRiskLevel: result.riskLevel,
-          updatedAt: new Date().toISOString(),
+          updatedAt: dbNow(),
         })
         .where(eq(documents.id, documentId));
     }

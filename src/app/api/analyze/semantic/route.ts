@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
+import { dbNow } from '@/db/utils';
 import { documents, serpCache } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { scrapeSerpContent } from '@/lib/serp/scraper';
@@ -35,7 +36,7 @@ async function getSerpData(keyword: string) {
       entities: [],
       lsiKeywords: [],
       topUrls: [],
-      fetchedAt: new Date().toISOString(),
+      fetchedAt: dbNow(),
     };
   }
 
@@ -60,7 +61,7 @@ async function getSerpData(keyword: string) {
         entities,
         lsiKeywords,
         topUrls: urls,
-        fetchedAt: new Date().toISOString(),
+        fetchedAt: dbNow(),
       })
       .where(eq(serpCache.keyword, keyword.toLowerCase()));
   } else {
@@ -76,7 +77,7 @@ async function getSerpData(keyword: string) {
     entities,
     lsiKeywords,
     topUrls: urls,
-    fetchedAt: new Date().toISOString(),
+    fetchedAt: dbNow(),
   };
 }
 
@@ -104,7 +105,7 @@ export async function POST(req: NextRequest) {
         .update(documents)
         .set({
           semanticScore: semantic.score,
-          updatedAt: new Date().toISOString(),
+          updatedAt: dbNow(),
         })
         .where(eq(documents.id, documentId));
     }

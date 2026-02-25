@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
+import { dbNow } from '@/db/utils';
 import { documents } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { analyzeContentQuality } from '@/lib/analyzers/content-quality';
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
         .update(documents)
         .set({
           contentQualityScore: result.score,
-          updatedAt: new Date().toISOString(),
+          updatedAt: dbNow(),
         })
         .where(eq(documents.id, documentId));
     }

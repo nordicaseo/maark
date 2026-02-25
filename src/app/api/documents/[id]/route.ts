@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
+import { dbNow } from '@/db/utils';
 import { documents } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 
@@ -34,7 +35,7 @@ export async function PATCH(
   try {
     const body = await req.json();
 
-    const updateData: any = { updatedAt: new Date().toISOString() };
+    const updateData: any = { updatedAt: dbNow() };
     if (body.title !== undefined) updateData.title = body.title;
     if (body.content !== undefined) updateData.content = body.content;
     if (body.plainText !== undefined) updateData.plainText = body.plainText;
