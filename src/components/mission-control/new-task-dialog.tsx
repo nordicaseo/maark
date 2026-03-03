@@ -60,13 +60,42 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
     if (!title.trim()) return;
     setSaving(true);
     try {
+      const parsedProjectId =
+        selectedProjectId && selectedProjectId !== 'none'
+          ? parseInt(selectedProjectId)
+          : undefined;
+
+      // For content/edit tasks, auto-create a linked document in the editor
+      let documentId: number | undefined;
+      if (type === 'content' || type === 'edit') {
+        try {
+          const docRes = await fetch('/api/documents', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              title: title.trim(),
+              contentType: 'blog_post',
+              projectId: parsedProjectId,
+            }),
+          });
+          if (docRes.ok) {
+            const newDoc = await docRes.json();
+            documentId = newDoc.id;
+          }
+        } catch {
+          // Document creation failed — continue creating task without link
+          console.warn('Failed to auto-create linked document');
+        }
+      }
+
       await createTask({
         title: title.trim(),
         description: description.trim() || undefined,
         type,
         status: 'BACKLOG',
         priority,
-        projectId: selectedProjectId && selectedProjectId !== 'none' ? parseInt(selectedProjectId) : undefined,
+        projectId: parsedProjectId,
+        documentId,
       });
       setTitle('');
       setDescription('');

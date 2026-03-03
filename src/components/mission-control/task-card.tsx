@@ -104,10 +104,15 @@ function TaskCardContent({ task }: { task: Task }) {
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
           {task.documentId && (
-            <span className="flex items-center gap-0.5">
+            <a
+              href={`/documents/${task.documentId}`}
+              className="flex items-center gap-0.5 hover:underline"
+              style={{ color: 'var(--mc-accent)' }}
+              onClick={(e) => e.stopPropagation()}
+            >
               <FileText className="h-3 w-3" />
-              Doc
-            </span>
+              Edit
+            </a>
           )}
           {task.assignedAgentId && (
             <span className="flex items-center gap-0.5">
