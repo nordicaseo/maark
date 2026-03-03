@@ -1,9 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
+import {
+  taskStatusToDocumentStatus,
+  SYNC_SOURCE_KEY,
+  SYNC_SOURCE_CONVEX,
+} from '@/lib/sync/document-task-sync';
 import {
   X,
   Play,
@@ -53,6 +58,25 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
   const [feedbackRunning, setFeedbackRunning] = useState(false);
   const [lastResult, setLastResult] = useState<any>(null);
 
+  // Sync a task status change to the linked Drizzle document (fire-and-forget)
+  const syncStatusToDrizzle = useCallback(
+    (documentId: number | undefined, taskStatus: string) => {
+      if (!documentId) return;
+      const docStatus = taskStatusToDocumentStatus(taskStatus);
+      fetch(`/api/documents/${documentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: docStatus,
+          [SYNC_SOURCE_KEY]: SYNC_SOURCE_CONVEX,
+        }),
+      }).catch((err) =>
+        console.error('Sync task status → Drizzle document failed:', err)
+      );
+    },
+    []
+  );
+
   if (!taskId || !task) return null;
 
   const assignedAgent = agents?.find((a) => a._id === task.assignedAgentId);
@@ -74,6 +98,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
 
       // Move task to IN_PROGRESS
       await updateStatus({ id: task._id, status: 'IN_PROGRESS' });
+      syncStatusToDrizzle(task.documentId, 'IN_PROGRESS');
 
       // Set agent to WORKING
       if (agentId) {
@@ -116,6 +141,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
         deliverables: [...existingDeliverables, result.deliverable],
       });
       await updateStatus({ id: task._id, status: 'IN_REVIEW' });
+      syncStatusToDrizzle(result.documentId || task.documentId, 'IN_REVIEW');
 
       // Set agent back to ONLINE
       if (agentId) {
@@ -140,6 +166,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
     try {
       // Move back to IN_PROGRESS while processing
       await updateStatus({ id: task._id, status: 'IN_PROGRESS' });
+      syncStatusToDrizzle(task.documentId, 'IN_PROGRESS');
 
       const res = await fetch('/api/agent/process-feedback', {
         method: 'POST',
@@ -161,6 +188,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
 
       // Move back to IN_REVIEW
       await updateStatus({ id: task._id, status: 'IN_REVIEW' });
+      syncStatusToDrizzle(task.documentId, 'IN_REVIEW');
     } catch (err) {
       console.error('Feedback processing error:', err);
       await updateStatus({ id: task._id, status: 'IN_REVIEW' });
@@ -173,6 +201,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
   // ─── Mark Complete ───────────────────────────────────────────────
   const handleComplete = async () => {
     await updateStatus({ id: task._id, status: 'COMPLETED' });
+    syncStatusToDrizzle(task.documentId, 'COMPLETED');
   };
 
   const isProcessing = agentRunning || feedbackRunning;

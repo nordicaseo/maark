@@ -3,6 +3,8 @@ import { db, ensureDb } from '@/db';
 import { documents, users } from '@/db/schema';
 import { desc, eq } from 'drizzle-orm';
 import { getTemplateById } from '@/lib/templates';
+import { getConvexClient } from '@/lib/convex/server';
+import { api } from '../../../../convex/_generated/api';
 
 export async function GET(req: NextRequest) {
   await ensureDb();
@@ -84,6 +86,27 @@ export async function POST(req: NextRequest) {
         authorId: authorId || null,
       })
       .returning();
+
+    // ── Auto-create linked Convex task (unless caller opts out) ──────
+    const skipTask = req.nextUrl.searchParams.get('skipTaskCreation') === 'true';
+    if (!skipTask) {
+      try {
+        const convex = getConvexClient();
+        if (convex) {
+          await convex.mutation(api.tasks.create, {
+            title: doc.title,
+            type: 'content',
+            status: 'BACKLOG',
+            priority: 'MEDIUM',
+            documentId: doc.id,
+            projectId: doc.projectId ?? undefined,
+          });
+        }
+      } catch (syncErr) {
+        console.error('Auto-create Convex task failed:', syncErr);
+        // Non-blocking: document creation already succeeded
+      }
+    }
 
     return NextResponse.json(doc);
   } catch (error) {

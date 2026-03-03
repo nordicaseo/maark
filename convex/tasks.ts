@@ -113,6 +113,35 @@ export const updateStatus = mutation({
   },
 });
 
+/**
+ * Update task status from a sync source (e.g. Drizzle document status change).
+ * Identical logic to `updateStatus` but exists as a separate function so
+ * client code can distinguish user-initiated vs sync-initiated status changes
+ * and avoid triggering reverse sync loops.
+ */
+export const updateStatusFromSync = mutation({
+  args: {
+    id: v.id("tasks"),
+    status: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.id);
+    if (!task || task.status === args.status) return; // Already matches — no-op
+
+    const updates: Record<string, any> = {
+      status: args.status,
+      updatedAt: Date.now(),
+    };
+    if (args.status === "IN_PROGRESS") {
+      updates.startedAt = Date.now();
+    }
+    if (args.status === "COMPLETED") {
+      updates.completedAt = Date.now();
+    }
+    await ctx.db.patch(args.id, updates);
+  },
+});
+
 export const remove = mutation({
   args: { id: v.id("tasks") },
   handler: async (ctx, args) => {

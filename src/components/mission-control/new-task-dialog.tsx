@@ -69,7 +69,7 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
       let documentId: number | undefined;
       if (type === 'content' || type === 'edit') {
         try {
-          const docRes = await fetch('/api/documents', {
+          const docRes = await fetch('/api/documents?skipTaskCreation=true', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

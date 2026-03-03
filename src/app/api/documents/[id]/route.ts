@@ -3,6 +3,13 @@ import { db, ensureDb } from '@/db';
 import { dbNow } from '@/db/utils';
 import { documents } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { getConvexClient } from '@/lib/convex/server';
+import { api } from '../../../../../convex/_generated/api';
+import {
+  documentStatusToTaskStatus,
+  SYNC_SOURCE_KEY,
+  SYNC_SOURCE_CONVEX,
+} from '@/lib/sync/document-task-sync';
 
 export async function GET(
   req: NextRequest,
@@ -57,6 +64,34 @@ export async function PATCH(
       .set(updateData)
       .where(eq(documents.id, parseInt(id, 10)))
       .returning();
+
+    // ── Sync status change to linked Convex task(s) ──────────────────
+    if (
+      body.status !== undefined &&
+      body[SYNC_SOURCE_KEY] !== SYNC_SOURCE_CONVEX
+    ) {
+      try {
+        const convex = getConvexClient();
+        if (convex) {
+          const linkedTasks = await convex.query(api.tasks.getByDocument, {
+            documentId: parseInt(id, 10),
+          });
+          const targetTaskStatus = documentStatusToTaskStatus(body.status);
+
+          for (const task of linkedTasks) {
+            if (task.status !== targetTaskStatus) {
+              await convex.mutation(api.tasks.updateStatusFromSync, {
+                id: task._id,
+                status: targetTaskStatus,
+              });
+            }
+          }
+        }
+      } catch (syncErr) {
+        console.error('Sync document status → Convex task failed:', syncErr);
+        // Non-blocking: document update already succeeded
+      }
+    }
 
     return NextResponse.json(doc);
   } catch (error) {

@@ -22,6 +22,11 @@ import { api } from '../../../convex/_generated/api';
 import { SortableTaskCard } from './task-card';
 import { Plus } from 'lucide-react';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
+import {
+  taskStatusToDocumentStatus,
+  SYNC_SOURCE_KEY,
+  SYNC_SOURCE_CONVEX,
+} from '@/lib/sync/document-task-sync';
 
 type Task = Doc<'tasks'>;
 
@@ -89,6 +94,21 @@ export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardPr
 
       // Optimistic: update immediately via Convex mutation
       await updateStatus({ id: taskId, status: targetStatus });
+
+      // Sync status to linked Drizzle document (fire-and-forget)
+      if (currentTask?.documentId) {
+        const docStatus = taskStatusToDocumentStatus(targetStatus);
+        fetch(`/api/documents/${currentTask.documentId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: docStatus,
+            [SYNC_SOURCE_KEY]: SYNC_SOURCE_CONVEX,
+          }),
+        }).catch((err) =>
+          console.error('Sync task status → Drizzle document failed:', err)
+        );
+      }
     },
     [tasks, updateStatus]
   );
