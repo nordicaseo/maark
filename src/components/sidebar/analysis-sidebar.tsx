@@ -14,7 +14,6 @@ import { AiReportDialog } from './ai-report-dialog';
 import { SemanticPanel } from './semantic-panel';
 import { QualityPanel } from './quality-panel';
 import { AiWritingPanel } from '@/components/ai/ai-writing-panel';
-import { AiRewriterPanel } from '@/components/ai/ai-rewriter-panel';
 import { CommentsPanel } from '@/components/editor/comments-panel';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
@@ -78,11 +77,10 @@ function SidebarContent({
 }: SidebarContentProps) {
   return (
     <Tabs defaultValue="write" className="flex flex-col h-full">
-      <TabsList className={`mx-3 mt-3 grid grid-cols-6 shrink-0 ${expanded ? 'mx-4 mt-4' : ''}`}>
+      <TabsList className={`mx-3 mt-3 grid grid-cols-5 shrink-0 ${expanded ? 'mx-4 mt-4' : ''}`}>
         <TabsTrigger value="write" className="text-xs">Write</TabsTrigger>
         <TabsTrigger value="comments" className="text-xs">Comments</TabsTrigger>
         <TabsTrigger value="ai" className="text-xs">AI</TabsTrigger>
-        <TabsTrigger value="rewrite" className="text-xs">Rewrite</TabsTrigger>
         <TabsTrigger value="seo" className="text-xs">SEO</TabsTrigger>
         <TabsTrigger value="quality" className="text-xs">Quality</TabsTrigger>
       </TabsList>
@@ -113,25 +111,6 @@ function SidebarContent({
             analyzing={analyzing}
             onOpenReport={onOpenReport}
           />
-        </TabsContent>
-
-        <TabsContent value="rewrite" className={`p-3 mt-0 ${expanded ? 'p-4 max-w-2xl mx-auto' : ''}`}>
-          {aiResult ? (
-            <AiRewriterPanel
-              aiResult={aiResult}
-              plainText={plainText}
-              contentType={document.contentType}
-              targetKeyword={document.targetKeyword}
-              onReplace={onReplaceContent}
-            />
-          ) : (
-            <div className="text-center py-12 text-muted-foreground">
-              <p className="text-sm">Run AI detection first</p>
-              <p className="text-xs mt-1">
-                The rewriter uses signal analysis to fix AI patterns
-              </p>
-            </div>
-          )}
         </TabsContent>
 
         <TabsContent value="seo" className={`p-3 mt-0 ${expanded ? 'p-4 max-w-2xl mx-auto' : ''}`}>

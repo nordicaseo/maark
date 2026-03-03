@@ -24,14 +24,10 @@ import {
   Table,
   Trash2,
   ImageIcon,
-  Wand2,
-  Loader2,
 } from 'lucide-react';
 
 interface EditorToolbarProps {
   editor: Editor;
-  onFixFormatting?: () => void;
-  formatting?: boolean;
   onOpenImageGenerator?: () => void;
 }
 
@@ -62,7 +58,7 @@ function ToolbarButton({
   );
 }
 
-export function EditorToolbar({ editor, onFixFormatting, formatting, onOpenImageGenerator }: EditorToolbarProps) {
+export function EditorToolbar({ editor, onOpenImageGenerator }: EditorToolbarProps) {
   return (
     <div className="flex items-center gap-0.5 py-2 border-b border-border mb-2 flex-wrap">
       <ToolbarButton
@@ -216,26 +212,6 @@ export function EditorToolbar({ editor, onFixFormatting, formatting, onOpenImage
         <Redo className="h-4 w-4" />
       </ToolbarButton>
 
-      {onFixFormatting && (
-        <>
-          <Separator orientation="vertical" className="mx-1 h-6" />
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5 text-xs"
-            onClick={onFixFormatting}
-            disabled={formatting}
-            title="Fix article formatting using AI"
-          >
-            {formatting ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Wand2 className="h-3.5 w-3.5" />
-            )}
-            Fix Formatting
-          </Button>
-        </>
-      )}
     </div>
   );
 }

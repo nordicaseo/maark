@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
 import { documents, users } from '@/db/schema';
 import { desc, eq } from 'drizzle-orm';
-import { getTemplateById } from '@/lib/templates';
 import { getConvexClient } from '@/lib/convex/server';
 import { api } from '../../../../convex/_generated/api';
 
@@ -60,17 +59,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { title, contentType, targetKeyword, projectId, authorId } = body;
 
-    const template = getTemplateById(contentType);
-    const defaultContent = template?.defaultTiptapContent || {
+    // Start with a blank editor — no pre-loaded template content
+    const defaultContent = {
       type: 'doc',
-      content: [
-        {
-          type: 'heading',
-          attrs: { level: 1 },
-          content: [{ type: 'text', text: title || 'Untitled' }],
-        },
-        { type: 'paragraph' },
-      ],
+      content: [{ type: 'paragraph' }],
     };
 
     const [doc] = await db

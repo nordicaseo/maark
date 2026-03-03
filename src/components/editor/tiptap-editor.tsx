@@ -32,7 +32,6 @@ interface TiptapEditorProps {
 export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting }: TiptapEditorProps) {
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
   const docIdRef = useRef(document.id);
-  const [formatting, setFormatting] = useState(false);
   const [imageDialogOpen, setImageDialogOpen] = useState(false);
 
   const editor = useEditor({
@@ -126,44 +125,6 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting }: T
     };
   }, []);
 
-  const handleFixFormatting = useCallback(async () => {
-    if (!editor) return;
-    setFormatting(true);
-    try {
-      const html = editor.getHTML();
-      const res = await fetch('/api/ai/format', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ html }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        alert(err.error || 'Formatting failed. Make sure an AI provider is configured in Admin > AI Models.');
-        setFormatting(false);
-        return;
-      }
-      const reader = res.body?.getReader();
-      if (!reader) { setFormatting(false); return; }
-      const decoder = new TextDecoder();
-      let result = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        result += decoder.decode(value, { stream: true });
-      }
-      // Set the formatted HTML back into the editor
-      editor.chain().focus().clearContent().insertContent(result).run();
-      // Trigger a save
-      const content = editor.getJSON();
-      const text = editor.getText();
-      const words = text.split(/\s+/).filter(Boolean).length;
-      onSave(content, text, words);
-    } catch (err) {
-      console.error('Format error:', err);
-    }
-    setFormatting(false);
-  }, [editor, onSave]);
-
   const handleInsertImage = useCallback((url: string, alt: string) => {
     if (!editor) return;
     editor.chain().focus().setImage({ src: url, alt }).run();
@@ -180,8 +141,6 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting }: T
     <div className={isAiWriting ? 'border-l-2 border-primary/50 animate-pulse pl-2' : ''}>
       <EditorToolbar
         editor={editor}
-        onFixFormatting={handleFixFormatting}
-        formatting={formatting}
         onOpenImageGenerator={() => setImageDialogOpen(true)}
       />
 
