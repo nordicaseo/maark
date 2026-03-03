@@ -89,60 +89,70 @@ export function SkillEditorDialog({ open, onOpenChange, onSaved, skill, projectI
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col overflow-hidden p-0 gap-0">
+      <DialogContent
+        className="sm:max-w-2xl"
+        style={{
+          maxHeight: '90vh',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          padding: 0,
+          gap: 0,
+        }}
+      >
         <DialogHeader className="shrink-0 px-6 pt-6 pb-2">
           <DialogTitle>{skill ? 'Edit Skill' : 'New Skill'}</DialogTitle>
         </DialogHeader>
-        <div className="flex-1 overflow-y-auto min-h-0 px-6">
-        <div className="space-y-4 py-4">
-          <div>
-            <label className="text-sm font-medium mb-1.5 block">Name</label>
-            <Input
-              placeholder="Skill name..."
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1.5 block">Description</label>
-            <Input
-              placeholder="Brief description of what this skill does..."
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="isGlobal"
-              checked={isGlobal}
-              onCheckedChange={(checked) => setIsGlobal(checked === true)}
-            />
-            <label htmlFor="isGlobal" className="text-sm">
-              Global skill (available in all projects)
-            </label>
-          </div>
-          {!isGlobal && (
+        <div className="flex-1 overflow-y-auto min-h-0 px-6" style={{ minHeight: 0 }}>
+          <div className="space-y-4 py-4">
             <div>
-              <label className="text-sm font-medium mb-1.5 block">Project</label>
-              <Select value={skillProjectId} onValueChange={setSkillProjectId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select project..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No project</SelectItem>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={p.id.toString()}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <label className="text-sm font-medium mb-1.5 block">Name</label>
+              <Input
+                placeholder="Skill name..."
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
             </div>
-          )}
-          <div>
-            <label className="text-sm font-medium mb-1.5 block">Skill Content</label>
-            <Textarea
-              placeholder="Enter the skill instructions in markdown format...
+            <div>
+              <label className="text-sm font-medium mb-1.5 block">Description</label>
+              <Input
+                placeholder="Brief description of what this skill does..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="isGlobal"
+                checked={isGlobal}
+                onCheckedChange={(checked) => setIsGlobal(checked === true)}
+              />
+              <label htmlFor="isGlobal" className="text-sm">
+                Global skill (available in all projects)
+              </label>
+            </div>
+            {!isGlobal && (
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">Project</label>
+                <Select value={skillProjectId} onValueChange={setSkillProjectId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select project..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No project</SelectItem>
+                    {projects.map((p) => (
+                      <SelectItem key={p.id} value={p.id.toString()}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div>
+              <label className="text-sm font-medium mb-1.5 block">Skill Content</label>
+              <Textarea
+                placeholder="Enter the skill instructions in markdown format...
 
 Example:
 # Product Category Content Skill
@@ -158,18 +168,18 @@ Professional yet approachable...
 - Category overview
 - Product highlights
 - FAQ section"
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              rows={12}
-              className="resize-y text-sm font-mono"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              This content is passed to the AI as instructions when writing with this skill
-            </p>
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                rows={12}
+                className="resize-y text-sm font-mono"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                This content is passed to the AI as instructions when writing with this skill
+              </p>
+            </div>
           </div>
         </div>
-        </div>
-        <DialogFooter className="border-t border-border px-6 py-4 shrink-0">
+        <DialogFooter className="shrink-0 px-6 py-4" style={{ borderTop: '1px solid var(--border, #e4e4e7)' }}>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>

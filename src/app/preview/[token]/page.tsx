@@ -86,7 +86,11 @@ export default function PreviewPage() {
 
   const editor = useEditor({
     immediatelyRender: false,
-    editable: false,
+    // Keep editable: true so contenteditable="true" remains on the DOM —
+    // this is required for window.getSelection() and editor.state.selection
+    // to work correctly when the user selects text. All actual editing is
+    // blocked by the editorProps handlers below.
+    editable: true,
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
       Underline,
@@ -109,8 +113,16 @@ export default function PreviewPage() {
     ],
     content: { type: 'doc', content: [{ type: 'paragraph' }] },
     editorProps: {
+      // Block all user editing while keeping selections functional
+      handleKeyDown: () => true,
+      handleKeyPress: () => true,
+      handlePaste: () => true,
+      handleDrop: () => true,
+      handleTextInput: () => true,
       attributes: {
         class: 'tiptap prose prose-zinc max-w-none preview-content',
+        // Hide the text caret so it looks non-editable
+        style: 'caret-color: transparent; cursor: default;',
       },
     },
   });
@@ -159,9 +171,8 @@ export default function PreviewPage() {
   const applyCommentHighlights = useCallback(() => {
     if (!editor || !comments.length) return;
 
-    // Temporarily enable editing to apply marks
-    editor.setEditable(true);
-
+    // Editor is already editable: true (for selection tracking), so we can
+    // apply marks directly without toggling
     const inlineComments = comments.filter(
       (c) => c.selectionFrom != null && c.selectionTo != null && !c.isResolved
     );
@@ -184,9 +195,8 @@ export default function PreviewPage() {
       }
     }
 
-    // Reset selection and make read-only again
+    // Reset selection to start
     editor.commands.setTextSelection(0);
-    editor.setEditable(false);
   }, [editor, comments]);
 
   useEffect(() => {
@@ -204,47 +214,39 @@ export default function PreviewPage() {
     if (!wrapper || !editor) return;
 
     const handleMouseUp = () => {
-      const sel = window.getSelection();
-      if (!sel || sel.isCollapsed || !sel.rangeCount) {
-        // Don't dismiss if the inline form is open
-        if (!showInlineForm) setSelection(null);
-        return;
-      }
+      // Give ProseMirror a tick to sync its selection from the DOM
+      setTimeout(() => {
+        if (!editor) return;
 
-      const text = sel.toString().trim();
-      if (!text) {
-        if (!showInlineForm) setSelection(null);
-        return;
-      }
+        // Since editor is editable: true, ProseMirror tracks selection natively
+        const { from, to } = editor.state.selection;
+        if (from === to) {
+          if (!showInlineForm) setSelection(null);
+          return;
+        }
 
-      // Resolve DOM selection to TipTap positions via the ProseMirror view
-      // (editor.state.selection doesn't update when editable: false)
-      const range = sel.getRangeAt(0);
-      let from: number, to: number;
-      try {
-        const resolvedFrom = editor.view.posAtDOM(range.startContainer, range.startOffset);
-        const resolvedTo = editor.view.posAtDOM(range.endContainer, range.endOffset);
-        from = Math.min(resolvedFrom, resolvedTo);
-        to = Math.max(resolvedFrom, resolvedTo);
-      } catch {
-        // Fallback if posAtDOM fails (selection outside editor)
-        if (!showInlineForm) setSelection(null);
-        return;
-      }
-      if (from === to) return;
+        const text = editor.state.doc.textBetween(from, to, ' ').trim();
+        if (!text) {
+          if (!showInlineForm) setSelection(null);
+          return;
+        }
 
-      // Get visual position for the floating button
-      const rect = range.getBoundingClientRect();
-      const wrapperRect = wrapper.getBoundingClientRect();
+        // Get visual position for the floating button from the browser selection
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount) return;
+        const range = sel.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const wrapperRect = wrapper.getBoundingClientRect();
 
-      setSelection({
-        from,
-        to,
-        text: text.substring(0, 200),
-        top: rect.top - wrapperRect.top + rect.height + 4,
-        left: rect.left - wrapperRect.left + rect.width / 2,
-      });
-      setShowInlineForm(false);
+        setSelection({
+          from,
+          to,
+          text: text.substring(0, 200),
+          top: rect.top - wrapperRect.top + rect.height + 4,
+          left: rect.left - wrapperRect.left + rect.width / 2,
+        });
+        setShowInlineForm(false);
+      }, 10);
     };
 
     wrapper.addEventListener('mouseup', handleMouseUp);
@@ -344,9 +346,7 @@ export default function PreviewPage() {
         );
         // Remove highlight from editor
         if (editor) {
-          editor.setEditable(true);
           editor.commands.unsetCommentMark(String(commentId));
-          editor.setEditable(false);
         }
       }
     } catch {
