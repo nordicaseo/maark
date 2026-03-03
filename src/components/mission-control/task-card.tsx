@@ -11,6 +11,7 @@ import {
   Tag,
 } from 'lucide-react';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
+import { useTeamMembers } from './team-members-provider';
 
 type Task = Doc<'tasks'>;
 
@@ -68,6 +69,9 @@ export function SortableTaskCard({
 }
 
 function TaskCardContent({ task }: { task: Task }) {
+  const { getMember } = useTeamMembers();
+  const assignee = task.assigneeId ? getMember(task.assigneeId) : undefined;
+
   return (
     <div className="space-y-2">
       {/* Header: priority + title */}
@@ -133,9 +137,28 @@ function TaskCardContent({ task }: { task: Task }) {
             </span>
           )}
         </div>
-        <span className="text-[10px]" style={{ color: 'var(--mc-text-muted)' }}>
-          {timeAgo(task.updatedAt)}
-        </span>
+        <div className="flex items-center gap-1.5">
+          {assignee && (
+            assignee.image ? (
+              <img
+                src={assignee.image}
+                alt={assignee.name || ''}
+                className="h-4 w-4 rounded-full"
+                title={assignee.name || assignee.email}
+              />
+            ) : (
+              <div
+                className="h-4 w-4 rounded-full bg-gray-200 flex items-center justify-center text-[8px] font-medium"
+                title={assignee.name || assignee.email}
+              >
+                {(assignee.name || assignee.email).charAt(0).toUpperCase()}
+              </div>
+            )
+          )}
+          <span className="text-[10px]" style={{ color: 'var(--mc-text-muted)' }}>
+            {timeAgo(task.updatedAt)}
+          </span>
+        </div>
       </div>
 
       {/* Deliverables */}

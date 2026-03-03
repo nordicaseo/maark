@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/components/auth/auth-provider';
+import { hasRole } from '@/lib/permissions';
 import {
   FolderOpen,
   Sparkles,
@@ -30,7 +31,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const router = useRouter();
   const { user, isLoading, signOut } = useAuth();
 
-  // Redirect non-owners away from admin
+  // Redirect non-admin users away from admin
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen bg-background">
@@ -39,7 +40,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
   }
 
-  if (!user || user.role !== 'owner') {
+  if (!user || !hasRole(user.role, 'admin')) {
     router.replace('/documents');
     return null;
   }

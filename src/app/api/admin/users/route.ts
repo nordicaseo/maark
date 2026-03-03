@@ -1,10 +1,16 @@
+import { NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db/index';
 import { users } from '@/db/schema';
 import { desc } from 'drizzle-orm';
+import { requireRole } from '@/lib/auth';
 
 export async function GET() {
+  await ensureDb();
+
+  const auth = await requireRole('admin');
+  if (auth.error) return auth.error;
+
   try {
-    await ensureDb();
     const rows = await db
       .select({
         id: users.id,
@@ -16,8 +22,8 @@ export async function GET() {
       })
       .from(users)
       .orderBy(desc(users.createdAt));
-    return Response.json(rows);
+    return NextResponse.json(rows);
   } catch {
-    return Response.json([], { status: 500 });
+    return NextResponse.json([], { status: 500 });
   }
 }

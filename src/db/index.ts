@@ -202,6 +202,20 @@ async function initPostgres(sql: any) {
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
   `);
+
+  // ── Invitations ──
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS invitations (
+      id SERIAL PRIMARY KEY,
+      email VARCHAR(300),
+      role VARCHAR(30) NOT NULL DEFAULT 'writer',
+      token TEXT NOT NULL UNIQUE,
+      invited_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      expires_at TIMESTAMP NOT NULL,
+      accepted_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
 }
 
 function addColumnSafe(sqlite: any, table: string, column: string, type: string) {
@@ -397,6 +411,20 @@ function createDb() {
       temperature REAL DEFAULT 1.0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  // ── Invitations ──
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS invitations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT,
+      role TEXT NOT NULL DEFAULT 'writer',
+      token TEXT NOT NULL UNIQUE,
+      invited_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      expires_at TEXT NOT NULL,
+      accepted_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
 

@@ -149,3 +149,16 @@ export const aiModelConfig = sqliteTable('ai_model_config', {
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
 });
+
+// ── Invitations ──────────────────────────────────────────────────
+
+export const invitations = sqliteTable('invitations', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  email: text('email'),
+  role: text('role').notNull().default('writer'),
+  token: text('token').notNull().unique(),
+  invitedById: text('invited_by_id').references(() => users.id, { onDelete: 'set null' }),
+  expiresAt: text('expires_at').notNull(),
+  acceptedAt: text('accepted_at'),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+});

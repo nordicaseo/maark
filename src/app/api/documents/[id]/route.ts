@@ -10,6 +10,7 @@ import {
   SYNC_SOURCE_KEY,
   SYNC_SOURCE_CONVEX,
 } from '@/lib/sync/document-task-sync';
+import { requireRole } from '@/lib/auth';
 
 export async function GET(
   req: NextRequest,
@@ -104,6 +105,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
+
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
+
   const { id } = await params;
   try {
     await db.delete(documents).where(eq(documents.id, parseInt(id, 10)));

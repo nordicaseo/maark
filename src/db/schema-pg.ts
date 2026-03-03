@@ -168,3 +168,16 @@ export const aiModelConfig = pgTable('ai_model_config', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
+
+// ── Invitations ──────────────────────────────────────────────────
+
+export const invitations = pgTable('invitations', {
+  id: serial('id').primaryKey(),
+  email: varchar('email', { length: 300 }),
+  role: varchar('role', { length: 30 }).notNull().default('writer'),
+  token: text('token').notNull().unique(),
+  invitedById: text('invited_by_id').references(() => users.id, { onDelete: 'set null' }),
+  expiresAt: timestamp('expires_at').notNull(),
+  acceptedAt: timestamp('accepted_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});

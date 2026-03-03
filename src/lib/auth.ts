@@ -1,7 +1,9 @@
+import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { db, ensureDb } from '@/db/index';
 import { users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { hasRole } from '@/lib/permissions';
 
 export type AppUser = {
   id: string;
@@ -37,4 +39,30 @@ export async function getAuthUser(): Promise<AppUser | null> {
     .limit(1);
 
   return appUser ?? null;
+}
+
+/**
+ * Require a minimum role level for an API route.
+ * Returns the user if authorized, or a NextResponse error.
+ */
+export async function requireRole(
+  requiredRole: string
+): Promise<{ user: AppUser; error: null } | { user: null; error: NextResponse }> {
+  const user = await getAuthUser();
+
+  if (!user) {
+    return {
+      user: null,
+      error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
+    };
+  }
+
+  if (!hasRole(user.role, requiredRole)) {
+    return {
+      user: null,
+      error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }),
+    };
+  }
+
+  return { user, error: null };
 }

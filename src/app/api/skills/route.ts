@@ -3,6 +3,7 @@ import { db, ensureDb } from '@/db/index';
 import { skills } from '@/db/schema';
 import { desc, eq, or, sql } from 'drizzle-orm';
 import { dbNow } from '@/db/utils';
+import { requireRole } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
   await ensureDb();
@@ -40,6 +41,10 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   await ensureDb();
+
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
+
   try {
     const body = await req.json();
     const { name, description, content, projectId, isGlobal, createdById } = body;

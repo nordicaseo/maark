@@ -3,6 +3,7 @@ import { db, ensureDb } from '@/db/index';
 import { projects, projectMembers, skills, documents } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { dbNow } from '@/db/utils';
+import { requireRole } from '@/lib/auth';
 
 export async function GET(
   req: NextRequest,
@@ -67,6 +68,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
+
+  const auth = await requireRole('admin');
+  if (auth.error) return auth.error;
+
   const { id } = await params;
   const projectId = parseInt(id, 10);
 

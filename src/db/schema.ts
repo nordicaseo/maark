@@ -15,6 +15,7 @@ let skillParts: any;
 let aiProviders: any;
 let aiModelConfig: any;
 let documentComments: any;
+let invitations: any;
 
 if (isVercel) {
   const pg = require('./schema-pg');
@@ -29,6 +30,7 @@ if (isVercel) {
   aiProviders = pg.aiProviders;
   aiModelConfig = pg.aiModelConfig;
   documentComments = pg.documentComments;
+  invitations = pg.invitations;
 } else {
   const sqlite = require('./schema-sqlite');
   documents = sqlite.documents;
@@ -42,6 +44,7 @@ if (isVercel) {
   aiProviders = sqlite.aiProviders;
   aiModelConfig = sqlite.aiModelConfig;
   documentComments = sqlite.documentComments;
+  invitations = sqlite.invitations;
 }
 
 export {
@@ -56,4 +59,5 @@ export {
   aiProviders,
   aiModelConfig,
   documentComments,
+  invitations,
 };

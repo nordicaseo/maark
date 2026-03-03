@@ -9,6 +9,7 @@ import {
   SYNC_SOURCE_KEY,
   SYNC_SOURCE_CONVEX,
 } from '@/lib/sync/document-task-sync';
+import { useTeamMembers } from './team-members-provider';
 import {
   X,
   Play,
@@ -22,6 +23,7 @@ import {
   Loader2,
   MessageSquare,
   ArrowRight,
+  User,
 } from 'lucide-react';
 
 type Task = Doc<'tasks'>;
@@ -54,6 +56,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
   const updateStatus = useMutation(api.tasks.updateStatus);
   const updateAgentStatus = useMutation(api.agents.updateStatus);
 
+  const { members: teamMembers, getMember } = useTeamMembers();
   const [agentRunning, setAgentRunning] = useState(false);
   const [feedbackRunning, setFeedbackRunning] = useState(false);
   const [lastResult, setLastResult] = useState<any>(null);
@@ -279,6 +282,43 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
               <span>{new Date(task.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
             </div>
           )}
+        </div>
+
+        {/* Assignee */}
+        <div>
+          <h3 className="mc-header-mono text-xs mb-2">Assignee</h3>
+          <select
+            value={task.assigneeId || ''}
+            onChange={async (e) => {
+              const newAssignee = e.target.value || undefined;
+              await updateTask({ id: task._id, assigneeId: newAssignee });
+            }}
+            className="w-full text-xs py-1.5 px-2 rounded-md border bg-white"
+            style={{ borderColor: 'var(--mc-border)', color: 'var(--mc-text-primary)' }}
+          >
+            <option value="">Unassigned</option>
+            {teamMembers.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name || m.email}
+              </option>
+            ))}
+          </select>
+          {task.assigneeId && (() => {
+            const member = getMember(task.assigneeId);
+            if (!member) return null;
+            return (
+              <div className="flex items-center gap-2 mt-1.5 text-xs" style={{ color: 'var(--mc-text-secondary)' }}>
+                {member.image ? (
+                  <img src={member.image} alt={member.name || ''} className="h-5 w-5 rounded-full" />
+                ) : (
+                  <div className="h-5 w-5 rounded-full bg-gray-200 flex items-center justify-center text-[10px] font-medium">
+                    {(member.name || member.email).charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <span>{member.name || member.email}</span>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Deliverables */}

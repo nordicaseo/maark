@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { db, ensureDb } from '@/db/index';
-import { users, documents, projects, projectMembers, skills } from '@/db/schema';
-import { eq, sql } from 'drizzle-orm';
+import { users, documents, projects, projectMembers, skills, invitations } from '@/db/schema';
+import { eq, sql, and, isNull } from 'drizzle-orm';
+import { dbNow } from '@/db/utils';
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
@@ -39,7 +40,47 @@ export async function GET(request: Request) {
               .select({ count: sql<number>`count(*)` })
               .from(users);
             const totalUsers = Number(countResult?.count ?? 0);
-            const role = totalUsers === 0 ? 'owner' : 'writer';
+            let role = totalUsers === 0 ? 'owner' : 'writer';
+
+            // ── Check for invitation (by token or email) ──────────────
+            const inviteToken = searchParams.get('invite_token');
+            let matchedInvitation: any = null;
+
+            if (inviteToken) {
+              const [inv] = await db
+                .select()
+                .from(invitations)
+                .where(
+                  and(
+                    eq(invitations.token, inviteToken),
+                    isNull(invitations.acceptedAt)
+                  )
+                )
+                .limit(1);
+              if (inv) matchedInvitation = inv;
+            }
+
+            if (!matchedInvitation && supabaseUser.email) {
+              const [inv] = await db
+                .select()
+                .from(invitations)
+                .where(
+                  and(
+                    eq(invitations.email, supabaseUser.email),
+                    isNull(invitations.acceptedAt)
+                  )
+                )
+                .limit(1);
+              if (inv) matchedInvitation = inv;
+            }
+
+            if (matchedInvitation && totalUsers > 0) {
+              role = matchedInvitation.role;
+              await db
+                .update(invitations)
+                .set({ acceptedAt: dbNow() })
+                .where(eq(invitations.id, matchedInvitation.id));
+            }
 
             await db.insert(users).values({
               id: supabaseUser.id,
