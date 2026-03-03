@@ -149,27 +149,38 @@ export default function AdminAIPage() {
   }
 
   async function saveProvider() {
-    if (editingProvider) {
-      const body: any = {
-        name: providerForm.name,
-        displayName: providerForm.displayName,
-        isActive: providerForm.isActive,
-      };
-      if (providerForm.apiKey) body.apiKey = providerForm.apiKey;
-      await fetch(`/api/admin/ai/providers/${editingProvider.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-    } else {
-      await fetch('/api/admin/ai/providers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(providerForm),
-      });
+    try {
+      let res: Response;
+      if (editingProvider) {
+        const body: any = {
+          name: providerForm.name,
+          displayName: providerForm.displayName,
+          isActive: providerForm.isActive,
+        };
+        if (providerForm.apiKey) body.apiKey = providerForm.apiKey;
+        res = await fetch(`/api/admin/ai/providers/${editingProvider.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } else {
+        res = await fetch('/api/admin/ai/providers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(providerForm),
+        });
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Failed to save provider: ${err.error || res.statusText}`);
+        return;
+      }
+      setProviderDialogOpen(false);
+      fetchProviders();
+    } catch (err) {
+      alert('Network error saving provider');
+      console.error(err);
     }
-    setProviderDialogOpen(false);
-    fetchProviders();
   }
 
   async function deleteProvider(id: number) {
@@ -200,19 +211,29 @@ export default function AdminAIPage() {
   }
 
   async function saveConfig() {
-    await fetch('/api/admin/ai/config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: configForm.action,
-        providerId: Number(configForm.providerId),
-        model: configForm.model,
-        maxTokens: configForm.maxTokens,
-        temperature: configForm.temperature,
-      }),
-    });
-    setConfigDialogOpen(false);
-    fetchConfigs();
+    try {
+      const res = await fetch('/api/admin/ai/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: configForm.action,
+          providerId: Number(configForm.providerId),
+          model: configForm.model,
+          maxTokens: configForm.maxTokens,
+          temperature: configForm.temperature,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Failed to save config: ${err.error || res.statusText}`);
+        return;
+      }
+      setConfigDialogOpen(false);
+      fetchConfigs();
+    } catch (err) {
+      alert('Network error saving config');
+      console.error(err);
+    }
   }
 
   /* ── Helpers ────────────────────────────────────────────────────── */

@@ -128,21 +128,32 @@ export default function AdminSkillsPage() {
       isGlobal: form.isGlobal ? 1 : 0,
     };
 
-    if (editing) {
-      await fetch(`/api/skills/${editing.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-    } else {
-      await fetch('/api/skills', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+    try {
+      let res: Response;
+      if (editing) {
+        res = await fetch(`/api/skills/${editing.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } else {
+        res = await fetch('/api/skills', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Failed to save skill: ${err.error || res.statusText}`);
+        return;
+      }
+      setDialogOpen(false);
+      fetchSkills();
+    } catch (err) {
+      alert('Network error saving skill');
+      console.error(err);
     }
-    setDialogOpen(false);
-    fetchSkills();
   }
 
   async function deleteSkill(id: number) {

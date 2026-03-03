@@ -22,7 +22,7 @@ export async function PATCH(
     if (body.name !== undefined) updateData.name = body.name;
     if (body.displayName !== undefined) updateData.displayName = body.displayName;
     if (body.apiKey !== undefined) updateData.apiKey = body.apiKey;
-    if (body.isActive !== undefined) updateData.isActive = body.isActive ? 1 : 0;
+    if (body.isActive !== undefined) updateData.isActive = !!body.isActive;
 
     const [provider] = await db
       .update(aiProviders)

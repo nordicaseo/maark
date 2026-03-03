@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
         name,
         displayName: displayName || name,
         apiKey,
-        isActive: isActive !== undefined ? (isActive ? 1 : 0) : 1,
+        isActive: isActive !== undefined ? !!isActive : true,
       })
       .returning();
 
