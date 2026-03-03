@@ -89,10 +89,11 @@ export function SkillEditorDialog({ open, onOpenChange, onSaved, skill, projectI
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{skill ? 'Edit Skill' : 'New Skill'}</DialogTitle>
         </DialogHeader>
+        <div className="flex-1 overflow-y-auto min-h-0">
         <div className="space-y-4 py-4">
           <div>
             <label className="text-sm font-medium mb-1.5 block">Name</label>
@@ -167,7 +168,8 @@ Professional yet approachable...
             </p>
           </div>
         </div>
-        <DialogFooter>
+        </div>
+        <DialogFooter className="border-t border-border pt-4 shrink-0">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>

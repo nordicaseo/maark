@@ -16,7 +16,10 @@ import { Table } from '@tiptap/extension-table';
 import { TableRow } from '@tiptap/extension-table-row';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
+import Image from '@tiptap/extension-image';
+import { CommentMark } from '@/lib/tiptap/comment-mark';
 import { EditorToolbar } from './editor-toolbar';
+import { ImageGeneratorDialog } from './image-generator-dialog';
 import type { Document } from '@/types/document';
 
 interface TiptapEditorProps {
@@ -30,6 +33,7 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting }: T
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
   const docIdRef = useRef(document.id);
   const [formatting, setFormatting] = useState(false);
+  const [imageDialogOpen, setImageDialogOpen] = useState(false);
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -53,6 +57,14 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting }: T
       TableRow,
       TableCell,
       TableHeader,
+      Image.configure({
+        inline: false,
+        allowBase64: false,
+        HTMLAttributes: { class: 'tiptap-image' },
+      }),
+      CommentMark.configure({
+        HTMLAttributes: { class: 'editor-comment-highlight' },
+      }),
     ],
     content: document.content || {
       type: 'doc',
@@ -152,11 +164,26 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting }: T
     setFormatting(false);
   }, [editor, onSave]);
 
+  const handleInsertImage = useCallback((url: string, alt: string) => {
+    if (!editor) return;
+    editor.chain().focus().setImage({ src: url, alt }).run();
+    // Trigger a save after image insert
+    const content = editor.getJSON();
+    const text = editor.getText();
+    const words = text.split(/\s+/).filter(Boolean).length;
+    onSave(content, text, words);
+  }, [editor, onSave]);
+
   if (!editor) return null;
 
   return (
     <div className={isAiWriting ? 'border-l-2 border-primary/50 animate-pulse pl-2' : ''}>
-      <EditorToolbar editor={editor} onFixFormatting={handleFixFormatting} formatting={formatting} />
+      <EditorToolbar
+        editor={editor}
+        onFixFormatting={handleFixFormatting}
+        formatting={formatting}
+        onOpenImageGenerator={() => setImageDialogOpen(true)}
+      />
 
       {editor && (
         <BubbleMenu
@@ -215,6 +242,13 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting }: T
       )}
 
       <EditorContent editor={editor} />
+
+      <ImageGeneratorDialog
+        open={imageDialogOpen}
+        onOpenChange={setImageDialogOpen}
+        onInsertImage={handleInsertImage}
+        contextKeyword={document.targetKeyword || undefined}
+      />
     </div>
   );
 }

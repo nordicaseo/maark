@@ -19,13 +19,15 @@ export interface AIModelConfig {
   updatedAt: string;
 }
 
-export type AIAction = 'writing' | 'rewriting' | 'formatting' | 'skill_generation';
+export type AIAction = 'writing' | 'rewriting' | 'formatting' | 'skill_generation' | 'comment_processing' | 'research';
 
 export const AI_ACTION_LABELS: Record<AIAction, string> = {
   writing: 'Content Writing',
   rewriting: 'AI Rewriting',
   formatting: 'Format Fixing',
   skill_generation: 'Skill Generation',
+  comment_processing: 'Comment Processing',
+  research: 'Research',
 };
 
 export const KNOWN_PROVIDERS: Record<string, { displayName: string; models: string[] }> = {
@@ -52,6 +54,13 @@ export const KNOWN_PROVIDERS: Record<string, { displayName: string; models: stri
       'gpt-4o',
       'gpt-4o-mini',
       'gpt-4-turbo',
+    ],
+  },
+  perplexity: {
+    displayName: 'Perplexity',
+    models: [
+      'sonar-pro',
+      'sonar',
     ],
   },
 };

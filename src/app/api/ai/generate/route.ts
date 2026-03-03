@@ -35,6 +35,8 @@ Additional writing guidelines:
 - Avoid AI cliches: "delve", "landscape", "furthermore", "moreover", "comprehensive", "it's worth noting"
 - Use contractions naturally (don't, can't, won't)
 - Avoid excessive adverbs (significantly, effectively, ultimately)
+- When presenting comparative data, specifications, pricing, features, or pros/cons, use markdown tables with a header row and | delimiters.
+- Where an image would enhance the content, include a markdown placeholder: ![descriptive alt text](PLACEHOLDER_IMAGE)
 - Output clean prose or markdown. No meta-commentary about the writing task.`
       : `You are a skilled content writer. ${typePrompt} ${toneStr} ${keywordStr}
 
@@ -45,6 +47,8 @@ Important writing guidelines:
 - Include first-person perspective where appropriate
 - Avoid excessive adverbs (significantly, effectively, ultimately)
 - Don't start with "In today's..." or "In this article..."
+- When presenting comparative data, specifications, pricing, features, or pros/cons, use markdown tables with a header row and | delimiters.
+- Where an image would enhance the content, include a markdown placeholder: ![descriptive alt text](PLACEHOLDER_IMAGE)
 - Output clean prose or markdown. No meta-commentary about the writing task.`;
 
     const userMessage = existingContent

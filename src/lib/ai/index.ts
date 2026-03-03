@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import type { AIProviderInterface } from './types';
 import { AnthropicProvider } from './providers/anthropic';
 import { OpenAIProvider } from './providers/openai';
+import { PerplexityProvider } from './providers/perplexity';
 import type { AIAction } from '@/types/ai';
 
 interface ProviderForAction {
@@ -67,6 +68,8 @@ function createProvider(name: string, apiKey: string): AIProviderInterface {
       return new AnthropicProvider(apiKey);
     case 'openai':
       return new OpenAIProvider(apiKey);
+    case 'perplexity':
+      return new PerplexityProvider(apiKey);
     default:
       throw new Error(`Unknown AI provider: ${name}`);
   }

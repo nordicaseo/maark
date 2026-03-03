@@ -23,6 +23,7 @@ import {
   Highlighter,
   Table,
   Trash2,
+  ImageIcon,
   Wand2,
   Loader2,
 } from 'lucide-react';
@@ -31,6 +32,7 @@ interface EditorToolbarProps {
   editor: Editor;
   onFixFormatting?: () => void;
   formatting?: boolean;
+  onOpenImageGenerator?: () => void;
 }
 
 function ToolbarButton({
@@ -60,7 +62,7 @@ function ToolbarButton({
   );
 }
 
-export function EditorToolbar({ editor, onFixFormatting, formatting }: EditorToolbarProps) {
+export function EditorToolbar({ editor, onFixFormatting, formatting, onOpenImageGenerator }: EditorToolbarProps) {
   return (
     <div className="flex items-center gap-0.5 py-2 border-b border-border mb-2 flex-wrap">
       <ToolbarButton
@@ -185,6 +187,19 @@ export function EditorToolbar({ editor, onFixFormatting, formatting }: EditorToo
           <Trash2 className="h-4 w-4 text-destructive" />
         </ToolbarButton>
       )}
+      <ToolbarButton
+        onClick={() => {
+          if (onOpenImageGenerator) {
+            onOpenImageGenerator();
+          } else {
+            const url = window.prompt('Image URL:');
+            if (url) editor.chain().focus().setImage({ src: url }).run();
+          }
+        }}
+        title="Insert Image"
+      >
+        <ImageIcon className="h-4 w-4" />
+      </ToolbarButton>
 
       <Separator orientation="vertical" className="mx-1 h-6" />
 

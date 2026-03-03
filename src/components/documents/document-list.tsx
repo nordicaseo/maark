@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, FileText, Trash2, Settings, User, Tag } from 'lucide-react';
+import { Plus, FileText, Trash2, Settings, User, Tag, Eye, Kanban } from 'lucide-react';
 import Link from 'next/link';
 import { CreateDialog } from './create-dialog';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
@@ -195,8 +195,22 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
         </div>
       </ScrollArea>
 
-      {user?.role === 'owner' && (
-        <div className="p-2 border-t border-border">
+      <div className="p-2 border-t border-border space-y-0.5">
+        <Link
+          href="/mission-control"
+          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+        >
+          <Kanban className="h-4 w-4" />
+          Mission Control
+        </Link>
+        <Link
+          href="/review"
+          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+        >
+          <Eye className="h-4 w-4" />
+          Review
+        </Link>
+        {user?.role === 'owner' && (
           <Link
             href="/admin"
             className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
@@ -204,8 +218,8 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
             <Settings className="h-4 w-4" />
             Admin
           </Link>
-        </div>
-      )}
+        )}
+      </div>
 
       <CreateDialog
         open={showCreate}

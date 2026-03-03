@@ -11,6 +11,8 @@ import {
   LayoutDashboard,
   ArrowLeft,
   LogOut,
+  Eye,
+  Kanban,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -19,6 +21,8 @@ const NAV_ITEMS = [
   { href: '/admin/skills', label: 'Skills', icon: Sparkles },
   { href: '/admin/ai', label: 'AI Models', icon: Cpu },
   { href: '/admin/users', label: 'Users', icon: Users },
+  { href: '/mission-control', label: 'Mission Control', icon: Kanban },
+  { href: '/review', label: 'Review', icon: Eye },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

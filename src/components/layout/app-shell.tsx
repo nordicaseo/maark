@@ -489,6 +489,7 @@ ${editorHtml}
           onLiveGenerate={handleLiveGenerate}
           onCancelGeneration={handleCancelGeneration}
           activeProjectId={activeProjectId}
+          editor={editorRef.current}
         />
       </div>
     </div>

@@ -13,6 +13,7 @@ import { Table } from '@tiptap/extension-table';
 import { TableRow } from '@tiptap/extension-table-row';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
+import Image from '@tiptap/extension-image';
 import { CommentMark } from '@/lib/tiptap/comment-mark';
 
 /* ------------------------------------------------------------------ */
@@ -97,6 +98,11 @@ export default function PreviewPage() {
       TableRow,
       TableCell,
       TableHeader,
+      Image.configure({
+        inline: false,
+        allowBase64: false,
+        HTMLAttributes: { class: 'tiptap-image' },
+      }),
       CommentMark.configure({
         HTMLAttributes: { class: 'comment-highlight' },
       }),
@@ -417,6 +423,7 @@ export default function PreviewPage() {
         .preview-content li::marker { color: #71717a !important; }
         .preview-content table td, .preview-content table th { border-color: #e4e4e7 !important; color: #27272a !important; }
         .preview-content hr { border-color: #e4e4e7 !important; }
+        .preview-content .tiptap-image { max-width: 100%; height: auto; border-radius: 0.5rem; margin: 1.5rem 0; }
         .comment-highlight {
           background: rgba(253, 224, 71, 0.3);
           border-bottom: 2px solid rgb(253, 224, 71);

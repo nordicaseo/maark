@@ -15,7 +15,9 @@ import { SemanticPanel } from './semantic-panel';
 import { QualityPanel } from './quality-panel';
 import { AiWritingPanel } from '@/components/ai/ai-writing-panel';
 import { AiRewriterPanel } from '@/components/ai/ai-rewriter-panel';
+import { CommentsPanel } from '@/components/editor/comments-panel';
 import { Maximize2, Minimize2 } from 'lucide-react';
+import type { Editor } from '@tiptap/react';
 import type { Document } from '@/types/document';
 import type { AiDetectionResult, ContentQualityResult, SemanticResult } from '@/types/analysis';
 import type { SerpData } from '@/types/serp';
@@ -34,6 +36,7 @@ interface AnalysisSidebarProps {
   onLiveGenerate: (instruction: string, tone: string, skillContent?: string) => void;
   onCancelGeneration: () => void;
   activeProjectId?: number | null;
+  editor?: Editor | null;
 }
 
 interface SidebarContentProps {
@@ -52,6 +55,7 @@ interface SidebarContentProps {
   onLiveGenerate: (instruction: string, tone: string, skillContent?: string) => void;
   onCancelGeneration: () => void;
   activeProjectId?: number | null;
+  editor?: Editor | null;
 }
 
 function SidebarContent({
@@ -70,12 +74,14 @@ function SidebarContent({
   onLiveGenerate,
   onCancelGeneration,
   activeProjectId,
+  editor,
 }: SidebarContentProps) {
   return (
     <Tabs defaultValue="write" className="flex flex-col h-full">
-      <TabsList className={`mx-3 mt-3 grid grid-cols-5 shrink-0 ${expanded ? 'mx-4 mt-4' : ''}`}>
+      <TabsList className={`mx-3 mt-3 grid grid-cols-6 shrink-0 ${expanded ? 'mx-4 mt-4' : ''}`}>
         <TabsTrigger value="write" className="text-xs">Write</TabsTrigger>
-        <TabsTrigger value="ai" className="text-xs">AI Score</TabsTrigger>
+        <TabsTrigger value="comments" className="text-xs">Comments</TabsTrigger>
+        <TabsTrigger value="ai" className="text-xs">AI</TabsTrigger>
         <TabsTrigger value="rewrite" className="text-xs">Rewrite</TabsTrigger>
         <TabsTrigger value="seo" className="text-xs">SEO</TabsTrigger>
         <TabsTrigger value="quality" className="text-xs">Quality</TabsTrigger>
@@ -91,6 +97,13 @@ function SidebarContent({
             isWriting={isAiWriting}
             onLiveGenerate={onLiveGenerate}
             onCancel={onCancelGeneration}
+          />
+        </TabsContent>
+
+        <TabsContent value="comments" className="mt-0 h-full">
+          <CommentsPanel
+            documentId={document.id}
+            editor={editor || null}
           />
         </TabsContent>
 
@@ -152,6 +165,7 @@ export function AnalysisSidebar({
   onLiveGenerate,
   onCancelGeneration,
   activeProjectId,
+  editor,
 }: AnalysisSidebarProps) {
   const [reportOpen, setReportOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -195,6 +209,7 @@ export function AnalysisSidebar({
         onLiveGenerate={onLiveGenerate}
         onCancelGeneration={onCancelGeneration}
         activeProjectId={activeProjectId}
+        editor={editor}
       />
 
       {/* Expanded Dialog */}
@@ -232,6 +247,7 @@ export function AnalysisSidebar({
               onLiveGenerate={onLiveGenerate}
               onCancelGeneration={onCancelGeneration}
               activeProjectId={activeProjectId}
+              editor={editor}
             />
           </div>
         </DialogContent>
