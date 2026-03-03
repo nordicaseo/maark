@@ -4,15 +4,47 @@ import { useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { useConvexAvailable } from '@/lib/convex/provider';
 import { useRouter } from 'next/navigation';
-import { KanbanBoard } from '@/components/mission-control/kanban-board';
-import { AgentsSidebar } from '@/components/mission-control/agents-sidebar';
-import { NewTaskDialog } from '@/components/mission-control/new-task-dialog';
-import { TaskDetailPanel } from '@/components/mission-control/task-detail-panel';
+import dynamic from 'next/dynamic';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { ArrowLeft, Loader2, Bot, AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
-import type { Id } from '../../../convex/_generated/dataModel';
 import './mission-control-theme.css';
+
+// Lazy-load all Convex-dependent components so their modules are only
+// evaluated when Convex is actually configured — prevents runtime errors
+// from useQuery/useMutation outside ConvexProvider.
+const KanbanBoard = dynamic(
+  () => import('@/components/mission-control/kanban-board').then((m) => m.KanbanBoard),
+  { ssr: false, loading: () => <BoardSkeleton /> }
+);
+const AgentsSidebar = dynamic(
+  () => import('@/components/mission-control/agents-sidebar').then((m) => m.AgentsSidebar),
+  { ssr: false }
+);
+const NewTaskDialog = dynamic(
+  () => import('@/components/mission-control/new-task-dialog').then((m) => m.NewTaskDialog),
+  { ssr: false }
+);
+const TaskDetailPanel = dynamic(
+  () => import('@/components/mission-control/task-detail-panel').then((m) => m.TaskDetailPanel),
+  { ssr: false }
+);
+
+function BoardSkeleton() {
+  return (
+    <div className="flex gap-4">
+      {[1, 2, 3, 4, 5].map((i) => (
+        <div key={i} className="mc-column w-64 shrink-0 animate-pulse">
+          <div className="h-8 rounded mb-3" style={{ background: 'var(--mc-overlay, #f3f3f0)' }} />
+          <div className="space-y-2">
+            <div className="h-20 rounded" style={{ background: 'var(--mc-overlay, #f3f3f0)' }} />
+            <div className="h-16 rounded" style={{ background: 'var(--mc-overlay, #f3f3f0)' }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function MissionControlPage() {
   const { user, isLoading } = useAuth();
@@ -21,7 +53,7 @@ export default function MissionControlPage() {
   const [projectId, setProjectId] = useState<number | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
   const [showAgents, setShowAgents] = useState(true);
-  const [selectedTaskId, setSelectedTaskId] = useState<Id<'tasks'> | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   if (isLoading) {
     return (
@@ -65,30 +97,34 @@ export default function MissionControlPage() {
         </header>
         <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 80px)' }}>
           <div className="max-w-md text-center space-y-4 p-8">
-            <div className="mx-auto w-12 h-12 rounded-full flex items-center justify-center"
-                 style={{ background: 'var(--mc-overlay, #f3f3f0)' }}>
+            <div
+              className="mx-auto w-12 h-12 rounded-full flex items-center justify-center"
+              style={{ background: 'var(--mc-overlay, #f3f3f0)' }}
+            >
               <AlertTriangle className="h-6 w-6" style={{ color: 'var(--mc-review, #e6a756)' }} />
             </div>
             <h2 className="text-lg font-semibold" style={{ color: 'var(--mc-text-primary, #1a1a1a)' }}>
               Convex Not Configured
             </h2>
             <p className="text-sm" style={{ color: 'var(--mc-text-secondary, #666)' }}>
-              Mission Control requires a Convex deployment for real-time task management.
-              Set the <code className="px-1.5 py-0.5 rounded text-xs font-mono"
-                         style={{ background: 'var(--mc-overlay, #f3f3f0)' }}>
+              Mission Control requires a Convex deployment for real-time task management. Set the{' '}
+              <code
+                className="px-1.5 py-0.5 rounded text-xs font-mono"
+                style={{ background: 'var(--mc-overlay, #f3f3f0)' }}
+              >
                 NEXT_PUBLIC_CONVEX_URL
-              </code> environment variable to get started.
+              </code>{' '}
+              environment variable to get started.
             </p>
-            <div className="text-xs space-y-1 text-left p-3 rounded-md font-mono"
-                 style={{ background: 'var(--mc-overlay, #f3f3f0)', color: 'var(--mc-text-secondary, #666)' }}>
+            <div
+              className="text-xs space-y-1 text-left p-3 rounded-md font-mono"
+              style={{ background: 'var(--mc-overlay, #f3f3f0)', color: 'var(--mc-text-secondary, #666)' }}
+            >
               <p>1. npx convex dev</p>
               <p>2. Copy your deployment URL</p>
               <p>3. Add NEXT_PUBLIC_CONVEX_URL to .env.local</p>
             </div>
-            <Link
-              href="/documents"
-              className="mc-btn-secondary inline-flex items-center gap-2"
-            >
+            <Link href="/documents" className="mc-btn-secondary inline-flex items-center gap-2">
               <ArrowLeft className="h-3.5 w-3.5" />
               Back to Editor
             </Link>
@@ -97,10 +133,6 @@ export default function MissionControlPage() {
       </div>
     );
   }
-
-  const handleTaskClick = (taskId: Id<'tasks'>) => {
-    setSelectedTaskId(taskId);
-  };
 
   return (
     <div className="mc-wrapper">
@@ -131,10 +163,7 @@ export default function MissionControlPage() {
 
           <div className="flex items-center gap-3">
             <div className="w-48">
-              <ProjectSwitcher
-                activeProjectId={projectId}
-                onProjectChange={setProjectId}
-              />
+              <ProjectSwitcher activeProjectId={projectId} onProjectChange={setProjectId} />
             </div>
             <button
               onClick={() => setShowAgents(!showAgents)}
@@ -143,10 +172,7 @@ export default function MissionControlPage() {
               <Bot className="h-3.5 w-3.5" />
               Agents
             </button>
-            <button
-              onClick={() => setShowNewTask(true)}
-              className="mc-btn-primary"
-            >
+            <button onClick={() => setShowNewTask(true)} className="mc-btn-primary">
               + New Task
             </button>
           </div>
@@ -160,7 +186,7 @@ export default function MissionControlPage() {
           <KanbanBoard
             projectId={projectId}
             onNewTask={() => setShowNewTask(true)}
-            onTaskClick={handleTaskClick}
+            onTaskClick={(taskId: any) => setSelectedTaskId(taskId)}
           />
         </main>
 
@@ -175,16 +201,9 @@ export default function MissionControlPage() {
         )}
       </div>
 
-      <NewTaskDialog
-        open={showNewTask}
-        onOpenChange={setShowNewTask}
-        projectId={projectId}
-      />
+      <NewTaskDialog open={showNewTask} onOpenChange={setShowNewTask} projectId={projectId} />
 
-      <TaskDetailPanel
-        taskId={selectedTaskId}
-        onClose={() => setSelectedTaskId(null)}
-      />
+      <TaskDetailPanel taskId={selectedTaskId as any} onClose={() => setSelectedTaskId(null)} />
     </div>
   );
 }
