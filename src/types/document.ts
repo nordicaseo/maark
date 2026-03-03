@@ -56,6 +56,7 @@ export interface Document {
   id: number;
   projectId: number | null;
   authorId: string | null;
+  authorName?: string | null;
   title: string;
   content: any;
   plainText: string | null;

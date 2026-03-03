@@ -99,6 +99,19 @@ export const skills = sqliteTable('skills', {
   updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
 });
 
+// ── Skill Parts ──────────────────────────────────────────────────
+
+export const skillParts = sqliteTable('skill_parts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  skillId: integer('skill_id').notNull().references(() => skills.id, { onDelete: 'cascade' }),
+  partType: text('part_type').notNull().default('custom'),
+  label: text('label').notNull(),
+  content: text('content').notNull().default(''),
+  sortOrder: integer('sort_order').notNull().default(0),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+});
+
 // ── Document Comments ─────────────────────────────────────────────
 
 export const documentComments = sqliteTable('document_comments', {
@@ -107,6 +120,10 @@ export const documentComments = sqliteTable('document_comments', {
   previewToken: text('preview_token').notNull(),
   authorName: text('author_name').notNull(),
   content: text('content').notNull(),
+  quotedText: text('quoted_text'),
+  selectionFrom: integer('selection_from'),
+  selectionTo: integer('selection_to'),
+  isResolved: integer('is_resolved').default(0),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
 });
 

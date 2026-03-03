@@ -118,6 +118,19 @@ export const skills = pgTable('skills', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+// ── Skill Parts ──────────────────────────────────────────────────
+
+export const skillParts = pgTable('skill_parts', {
+  id: serial('id').primaryKey(),
+  skillId: integer('skill_id').notNull().references(() => skills.id, { onDelete: 'cascade' }),
+  partType: varchar('part_type', { length: 50 }).notNull().default('custom'),
+  label: varchar('label', { length: 200 }).notNull(),
+  content: text('content').notNull().default(''),
+  sortOrder: integer('sort_order').notNull().default(0),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
 // ── Document Comments ─────────────────────────────────────────────
 
 export const documentComments = pgTable('document_comments', {
@@ -126,6 +139,10 @@ export const documentComments = pgTable('document_comments', {
   previewToken: text('preview_token').notNull(),
   authorName: varchar('author_name', { length: 200 }).notNull(),
   content: text('content').notNull(),
+  quotedText: text('quoted_text'),
+  selectionFrom: integer('selection_from'),
+  selectionTo: integer('selection_to'),
+  isResolved: integer('is_resolved').default(0),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 

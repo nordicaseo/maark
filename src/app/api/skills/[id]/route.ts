@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db/index';
-import { skills } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { skills, skillParts } from '@/db/schema';
+import { eq, asc } from 'drizzle-orm';
 import { dbNow } from '@/db/utils';
 
 export async function GET(
@@ -21,7 +21,13 @@ export async function GET(
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
-    return NextResponse.json(skill);
+    const parts = await db
+      .select()
+      .from(skillParts)
+      .where(eq(skillParts.skillId, parseInt(id, 10)))
+      .orderBy(asc(skillParts.sortOrder));
+
+    return NextResponse.json({ ...skill, parts });
   } catch (error) {
     console.error('Error fetching skill:', error);
     return NextResponse.json({ error: 'Failed to fetch skill' }, { status: 500 });

@@ -11,6 +11,7 @@ let users: any;
 let projects: any;
 let projectMembers: any;
 let skills: any;
+let skillParts: any;
 let aiProviders: any;
 let aiModelConfig: any;
 let documentComments: any;
@@ -24,6 +25,7 @@ if (isVercel) {
   projects = pg.projects;
   projectMembers = pg.projectMembers;
   skills = pg.skills;
+  skillParts = pg.skillParts;
   aiProviders = pg.aiProviders;
   aiModelConfig = pg.aiModelConfig;
   documentComments = pg.documentComments;
@@ -36,6 +38,7 @@ if (isVercel) {
   projects = sqlite.projects;
   projectMembers = sqlite.projectMembers;
   skills = sqlite.skills;
+  skillParts = sqlite.skillParts;
   aiProviders = sqlite.aiProviders;
   aiModelConfig = sqlite.aiModelConfig;
   documentComments = sqlite.documentComments;
@@ -49,6 +52,7 @@ export {
   projects,
   projectMembers,
   skills,
+  skillParts,
   aiProviders,
   aiModelConfig,
   documentComments,

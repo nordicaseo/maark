@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
-import { documents } from '@/db/schema';
+import { documents, users } from '@/db/schema';
 import { desc, eq } from 'drizzle-orm';
 import { getTemplateById } from '@/lib/templates';
 
@@ -10,7 +10,30 @@ export async function GET(req: NextRequest) {
   const projectId = req.nextUrl.searchParams.get('projectId');
 
   try {
-    let query = db.select().from(documents).orderBy(desc(documents.updatedAt));
+    let query = db
+      .select({
+        id: documents.id,
+        projectId: documents.projectId,
+        authorId: documents.authorId,
+        authorName: users.name,
+        title: documents.title,
+        content: documents.content,
+        plainText: documents.plainText,
+        status: documents.status,
+        contentType: documents.contentType,
+        targetKeyword: documents.targetKeyword,
+        wordCount: documents.wordCount,
+        aiDetectionScore: documents.aiDetectionScore,
+        aiRiskLevel: documents.aiRiskLevel,
+        semanticScore: documents.semanticScore,
+        contentQualityScore: documents.contentQualityScore,
+        previewToken: documents.previewToken,
+        createdAt: documents.createdAt,
+        updatedAt: documents.updatedAt,
+      })
+      .from(documents)
+      .leftJoin(users, eq(documents.authorId, users.id))
+      .orderBy(desc(documents.updatedAt));
 
     if (projectId) {
       query = query.where(eq(documents.projectId, parseInt(projectId)));

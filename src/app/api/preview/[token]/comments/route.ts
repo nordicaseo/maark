@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db/index';
 import { documents, documentComments } from '@/db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 
 export async function GET(
   _req: NextRequest,
@@ -41,7 +41,7 @@ export async function POST(
   await ensureDb();
   try {
     const { token } = await params;
-    const { authorName, content } = await req.json();
+    const { authorName, content, quotedText, selectionFrom, selectionTo } = await req.json();
 
     if (!authorName?.trim() || !content?.trim()) {
       return NextResponse.json(
@@ -67,6 +67,9 @@ export async function POST(
         previewToken: token,
         authorName: authorName.trim(),
         content: content.trim(),
+        ...(quotedText ? { quotedText } : {}),
+        ...(selectionFrom != null ? { selectionFrom } : {}),
+        ...(selectionTo != null ? { selectionTo } : {}),
       })
       .returning();
 
@@ -74,5 +77,40 @@ export async function POST(
   } catch (error) {
     console.error('Error adding comment:', error);
     return NextResponse.json({ error: 'Failed to add comment' }, { status: 500 });
+  }
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ token: string }> }
+) {
+  await ensureDb();
+  try {
+    const { token } = await params;
+    const { commentId, isResolved } = await req.json();
+
+    if (!commentId) {
+      return NextResponse.json({ error: 'commentId required' }, { status: 400 });
+    }
+
+    const [updated] = await db
+      .update(documentComments)
+      .set({ isResolved: isResolved ? 1 : 0 })
+      .where(
+        and(
+          eq(documentComments.id, commentId),
+          eq(documentComments.previewToken, token)
+        )
+      )
+      .returning();
+
+    if (!updated) {
+      return NextResponse.json({ error: 'Comment not found' }, { status: 404 });
+    }
+
+    return NextResponse.json(updated);
+  } catch (error) {
+    console.error('Error updating comment:', error);
+    return NextResponse.json({ error: 'Failed to update comment' }, { status: 500 });
   }
 }

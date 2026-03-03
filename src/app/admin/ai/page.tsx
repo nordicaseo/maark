@@ -57,19 +57,27 @@ const ACTIONS = [
 
 const MODEL_OPTIONS: Record<string, string[]> = {
   anthropic: [
-    'claude-sonnet-4-20250514',
+    'claude-opus-4-6',
+    'claude-sonnet-4-6',
+    'claude-sonnet-4-5-20250514',
     'claude-opus-4-20250514',
+    'claude-sonnet-4-20250514',
+    'claude-haiku-4-5-20251001',
     'claude-haiku-4-20250514',
     'claude-3-5-sonnet-20241022',
     'claude-3-5-haiku-20241022',
   ],
   openai: [
-    'gpt-4o',
-    'gpt-4o-mini',
-    'gpt-4-turbo',
+    'o3-pro',
     'o3',
     'o3-mini',
     'o4-mini',
+    'gpt-4.1',
+    'gpt-4.1-mini',
+    'gpt-4.1-nano',
+    'gpt-4o',
+    'gpt-4o-mini',
+    'gpt-4-turbo',
   ],
 };
 

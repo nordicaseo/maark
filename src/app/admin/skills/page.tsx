@@ -20,7 +20,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Pencil, Trash2, Sparkles, Globe, Loader2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Sparkles, Globe, Loader2, Wrench } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -48,6 +49,7 @@ interface Project {
 /* ------------------------------------------------------------------ */
 
 export default function AdminSkillsPage() {
+  const router = useRouter();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -245,6 +247,9 @@ export default function AdminSkillsPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" onClick={() => router.push('/admin/skills/new')}>
+            <Sparkles className="h-4 w-4 mr-1" /> Auto-Create
+          </Button>
           <Button variant="outline" onClick={() => { setUrlInput(''); setGeneratedContent(''); setUrlDialogOpen(true); }}>
             <Globe className="h-4 w-4 mr-1" /> From URL
           </Button>
@@ -284,6 +289,14 @@ export default function AdminSkillsPage() {
                 )}
               </div>
               <div className="flex items-center gap-1 ml-4">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => router.push(`/admin/skills/${s.id}`)}
+                  title="Open in Skill Builder"
+                >
+                  <Wrench className="h-3.5 w-3.5" />
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"

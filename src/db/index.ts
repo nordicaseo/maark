@@ -142,6 +142,14 @@ async function initPostgres(sql: any) {
     );
   `);
 
+  // ── Migrate: Add inline comment columns to document_comments ──
+  await sql.query(`
+    ALTER TABLE document_comments ADD COLUMN IF NOT EXISTS quoted_text TEXT;
+    ALTER TABLE document_comments ADD COLUMN IF NOT EXISTS selection_from INTEGER;
+    ALTER TABLE document_comments ADD COLUMN IF NOT EXISTS selection_to INTEGER;
+    ALTER TABLE document_comments ADD COLUMN IF NOT EXISTS is_resolved INTEGER DEFAULT 0;
+  `);
+
   // ── Skills ──
   await sql.query(`
     CREATE TABLE IF NOT EXISTS skills (
@@ -152,6 +160,20 @@ async function initPostgres(sql: any) {
       content TEXT NOT NULL,
       is_global INTEGER DEFAULT 0,
       created_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  // ── Skill Parts ──
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS skill_parts (
+      id SERIAL PRIMARY KEY,
+      skill_id INTEGER NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+      part_type VARCHAR(50) NOT NULL DEFAULT 'custom',
+      label VARCHAR(200) NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
@@ -319,6 +341,12 @@ function createDb() {
     );
   `);
 
+  // ── Migrate: Add inline comment columns to document_comments ──
+  addColumnSafe(sqlite, 'document_comments', 'quoted_text', 'TEXT');
+  addColumnSafe(sqlite, 'document_comments', 'selection_from', 'INTEGER');
+  addColumnSafe(sqlite, 'document_comments', 'selection_to', 'INTEGER');
+  addColumnSafe(sqlite, 'document_comments', 'is_resolved', 'INTEGER DEFAULT 0');
+
   // ── Skills ──
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS skills (
@@ -329,6 +357,20 @@ function createDb() {
       content TEXT NOT NULL,
       is_global INTEGER DEFAULT 0,
       created_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  // ── Skill Parts ──
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS skill_parts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      skill_id INTEGER NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+      part_type TEXT NOT NULL DEFAULT 'custom',
+      label TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
