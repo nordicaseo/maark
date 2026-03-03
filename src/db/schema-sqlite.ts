@@ -35,6 +35,7 @@ export const documents = sqliteTable('documents', {
   aiRiskLevel: text('ai_risk_level'),
   semanticScore: real('semantic_score'),
   contentQualityScore: real('content_quality_score'),
+  previewToken: text('preview_token'),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
 });
@@ -96,6 +97,17 @@ export const skills = sqliteTable('skills', {
   createdById: text('created_by_id').references(() => users.id, { onDelete: 'set null' }),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+// ── Document Comments ─────────────────────────────────────────────
+
+export const documentComments = sqliteTable('document_comments', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  documentId: integer('document_id').notNull().references(() => documents.id, { onDelete: 'cascade' }),
+  previewToken: text('preview_token').notNull(),
+  authorName: text('author_name').notNull(),
+  content: text('content').notNull(),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
 });
 
 // ── AI Providers & Model Config ────────────────────────────────────

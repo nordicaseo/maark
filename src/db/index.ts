@@ -96,6 +96,15 @@ async function initPostgres(sql: any) {
     DROP TYPE IF EXISTS content_type;
   `);
 
+  // ── Migrate: Add publish + live status values ──
+  await sql.query(`
+    DO $$ BEGIN ALTER TYPE document_status ADD VALUE IF NOT EXISTS 'publish'; EXCEPTION WHEN others THEN NULL; END $$;
+    DO $$ BEGIN ALTER TYPE document_status ADD VALUE IF NOT EXISTS 'live'; EXCEPTION WHEN others THEN NULL; END $$;
+  `);
+  await sql.query(`
+    UPDATE documents SET status = 'live' WHERE status = 'published';
+  `);
+
   // ── SERP Cache ──
   await sql.query(`
     CREATE TABLE IF NOT EXISTS serp_cache (
@@ -112,6 +121,23 @@ async function initPostgres(sql: any) {
       document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
       analysis_type VARCHAR(50) NOT NULL,
       result_data JSONB NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  // ── Migrate: Add preview_token column ──
+  await sql.query(`
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS preview_token TEXT;
+  `);
+
+  // ── Document Comments ──
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS document_comments (
+      id SERIAL PRIMARY KEY,
+      document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      preview_token TEXT NOT NULL,
+      author_name VARCHAR(200) NOT NULL,
+      content TEXT NOT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
   `);
@@ -252,6 +278,7 @@ function createDb() {
   // ── Migrate: Add new columns to existing documents table ──
   addColumnSafe(sqlite, 'documents', 'project_id', "INTEGER REFERENCES projects(id) ON DELETE SET NULL");
   addColumnSafe(sqlite, 'documents', 'author_id', "TEXT REFERENCES users(id) ON DELETE SET NULL");
+  addColumnSafe(sqlite, 'documents', 'preview_token', "TEXT");
 
   // ── Migrate: Remap old content type values ──
   sqlite.exec(`
@@ -276,6 +303,18 @@ function createDb() {
       document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
       analysis_type TEXT NOT NULL,
       result_data TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  // ── Document Comments ──
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS document_comments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      preview_token TEXT NOT NULL,
+      author_name TEXT NOT NULL,
+      content TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);

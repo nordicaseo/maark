@@ -125,6 +125,8 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting }: T
         body: JSON.stringify({ html }),
       });
       if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Formatting failed. Make sure an AI provider is configured in Admin > AI Models.');
         setFormatting(false);
         return;
       }

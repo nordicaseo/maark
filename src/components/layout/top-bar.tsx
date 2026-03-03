@@ -29,6 +29,8 @@ import {
   FileText,
   FileCode,
   FileType,
+  Eye,
+  Copy,
 } from 'lucide-react';
 import type { Document, ContentFormat } from '@/types/document';
 import { CONTENT_FORMAT_GROUPS, CONTENT_FORMAT_LABELS, STATUS_LABELS } from '@/types/document';
@@ -62,6 +64,7 @@ export function TopBar({
 }: TopBarProps) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState('');
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const handleTitleClick = () => {
     if (!document) return;
@@ -195,6 +198,39 @@ export function TopBar({
               </>
             )}
           </span>
+
+          {/* Preview */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 h-8"
+            disabled={previewLoading}
+            onClick={async () => {
+              if (!document) return;
+              setPreviewLoading(true);
+              try {
+                const res = await fetch(`/api/documents/${document.id}/preview-token`, {
+                  method: 'POST',
+                });
+                if (!res.ok) throw new Error();
+                const { url } = await res.json();
+                const fullUrl = `${window.location.origin}${url}`;
+                await navigator.clipboard.writeText(fullUrl);
+                window.open(url, '_blank');
+              } catch {
+                alert('Failed to generate preview link.');
+              } finally {
+                setPreviewLoading(false);
+              }
+            }}
+          >
+            {previewLoading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Eye className="h-3.5 w-3.5" />
+            )}
+            Preview
+          </Button>
 
           {/* Export */}
           <DropdownMenu>

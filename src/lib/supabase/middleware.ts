@@ -7,6 +7,8 @@ export async function updateSession(request: NextRequest) {
   // Public routes — allow without auth check
   if (
     pathname.startsWith('/auth/') ||
+    pathname.startsWith('/preview/') ||
+    pathname.startsWith('/api/preview/') ||
     pathname === '/' ||
     pathname.startsWith('/_next/') ||
     pathname.startsWith('/favicon')

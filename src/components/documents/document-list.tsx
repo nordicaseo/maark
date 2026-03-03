@@ -12,9 +12,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, FileText, Trash2 } from 'lucide-react';
+import { Plus, FileText, Trash2, Settings } from 'lucide-react';
+import Link from 'next/link';
 import { CreateDialog } from './create-dialog';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
+import { useAuth } from '@/components/auth/auth-provider';
 import type { Document, DocumentStatus } from '@/types/document';
 import { STATUS_LABELS } from '@/types/document';
 
@@ -30,7 +32,8 @@ const statusColors: Record<DocumentStatus, string> = {
   draft: 'bg-zinc-500/20 text-zinc-400',
   in_progress: 'bg-blue-500/20 text-blue-400',
   review: 'bg-yellow-500/20 text-yellow-400',
-  published: 'bg-green-500/20 text-green-400',
+  publish: 'bg-purple-500/20 text-purple-400',
+  live: 'bg-green-500/20 text-green-400',
 };
 
 function ScoreDot({ score, max = 5 }: { score: number | null; max?: number }) {
@@ -47,6 +50,7 @@ function ScoreDot({ score, max = 5 }: { score: number | null; max?: number }) {
 
 export function DocumentList({ documents, activeId, onRefresh, activeProjectId, onProjectChange }: DocumentListProps) {
   const router = useRouter();
+  const { user } = useAuth();
   const [filter, setFilter] = useState<string>('all');
   const [showCreate, setShowCreate] = useState(false);
 
@@ -150,6 +154,18 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
           )}
         </div>
       </ScrollArea>
+
+      {user?.role === 'owner' && (
+        <div className="p-2 border-t border-border">
+          <Link
+            href="/admin"
+            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+          >
+            <Settings className="h-4 w-4" />
+            Admin
+          </Link>
+        </div>
+      )}
 
       <CreateDialog
         open={showCreate}

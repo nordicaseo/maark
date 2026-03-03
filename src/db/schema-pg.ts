@@ -19,6 +19,8 @@ export const documentStatusEnum = pgEnum('document_status', [
   'in_progress',
   'review',
   'published',
+  'publish',
+  'live',
 ]);
 
 // ── Users ─────────────────────────────────────────────────────────
@@ -50,6 +52,7 @@ export const documents = pgTable('documents', {
   aiRiskLevel: varchar('ai_risk_level', { length: 20 }),
   semanticScore: real('semantic_score'),
   contentQualityScore: real('content_quality_score'),
+  previewToken: text('preview_token'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -113,6 +116,19 @@ export const skills = pgTable('skills', {
   createdById: text('created_by_id').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// ── AI Providers & Model Config ────────────────────────────────────
+
+// ── Document Comments ─────────────────────────────────────────────
+
+export const documentComments = pgTable('document_comments', {
+  id: serial('id').primaryKey(),
+  documentId: integer('document_id').notNull().references(() => documents.id, { onDelete: 'cascade' }),
+  previewToken: text('preview_token').notNull(),
+  authorName: varchar('author_name', { length: 200 }).notNull(),
+  content: text('content').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
 // ── AI Providers & Model Config ────────────────────────────────────
