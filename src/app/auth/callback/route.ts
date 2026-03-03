@@ -13,66 +13,75 @@ export async function GET(request: Request) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
 
+    if (error) {
+      console.error('Auth code exchange failed:', error.message);
+    }
+
     if (!error) {
       const {
         data: { user: supabaseUser },
       } = await supabase.auth.getUser();
 
       if (supabaseUser?.email) {
-        await ensureDb();
+        try {
+          await ensureDb();
 
-        // Check if this user already exists in our app users table
-        const existing = await db
-          .select()
-          .from(users)
-          .where(eq(users.email, supabaseUser.email))
-          .limit(1);
+          // Check if this user already exists in our app users table
+          const existing = await db
+            .select()
+            .from(users)
+            .where(eq(users.email, supabaseUser.email))
+            .limit(1);
 
-        if (existing.length === 0) {
-          // New user — determine role (first user becomes owner)
-          const [countResult] = await db
-            .select({ count: sql<number>`count(*)` })
-            .from(users);
-          const totalUsers = Number(countResult?.count ?? 0);
-          const role = totalUsers === 0 ? 'owner' : 'writer';
+          if (existing.length === 0) {
+            // New user — determine role (first user becomes owner)
+            const [countResult] = await db
+              .select({ count: sql<number>`count(*)` })
+              .from(users);
+            const totalUsers = Number(countResult?.count ?? 0);
+            const role = totalUsers === 0 ? 'owner' : 'writer';
 
-          await db.insert(users).values({
-            id: supabaseUser.id,
-            email: supabaseUser.email,
-            name:
-              supabaseUser.user_metadata?.full_name ??
-              supabaseUser.user_metadata?.name ??
-              null,
-            image: supabaseUser.user_metadata?.avatar_url ?? null,
-            role,
-          });
-        } else if (existing[0].id !== supabaseUser.id) {
-          // Existing user with different ID (migrated from NextAuth) —
-          // update the ID to match Supabase auth user UUID
-          const oldId = existing[0].id;
-          const newId = supabaseUser.id;
+            await db.insert(users).values({
+              id: supabaseUser.id,
+              email: supabaseUser.email,
+              name:
+                supabaseUser.user_metadata?.full_name ??
+                supabaseUser.user_metadata?.name ??
+                null,
+              image: supabaseUser.user_metadata?.avatar_url ?? null,
+              role,
+            });
+          } else if (existing[0].id !== supabaseUser.id) {
+            // Existing user with different ID (migrated from NextAuth) —
+            // update the ID to match Supabase auth user UUID
+            const oldId = existing[0].id;
+            const newId = supabaseUser.id;
 
-          // Update all FK references, then the user itself
-          await db
-            .update(projectMembers)
-            .set({ userId: newId })
-            .where(eq(projectMembers.userId, oldId));
-          await db
-            .update(projects)
-            .set({ createdById: newId })
-            .where(eq(projects.createdById, oldId));
-          await db
-            .update(documents)
-            .set({ authorId: newId })
-            .where(eq(documents.authorId, oldId));
-          await db
-            .update(skills)
-            .set({ createdById: newId })
-            .where(eq(skills.createdById, oldId));
-          await db
-            .update(users)
-            .set({ id: newId })
-            .where(eq(users.id, oldId));
+            // Update all FK references, then the user itself
+            await db
+              .update(projectMembers)
+              .set({ userId: newId })
+              .where(eq(projectMembers.userId, oldId));
+            await db
+              .update(projects)
+              .set({ createdById: newId })
+              .where(eq(projects.createdById, oldId));
+            await db
+              .update(documents)
+              .set({ authorId: newId })
+              .where(eq(documents.authorId, oldId));
+            await db
+              .update(skills)
+              .set({ createdById: newId })
+              .where(eq(skills.createdById, oldId));
+            await db
+              .update(users)
+              .set({ id: newId })
+              .where(eq(users.id, oldId));
+          }
+        } catch (dbError) {
+          // Don't block auth — user record will sync on next API request
+          console.error('Auth callback DB sync error:', dbError);
         }
       }
 

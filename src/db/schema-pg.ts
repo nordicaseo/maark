@@ -118,8 +118,6 @@ export const skills = pgTable('skills', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-// ── AI Providers & Model Config ────────────────────────────────────
-
 // ── Document Comments ─────────────────────────────────────────────
 
 export const documentComments = pgTable('document_comments', {
