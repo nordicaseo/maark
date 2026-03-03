@@ -67,7 +67,7 @@ export default function PreviewPage() {
     content: { type: 'doc', content: [{ type: 'paragraph' }] },
     editorProps: {
       attributes: {
-        class: 'tiptap prose prose-zinc dark:prose-invert max-w-none',
+        class: 'tiptap prose prose-zinc max-w-none preview-content',
       },
     },
   });
@@ -145,6 +145,18 @@ export default function PreviewPage() {
 
   return (
     <div className="min-h-screen bg-white">
+      <style>{`
+        .preview-content { color: #27272a !important; }
+        .preview-content h1, .preview-content h2,
+        .preview-content h3, .preview-content h4 { color: #18181b !important; }
+        .preview-content a { color: #2563eb !important; }
+        .preview-content strong { color: #18181b !important; }
+        .preview-content code { color: #27272a !important; }
+        .preview-content blockquote { color: #52525b !important; border-color: #d4d4d8 !important; }
+        .preview-content li::marker { color: #71717a !important; }
+        .preview-content table td, .preview-content table th { border-color: #e4e4e7 !important; color: #27272a !important; }
+        .preview-content hr { border-color: #e4e4e7 !important; }
+      `}</style>
       {/* Header */}
       <header className="border-b border-zinc-200 bg-zinc-50">
         <div className="max-w-4xl mx-auto px-6 py-4">
