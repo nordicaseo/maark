@@ -181,6 +181,16 @@ export default function MissionControlPage() {
 
       {/* Body */}
       <div className="flex">
+        {/* Agents sidebar — left */}
+        {showAgents && (
+          <aside
+            className="w-72 shrink-0 border-r overflow-y-auto"
+            style={{ borderColor: 'var(--mc-border)', background: 'var(--mc-surface-alt)' }}
+          >
+            <AgentsSidebar />
+          </aside>
+        )}
+
         {/* Kanban area */}
         <main className="flex-1 min-w-0 p-6 overflow-x-auto">
           <KanbanBoard
@@ -189,16 +199,6 @@ export default function MissionControlPage() {
             onTaskClick={(taskId: any) => setSelectedTaskId(taskId)}
           />
         </main>
-
-        {/* Agents sidebar */}
-        {showAgents && (
-          <aside
-            className="w-72 shrink-0 border-l overflow-y-auto"
-            style={{ borderColor: 'var(--mc-border)', background: 'var(--mc-surface-alt)' }}
-          >
-            <AgentsSidebar />
-          </aside>
-        )}
       </div>
 
       <NewTaskDialog open={showNewTask} onOpenChange={setShowNewTask} projectId={projectId} />

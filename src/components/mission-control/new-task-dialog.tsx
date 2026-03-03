@@ -40,7 +40,7 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
   const [description, setDescription] = useState('');
   const [type, setType] = useState('content');
   const [priority, setPriority] = useState('MEDIUM');
-  const [selectedProjectId, setSelectedProjectId] = useState<string>(projectId?.toString() || '');
+  const [selectedProjectId, setSelectedProjectId] = useState<string>(projectId?.toString() || 'none');
   const [projects, setProjects] = useState<Project[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -66,7 +66,7 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
         type,
         status: 'BACKLOG',
         priority,
-        projectId: selectedProjectId ? parseInt(selectedProjectId) : undefined,
+        projectId: selectedProjectId && selectedProjectId !== 'none' ? parseInt(selectedProjectId) : undefined,
       });
       setTitle('');
       setDescription('');
@@ -143,7 +143,7 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
                 <SelectValue placeholder="Select project..." />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">No project</SelectItem>
+                <SelectItem value="none">No project</SelectItem>
                 {projects.map((p) => (
                   <SelectItem key={p.id} value={p.id.toString()}>
                     {p.name}
