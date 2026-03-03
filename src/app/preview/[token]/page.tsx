@@ -217,12 +217,23 @@ export default function PreviewPage() {
         return;
       }
 
-      // Get TipTap positions
-      const { from, to } = editor.state.selection;
+      // Resolve DOM selection to TipTap positions via the ProseMirror view
+      // (editor.state.selection doesn't update when editable: false)
+      const range = sel.getRangeAt(0);
+      let from: number, to: number;
+      try {
+        const resolvedFrom = editor.view.posAtDOM(range.startContainer, range.startOffset);
+        const resolvedTo = editor.view.posAtDOM(range.endContainer, range.endOffset);
+        from = Math.min(resolvedFrom, resolvedTo);
+        to = Math.max(resolvedFrom, resolvedTo);
+      } catch {
+        // Fallback if posAtDOM fails (selection outside editor)
+        if (!showInlineForm) setSelection(null);
+        return;
+      }
       if (from === to) return;
 
       // Get visual position for the floating button
-      const range = sel.getRangeAt(0);
       const rect = range.getBoundingClientRect();
       const wrapperRect = wrapper.getBoundingClientRect();
 
