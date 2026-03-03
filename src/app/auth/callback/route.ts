@@ -1,0 +1,93 @@
+import { NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
+import { db, ensureDb } from '@/db/index';
+import { users, documents, projects, projectMembers, skills } from '@/db/schema';
+import { eq, sql } from 'drizzle-orm';
+
+export async function GET(request: Request) {
+  const { searchParams, origin } = new URL(request.url);
+  const code = searchParams.get('code');
+  const next = searchParams.get('next') ?? '/documents';
+
+  if (code) {
+    const supabase = await createClient();
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
+
+    if (!error) {
+      const {
+        data: { user: supabaseUser },
+      } = await supabase.auth.getUser();
+
+      if (supabaseUser?.email) {
+        await ensureDb();
+
+        // Check if this user already exists in our app users table
+        const existing = await db
+          .select()
+          .from(users)
+          .where(eq(users.email, supabaseUser.email))
+          .limit(1);
+
+        if (existing.length === 0) {
+          // New user — determine role (first user becomes owner)
+          const [countResult] = await db
+            .select({ count: sql<number>`count(*)` })
+            .from(users);
+          const totalUsers = Number(countResult?.count ?? 0);
+          const role = totalUsers === 0 ? 'owner' : 'writer';
+
+          await db.insert(users).values({
+            id: supabaseUser.id,
+            email: supabaseUser.email,
+            name:
+              supabaseUser.user_metadata?.full_name ??
+              supabaseUser.user_metadata?.name ??
+              null,
+            image: supabaseUser.user_metadata?.avatar_url ?? null,
+            role,
+          });
+        } else if (existing[0].id !== supabaseUser.id) {
+          // Existing user with different ID (migrated from NextAuth) —
+          // update the ID to match Supabase auth user UUID
+          const oldId = existing[0].id;
+          const newId = supabaseUser.id;
+
+          // Update all FK references, then the user itself
+          await db
+            .update(projectMembers)
+            .set({ userId: newId })
+            .where(eq(projectMembers.userId, oldId));
+          await db
+            .update(projects)
+            .set({ createdById: newId })
+            .where(eq(projects.createdById, oldId));
+          await db
+            .update(documents)
+            .set({ authorId: newId })
+            .where(eq(documents.authorId, oldId));
+          await db
+            .update(skills)
+            .set({ createdById: newId })
+            .where(eq(skills.createdById, oldId));
+          await db
+            .update(users)
+            .set({ id: newId })
+            .where(eq(users.id, oldId));
+        }
+      }
+
+      const forwardedHost = request.headers.get('x-forwarded-host');
+      const isLocalEnv = process.env.NODE_ENV === 'development';
+      if (isLocalEnv) {
+        return NextResponse.redirect(`${origin}${next}`);
+      } else if (forwardedHost) {
+        return NextResponse.redirect(`https://${forwardedHost}${next}`);
+      } else {
+        return NextResponse.redirect(`${origin}${next}`);
+      }
+    }
+  }
+
+  // Auth error — redirect to sign-in
+  return NextResponse.redirect(`${origin}/auth/signin?error=auth_callback_failed`);
+}

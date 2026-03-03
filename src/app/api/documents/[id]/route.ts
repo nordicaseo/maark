@@ -48,6 +48,9 @@ export async function PATCH(
     if (body.semanticScore !== undefined) updateData.semanticScore = body.semanticScore;
     if (body.contentQualityScore !== undefined)
       updateData.contentQualityScore = body.contentQualityScore;
+    if (body.projectId !== undefined)
+      updateData.projectId = body.projectId ? parseInt(body.projectId, 10) : null;
+    if (body.authorId !== undefined) updateData.authorId = body.authorId || null;
 
     const [doc] = await db
       .update(documents)

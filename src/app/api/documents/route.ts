@@ -7,9 +7,14 @@ import { getTemplateById } from '@/lib/templates';
 export async function GET(req: NextRequest) {
   await ensureDb();
   const status = req.nextUrl.searchParams.get('status');
+  const projectId = req.nextUrl.searchParams.get('projectId');
 
   try {
     let query = db.select().from(documents).orderBy(desc(documents.updatedAt));
+
+    if (projectId) {
+      query = query.where(eq(documents.projectId, parseInt(projectId)));
+    }
 
     const results = await query;
 
@@ -28,7 +33,7 @@ export async function POST(req: NextRequest) {
   await ensureDb();
   try {
     const body = await req.json();
-    const { title, contentType, targetKeyword } = body;
+    const { title, contentType, targetKeyword, projectId, authorId } = body;
 
     const template = getTemplateById(contentType);
     const defaultContent = template?.defaultTiptapContent || {
@@ -52,6 +57,8 @@ export async function POST(req: NextRequest) {
         content: defaultContent,
         plainText: '',
         wordCount: 0,
+        projectId: projectId ? parseInt(projectId, 10) : null,
+        authorId: authorId || null,
       })
       .returning();
 

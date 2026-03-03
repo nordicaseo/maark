@@ -1,29 +1,24 @@
 import { NextRequest } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { getProviderForAction } from '@/lib/ai';
 
 const CONTENT_TYPE_PROMPTS: Record<string, string> = {
   blog_post: 'Write in a conversational, informative blog style. Use personal anecdotes where appropriate. Vary sentence length naturally.',
-  product_review: 'Write an honest, detailed product review. Include pros and cons. Be specific about features and real-world usage.',
-  how_to_guide: 'Write clear, step-by-step instructions. Use numbered steps for processes. Include practical tips and warnings.',
-  listicle: 'Write an engaging list article. Each item should have a heading and supporting detail. Vary the depth of each point.',
+  blog_listicle: 'Write an engaging list article. Each item should have a heading and supporting detail. Vary the depth of each point.',
+  blog_buying_guide: 'Write a detailed buying guide. Include criteria, recommendations, and practical advice for making purchase decisions.',
+  blog_how_to: 'Write clear, step-by-step instructions. Use numbered steps for processes. Include practical tips and warnings.',
+  blog_review: 'Write an honest, detailed review. Include pros and cons. Be specific about features and real-world usage.',
+  product_category: 'Write informative product category content. Cover the range of products, key differences, and help users navigate their options.',
+  product_description: 'Write compelling product descriptions. Highlight key features, benefits, and use cases. Be specific and persuasive.',
   comparison: 'Write a balanced comparison. Use specific criteria. Include a clear recommendation at the end.',
   news_article: 'Write in a journalistic style with the inverted pyramid structure. Lead with the most important information.',
 };
 
 export async function POST(req: NextRequest) {
   try {
-    const { instruction, contentType, targetKeyword, existingContent, tone } =
+    const { instruction, contentType, targetKeyword, existingContent, tone, skillContent } =
       await req.json();
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      return new Response(
-        JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const anthropic = new Anthropic({ apiKey });
+    const { provider, model, maxTokens, temperature } = await getProviderForAction('writing');
 
     const typePrompt = CONTENT_TYPE_PROMPTS[contentType] || CONTENT_TYPE_PROMPTS.blog_post;
     const toneStr = tone ? `Write in a ${tone} tone.` : '';
@@ -31,7 +26,17 @@ export async function POST(req: NextRequest) {
       ? `The target keyword is "${targetKeyword}". Naturally incorporate it and related terms.`
       : '';
 
-    const systemPrompt = `You are a skilled content writer. ${typePrompt} ${toneStr} ${keywordStr}
+    // If a skill is provided, use it as the primary system prompt
+    const systemPrompt = skillContent
+      ? `${skillContent}\n\n${toneStr} ${keywordStr}
+
+Additional writing guidelines:
+- Write naturally, varying sentence length and structure
+- Avoid AI cliches: "delve", "landscape", "furthermore", "moreover", "comprehensive", "it's worth noting"
+- Use contractions naturally (don't, can't, won't)
+- Avoid excessive adverbs (significantly, effectively, ultimately)
+- Output clean prose or markdown. No meta-commentary about the writing task.`
+      : `You are a skilled content writer. ${typePrompt} ${toneStr} ${keywordStr}
 
 Important writing guidelines:
 - Write naturally, varying sentence length and structure
@@ -46,34 +51,15 @@ Important writing guidelines:
       ? `${instruction}\n\nExisting content for context:\n${existingContent.slice(0, 2000)}`
       : instruction;
 
-    const stream = anthropic.messages.stream({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
+    const stream = provider.stream({
+      model,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
+      maxTokens,
+      temperature,
     });
 
-    const readableStream = new ReadableStream({
-      async start(controller) {
-        try {
-          for await (const event of stream) {
-            if (
-              event.type === 'content_block_delta' &&
-              event.delta.type === 'text_delta'
-            ) {
-              controller.enqueue(
-                new TextEncoder().encode(event.delta.text)
-              );
-            }
-          }
-          controller.close();
-        } catch (error) {
-          controller.error(error);
-        }
-      },
-    });
-
-    return new Response(readableStream, {
+    return new Response(stream, {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' },
     });
   } catch (error) {

@@ -14,23 +14,26 @@ import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2 } from 'lucide-react';
-import { CONTENT_TYPE_LABELS, type ContentType } from '@/types/document';
+import { CONTENT_FORMAT_GROUPS, CONTENT_FORMAT_LABELS, type ContentFormat } from '@/types/document';
 
 interface CreateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
+  projectId?: number | null;
 }
 
-export function CreateDialog({ open, onOpenChange, onCreated }: CreateDialogProps) {
+export function CreateDialog({ open, onOpenChange, onCreated, projectId }: CreateDialogProps) {
   const router = useRouter();
   const [title, setTitle] = useState('');
-  const [contentType, setContentType] = useState<ContentType>('blog_post');
+  const [contentType, setContentType] = useState<ContentFormat>('blog_post');
   const [keyword, setKeyword] = useState('');
   const [creating, setCreating] = useState(false);
 
@@ -44,6 +47,7 @@ export function CreateDialog({ open, onOpenChange, onCreated }: CreateDialogProp
           title: title.trim() || 'Untitled',
           contentType,
           targetKeyword: keyword.trim() || null,
+          projectId: projectId ?? null,
         }),
       });
       if (res.ok) {
@@ -75,16 +79,21 @@ export function CreateDialog({ open, onOpenChange, onCreated }: CreateDialogProp
             />
           </div>
           <div>
-            <label className="text-sm font-medium mb-1.5 block">Content Type</label>
-            <Select value={contentType} onValueChange={(val) => setContentType(val as ContentType)}>
+            <label className="text-sm font-medium mb-1.5 block">Content Format</label>
+            <Select value={contentType} onValueChange={(val) => setContentType(val as ContentFormat)}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(CONTENT_TYPE_LABELS).map(([key, label]) => (
-                  <SelectItem key={key} value={key}>
-                    {label}
-                  </SelectItem>
+                {Object.entries(CONTENT_FORMAT_GROUPS).map(([key, group]) => (
+                  <SelectGroup key={key}>
+                    <SelectLabel>{group.label}</SelectLabel>
+                    {group.formats.map((f) => (
+                      <SelectItem key={f} value={f}>
+                        {CONTENT_FORMAT_LABELS[f]}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
                 ))}
               </SelectContent>
             </Select>

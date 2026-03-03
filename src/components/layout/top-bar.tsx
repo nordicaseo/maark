@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -28,8 +30,8 @@ import {
   FileCode,
   FileType,
 } from 'lucide-react';
-import type { Document, ContentType, DocumentStatus } from '@/types/document';
-import { CONTENT_TYPE_LABELS, STATUS_LABELS } from '@/types/document';
+import type { Document, ContentFormat } from '@/types/document';
+import { CONTENT_FORMAT_GROUPS, CONTENT_FORMAT_LABELS, STATUS_LABELS } from '@/types/document';
 
 interface TopBarProps {
   document: Document | null;
@@ -42,6 +44,7 @@ interface TopBarProps {
   rightOpen: boolean;
   onToggleLeft: () => void;
   onToggleRight: () => void;
+  isAiWriting?: boolean;
 }
 
 export function TopBar({
@@ -55,6 +58,7 @@ export function TopBar({
   rightOpen,
   onToggleLeft,
   onToggleRight,
+  isAiWriting,
 }: TopBarProps) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState('');
@@ -120,7 +124,15 @@ export function TopBar({
 
           <div className="flex-1" />
 
-          {/* Content Type */}
+          {/* AI Writing indicator */}
+          {isAiWriting && (
+            <span className="text-xs text-primary flex items-center gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              AI Writing...
+            </span>
+          )}
+
+          {/* Content Format */}
           <Select
             value={document.contentType}
             onValueChange={(val) =>
@@ -131,10 +143,15 @@ export function TopBar({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {Object.entries(CONTENT_TYPE_LABELS).map(([key, label]) => (
-                <SelectItem key={key} value={key}>
-                  {label}
-                </SelectItem>
+              {Object.entries(CONTENT_FORMAT_GROUPS).map(([key, group]) => (
+                <SelectGroup key={key}>
+                  <SelectLabel>{group.label}</SelectLabel>
+                  {group.formats.map((f) => (
+                    <SelectItem key={f} value={f}>
+                      {CONTENT_FORMAT_LABELS[f]}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
               ))}
             </SelectContent>
           </Select>

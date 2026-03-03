@@ -23,9 +23,10 @@ interface TiptapEditorProps {
   document: Document;
   onSave: (content: any, plainText: string, wordCount: number) => void;
   onEditorReady?: (editor: Editor) => void;
+  isAiWriting?: boolean;
 }
 
-export function TiptapEditor({ document, onSave, onEditorReady }: TiptapEditorProps) {
+export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting }: TiptapEditorProps) {
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
   const docIdRef = useRef(document.id);
   const [formatting, setFormatting] = useState(false);
@@ -81,6 +82,13 @@ export function TiptapEditor({ document, onSave, onEditorReady }: TiptapEditorPr
       }, 2000);
     },
   });
+
+  // Disable editing during AI writing
+  useEffect(() => {
+    if (editor) {
+      editor.setEditable(!isAiWriting);
+    }
+  }, [editor, isAiWriting]);
 
   // Notify parent of editor instance
   useEffect(() => {
@@ -145,7 +153,7 @@ export function TiptapEditor({ document, onSave, onEditorReady }: TiptapEditorPr
   if (!editor) return null;
 
   return (
-    <div>
+    <div className={isAiWriting ? 'border-l-2 border-primary/50 animate-pulse pl-2' : ''}>
       <EditorToolbar editor={editor} onFixFormatting={handleFixFormatting} formatting={formatting} />
 
       {editor && (

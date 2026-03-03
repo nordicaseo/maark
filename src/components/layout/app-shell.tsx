@@ -6,8 +6,6 @@ import { DocumentList } from '@/components/documents/document-list';
 import { TiptapEditor } from '@/components/editor/tiptap-editor';
 import { AnalysisSidebar } from '@/components/sidebar/analysis-sidebar';
 import { TopBar } from '@/components/layout/top-bar';
-import { Button } from '@/components/ui/button';
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
 import type { Document } from '@/types/document';
 import type { AiDetectionResult, ContentQualityResult, SemanticResult } from '@/types/analysis';
@@ -31,6 +29,30 @@ export function AppShell({ documentId }: AppShellProps) {
   const [plainText, setPlainText] = useState('');
   const editorRef = useRef<Editor | null>(null);
 
+  // Project state
+  const [activeProjectId, setActiveProjectId] = useState<number | null>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('maark_activeProjectId');
+      return stored ? parseInt(stored, 10) : null;
+    }
+    return null;
+  });
+
+  // Live AI writing state
+  const [isAiWriting, setIsAiWriting] = useState(false);
+  const aiAbortRef = useRef<AbortController | null>(null);
+
+  const handleProjectChange = useCallback((projectId: number | null) => {
+    setActiveProjectId(projectId);
+    if (typeof window !== 'undefined') {
+      if (projectId !== null) {
+        localStorage.setItem('maark_activeProjectId', projectId.toString());
+      } else {
+        localStorage.removeItem('maark_activeProjectId');
+      }
+    }
+  }, []);
+
   const handleInsertAiText = useCallback((text: string) => {
     const editor = editorRef.current;
     if (!editor) return;
@@ -39,21 +61,22 @@ export function AppShell({ documentId }: AppShellProps) {
 
   const fetchDocuments = useCallback(async () => {
     try {
-      const res = await fetch('/api/documents');
+      const url = activeProjectId
+        ? `/api/documents?projectId=${activeProjectId}`
+        : '/api/documents';
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setDocuments(data);
       }
     } catch {}
-  }, []);
+  }, [activeProjectId]);
 
   const handleReplaceContent = useCallback((text: string) => {
     const editor = editorRef.current;
     if (!editor) return;
-    // Convert markdown to HTML so TipTap renders headings, lists, tables etc.
     const html = marked.parse(text, { async: false }) as string;
     editor.chain().focus().clearContent().insertContent(html).run();
-    // Trigger a save after replace
     const content = editor.getJSON();
     const newText = editor.getText();
     const words = newText.split(/\s+/).filter(Boolean).length;
@@ -74,6 +97,145 @@ export function AppShell({ documentId }: AppShellProps) {
       }).catch(() => setSaveStatus('idle'));
     }
   }, [document, fetchDocuments]);
+
+  // Live AI generation: streams tokens directly into the editor
+  const handleLiveGenerate = useCallback(
+    async (instruction: string, tone: string, skillContent?: string) => {
+      const editor = editorRef.current;
+      if (!editor || !document) return;
+
+      setIsAiWriting(true);
+      const controller = new AbortController();
+      aiAbortRef.current = controller;
+
+      // Record insert position
+      const docSizeBefore = editor.state.doc.content.size;
+      let accumulated = '';
+
+      try {
+        const res = await fetch('/api/ai/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            instruction,
+            contentType: document.contentType,
+            targetKeyword: document.targetKeyword,
+            existingContent: plainText.slice(0, 2000),
+            tone,
+            skillContent,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          setIsAiWriting(false);
+          return;
+        }
+
+        const reader = res.body?.getReader();
+        if (!reader) {
+          setIsAiWriting(false);
+          return;
+        }
+
+        const decoder = new TextDecoder();
+        accumulated = '';
+        let lastUpdate = 0;
+        const THROTTLE_MS = 300;
+
+        // Insert position: end of current content
+        const insertFrom = docSizeBefore - 1; // before closing doc node
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          accumulated += decoder.decode(value, { stream: true });
+
+          const now = Date.now();
+          if (now - lastUpdate >= THROTTLE_MS) {
+            lastUpdate = now;
+            // Parse markdown to HTML and replace the AI-written range
+            const html = marked.parse(accumulated, { async: false }) as string;
+            const currentSize = editor.state.doc.content.size;
+
+            // Delete previously inserted AI content and re-insert
+            if (currentSize > docSizeBefore) {
+              editor
+                .chain()
+                .deleteRange({ from: insertFrom, to: currentSize - 1 })
+                .insertContentAt(insertFrom, html)
+                .run();
+            } else {
+              editor.chain().insertContentAt(insertFrom, html).run();
+            }
+          }
+        }
+
+        // Final update with complete content
+        const finalHtml = marked.parse(accumulated, { async: false }) as string;
+        const currentSize = editor.state.doc.content.size;
+        if (currentSize > docSizeBefore) {
+          editor
+            .chain()
+            .deleteRange({ from: insertFrom, to: currentSize - 1 })
+            .insertContentAt(insertFrom, finalHtml)
+            .run();
+        } else {
+          editor.chain().insertContentAt(insertFrom, finalHtml).run();
+        }
+
+        // Save after generation completes
+        const content = editor.getJSON();
+        const newText = editor.getText();
+        const words = newText.split(/\s+/).filter(Boolean).length;
+        setPlainText(newText);
+        setSaveStatus('saving');
+        const saveRes = await fetch(`/api/documents/${document.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content, plainText: newText, wordCount: words }),
+        });
+        if (saveRes.ok) {
+          const updated = await saveRes.json();
+          setDocument(updated);
+          setSaveStatus('saved');
+          fetchDocuments();
+        }
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          // User cancelled — keep what's in the editor, do a final parse + save
+          const finalHtml = marked.parse(accumulated || '', { async: false }) as string;
+          if (finalHtml && editor) {
+            const content = editor.getJSON();
+            const newText = editor.getText();
+            const words = newText.split(/\s+/).filter(Boolean).length;
+            setPlainText(newText);
+            setSaveStatus('saving');
+            fetch(`/api/documents/${document.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ content, plainText: newText, wordCount: words }),
+            }).then(async (res) => {
+              if (res.ok) {
+                const updated = await res.json();
+                setDocument(updated);
+                setSaveStatus('saved');
+              }
+            }).catch(() => setSaveStatus('idle'));
+          }
+        }
+      }
+
+      setIsAiWriting(false);
+    },
+    [document, plainText, fetchDocuments]
+  );
+
+  const handleCancelGeneration = useCallback(() => {
+    aiAbortRef.current?.abort();
+    setIsAiWriting(false);
+  }, []);
 
   const handleExport = useCallback((format: 'html' | 'markdown' | 'text') => {
     const editor = editorRef.current;
@@ -143,7 +305,6 @@ ${editorHtml}
       if (res.ok) {
         const data = await res.json();
         setDocument(data);
-        // Initialise plainText so Analyze works without editing first
         if (data.plainText) setPlainText(data.plainText);
       }
     } catch {}
@@ -161,7 +322,7 @@ ${editorHtml}
 
   const handleSave = useCallback(
     async (content: any, text: string, wordCount: number) => {
-      if (!document) return;
+      if (!document || isAiWriting) return; // Don't auto-save during AI writing
       setSaveStatus('saving');
       setPlainText(text);
       try {
@@ -180,7 +341,7 @@ ${editorHtml}
         setSaveStatus('idle');
       }
     },
-    [document, fetchDocuments]
+    [document, fetchDocuments, isAiWriting]
   );
 
   const handleAnalyze = useCallback(async () => {
@@ -267,6 +428,8 @@ ${editorHtml}
           documents={documents}
           activeId={documentId}
           onRefresh={fetchDocuments}
+          activeProjectId={activeProjectId}
+          onProjectChange={handleProjectChange}
         />
       </div>
 
@@ -283,6 +446,7 @@ ${editorHtml}
           rightOpen={rightOpen}
           onToggleLeft={() => setLeftOpen(!leftOpen)}
           onToggleRight={() => setRightOpen(!rightOpen)}
+          isAiWriting={isAiWriting}
         />
         <div className="flex-1 overflow-auto">
           {document ? (
@@ -291,6 +455,7 @@ ${editorHtml}
                 document={document}
                 onSave={handleSave}
                 onEditorReady={(editor) => { editorRef.current = editor; }}
+                isAiWriting={isAiWriting}
               />
             </div>
           ) : (
@@ -320,6 +485,10 @@ ${editorHtml}
           plainText={plainText}
           onInsertAiText={handleInsertAiText}
           onReplaceContent={handleReplaceContent}
+          isAiWriting={isAiWriting}
+          onLiveGenerate={handleLiveGenerate}
+          onCancelGeneration={handleCancelGeneration}
+          activeProjectId={activeProjectId}
         />
       </div>
     </div>

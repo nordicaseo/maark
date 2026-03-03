@@ -30,6 +30,10 @@ interface AnalysisSidebarProps {
   plainText: string;
   onInsertAiText: (text: string) => void;
   onReplaceContent: (text: string) => void;
+  isAiWriting?: boolean;
+  onLiveGenerate: (instruction: string, tone: string, skillContent?: string) => void;
+  onCancelGeneration: () => void;
+  activeProjectId?: number | null;
 }
 
 interface SidebarContentProps {
@@ -44,6 +48,10 @@ interface SidebarContentProps {
   onReplaceContent: (text: string) => void;
   onOpenReport: () => void;
   expanded?: boolean;
+  isAiWriting?: boolean;
+  onLiveGenerate: (instruction: string, tone: string, skillContent?: string) => void;
+  onCancelGeneration: () => void;
+  activeProjectId?: number | null;
 }
 
 function SidebarContent({
@@ -58,6 +66,10 @@ function SidebarContent({
   onReplaceContent,
   onOpenReport,
   expanded,
+  isAiWriting,
+  onLiveGenerate,
+  onCancelGeneration,
+  activeProjectId,
 }: SidebarContentProps) {
   return (
     <Tabs defaultValue="write" className="flex flex-col h-full">
@@ -75,7 +87,10 @@ function SidebarContent({
             contentType={document.contentType}
             targetKeyword={document.targetKeyword}
             existingContent={plainText}
-            onInsert={onInsertAiText}
+            projectId={activeProjectId}
+            isWriting={isAiWriting}
+            onLiveGenerate={onLiveGenerate}
+            onCancel={onCancelGeneration}
           />
         </TabsContent>
 
@@ -133,6 +148,10 @@ export function AnalysisSidebar({
   plainText,
   onInsertAiText,
   onReplaceContent,
+  isAiWriting,
+  onLiveGenerate,
+  onCancelGeneration,
+  activeProjectId,
 }: AnalysisSidebarProps) {
   const [reportOpen, setReportOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -172,6 +191,10 @@ export function AnalysisSidebar({
         onInsertAiText={onInsertAiText}
         onReplaceContent={onReplaceContent}
         onOpenReport={() => setReportOpen(true)}
+        isAiWriting={isAiWriting}
+        onLiveGenerate={onLiveGenerate}
+        onCancelGeneration={onCancelGeneration}
+        activeProjectId={activeProjectId}
       />
 
       {/* Expanded Dialog */}
@@ -205,6 +228,10 @@ export function AnalysisSidebar({
               onReplaceContent={onReplaceContent}
               onOpenReport={() => setReportOpen(true)}
               expanded
+              isAiWriting={isAiWriting}
+              onLiveGenerate={onLiveGenerate}
+              onCancelGeneration={onCancelGeneration}
+              activeProjectId={activeProjectId}
             />
           </div>
         </DialogContent>

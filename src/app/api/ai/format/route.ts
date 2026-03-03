@@ -1,17 +1,9 @@
 import { NextRequest } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { getProviderForAction } from '@/lib/ai';
 
 export async function POST(req: NextRequest) {
   try {
     const { html } = await req.json();
-
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      return new Response(
-        JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
 
     if (!html || html.trim().length < 20) {
       return new Response(
@@ -20,7 +12,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const anthropic = new Anthropic({ apiKey });
+    const { provider, model, maxTokens, temperature } = await getProviderForAction('formatting');
 
     const systemPrompt = `You are a professional content formatter. Your job is to take messy HTML content and return cleanly formatted HTML.
 
@@ -37,9 +29,8 @@ export async function POST(req: NextRequest) {
 ## OUTPUT:
 Return ONLY the cleaned HTML content. No wrapping <html>/<body> tags. No commentary or explanation. Just the formatted content HTML that can be inserted directly into an editor.`;
 
-    const stream = anthropic.messages.stream({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 8192,
+    const stream = provider.stream({
+      model,
       system: systemPrompt,
       messages: [
         {
@@ -47,27 +38,11 @@ Return ONLY the cleaned HTML content. No wrapping <html>/<body> tags. No comment
           content: `Fix the formatting of this HTML content:\n\n${html}`,
         },
       ],
+      maxTokens: Math.max(maxTokens, 8192),
+      temperature,
     });
 
-    const readableStream = new ReadableStream({
-      async start(controller) {
-        try {
-          for await (const event of stream) {
-            if (
-              event.type === 'content_block_delta' &&
-              event.delta.type === 'text_delta'
-            ) {
-              controller.enqueue(new TextEncoder().encode(event.delta.text));
-            }
-          }
-          controller.close();
-        } catch (error) {
-          controller.error(error);
-        }
-      },
-    });
-
-    return new Response(readableStream, {
+    return new Response(stream, {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' },
     });
   } catch (error) {

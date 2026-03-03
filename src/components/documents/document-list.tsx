@@ -14,13 +14,16 @@ import {
 } from '@/components/ui/select';
 import { Plus, FileText, Trash2 } from 'lucide-react';
 import { CreateDialog } from './create-dialog';
+import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import type { Document, DocumentStatus } from '@/types/document';
-import { CONTENT_TYPE_LABELS, STATUS_LABELS } from '@/types/document';
+import { STATUS_LABELS } from '@/types/document';
 
 interface DocumentListProps {
   documents: Document[];
   activeId?: number;
   onRefresh: () => void;
+  activeProjectId: number | null;
+  onProjectChange: (projectId: number | null) => void;
 }
 
 const statusColors: Record<DocumentStatus, string> = {
@@ -42,7 +45,7 @@ function ScoreDot({ score, max = 5 }: { score: number | null; max?: number }) {
   return <span className={`w-2 h-2 rounded-full ${color}`} />;
 }
 
-export function DocumentList({ documents, activeId, onRefresh }: DocumentListProps) {
+export function DocumentList({ documents, activeId, onRefresh, activeProjectId, onProjectChange }: DocumentListProps) {
   const router = useRouter();
   const [filter, setFilter] = useState<string>('all');
   const [showCreate, setShowCreate] = useState(false);
@@ -63,6 +66,14 @@ export function DocumentList({ documents, activeId, onRefresh }: DocumentListPro
 
   return (
     <div className="flex flex-col h-full">
+      {/* Project Switcher */}
+      <div className="px-2 pt-2">
+        <ProjectSwitcher
+          activeProjectId={activeProjectId}
+          onProjectChange={onProjectChange}
+        />
+      </div>
+
       <div className="p-3 border-b border-border flex items-center gap-2">
         <h2 className="text-sm font-semibold flex-1">Documents</h2>
         <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setShowCreate(true)}>
@@ -140,7 +151,12 @@ export function DocumentList({ documents, activeId, onRefresh }: DocumentListPro
         </div>
       </ScrollArea>
 
-      <CreateDialog open={showCreate} onOpenChange={setShowCreate} onCreated={onRefresh} />
+      <CreateDialog
+        open={showCreate}
+        onOpenChange={setShowCreate}
+        onCreated={onRefresh}
+        projectId={activeProjectId}
+      />
     </div>
   );
 }

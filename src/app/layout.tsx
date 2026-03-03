@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
+import { AuthProvider } from '@/components/auth/auth-provider';
 import { ThemeProvider } from '@/components/layout/theme-provider';
 import './globals.css';
 
@@ -14,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'ContentWriter - AI Content Grading & Writing',
-  description: 'AI-powered content writer with built-in grading, entity analysis, and AI detection scoring',
+  title: 'Maark - AI Content Writing Platform',
+  description: 'AI-powered content writing platform with skills, projects, and multi-provider AI',
 };
 
 export default function RootLayout({
@@ -26,7 +27,9 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <ThemeProvider>{children}</ThemeProvider>
+        <AuthProvider>
+          <ThemeProvider>{children}</ThemeProvider>
+        </AuthProvider>
       </body>
     </html>
   );
