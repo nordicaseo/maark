@@ -43,8 +43,16 @@ const baseDoc: Document = {
   updatedAt: new Date().toISOString(),
 };
 
+function makeDoc(id: number): Document {
+  return {
+    ...baseDoc,
+    id,
+    title: `${baseDoc.title} ${id}`,
+  };
+}
+
 describe('DocumentList sidebar cards', () => {
-  it('renders long title/status cards without clipping metadata', () => {
+  it('renders long title/status cards with a non-overlay action layout', () => {
     render(
       <DocumentList
         documents={[baseDoc]}
@@ -65,5 +73,31 @@ describe('DocumentList sidebar cards', () => {
     const card = title.closest('[role="button"]');
     expect(card).toBeInTheDocument();
     expect(card?.className).not.toContain('overflow-hidden');
+
+    const deleteButton = screen.getByRole('button', { name: 'Delete document' });
+    expect(deleteButton).toBeInTheDocument();
+    expect(deleteButton.className).not.toContain('absolute');
+  });
+
+  it('keeps footer links visible for large document lists', () => {
+    const manyDocs = Array.from({ length: 120 }, (_, i) => makeDoc(i + 1));
+
+    render(
+      <DocumentList
+        documents={manyDocs}
+        activeId={1}
+        onRefresh={() => {}}
+        activeProjectId={1}
+        onProjectChange={() => {}}
+      />
+    );
+
+    const keywordsLink = screen.getByRole('link', { name: 'Keywords' });
+    const pagesLink = screen.getByRole('link', { name: 'Pages' });
+
+    expect(keywordsLink).toBeInTheDocument();
+    expect(pagesLink).toBeInTheDocument();
+    expect(keywordsLink).toHaveAttribute('href', '/keywords?projectId=1');
+    expect(pagesLink).toHaveAttribute('href', '/pages?projectId=1');
   });
 });

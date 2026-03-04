@@ -87,7 +87,7 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full min-h-0 flex-col">
       {/* Project Switcher */}
       <div className="px-2 pt-2">
         <ProjectSwitcher
@@ -119,60 +119,63 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
         </Select>
       </div>
 
-      <ScrollArea className="flex-1 [scrollbar-gutter:stable]">
-        <div className="p-2 pr-4 space-y-1">
-          {filtered.map((doc) => (
-            <div
-              key={doc.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => router.push(withProjectScope(`/documents/${doc.id}`, activeProjectId))}
-              onKeyDown={(e) => { if (e.key === 'Enter') router.push(withProjectScope(`/documents/${doc.id}`, activeProjectId)); }}
-              className={`group relative w-full text-left rounded-md p-2 transition-colors hover:bg-accent cursor-pointer overflow-visible ${
-                activeId === doc.id ? 'bg-accent' : ''
-              }`}
-            >
-              <div className="flex items-start gap-1.5 min-w-0">
-                <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0 pr-7">
-                  <p className="text-sm font-medium leading-5 break-words [overflow-wrap:anywhere]">{doc.title}</p>
-                  <div className="mt-1 flex items-center gap-x-2 gap-y-1 flex-wrap text-[9px] text-muted-foreground">
-                    <Badge
-                      variant="secondary"
-                      className={`text-[9px] px-1 py-0 h-4 shrink-0 whitespace-nowrap max-w-full ${statusColors[doc.status]}`}
-                    >
-                      {STATUS_LABELS[doc.status]}
-                    </Badge>
-                    <span>{doc.wordCount || 0}w</span>
-                    <span>{timeAgo(doc.updatedAt)}</span>
+      <div className="min-h-0 flex-1">
+        <ScrollArea className="h-full [scrollbar-gutter:stable_both-edges]">
+          <div className="p-2 pr-3 space-y-1">
+            {filtered.map((doc) => (
+              <div
+                key={doc.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => router.push(withProjectScope(`/documents/${doc.id}`, activeProjectId))}
+                onKeyDown={(e) => { if (e.key === 'Enter') router.push(withProjectScope(`/documents/${doc.id}`, activeProjectId)); }}
+                className={`group w-full text-left rounded-md p-2 transition-colors hover:bg-accent cursor-pointer overflow-visible ${
+                  activeId === doc.id ? 'bg-accent' : ''
+                }`}
+              >
+                <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-1.5 min-w-0 max-w-full">
+                  <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <div className="min-w-0 max-w-full">
+                    <p className="text-sm font-medium leading-5 break-words [overflow-wrap:anywhere]">{doc.title}</p>
+                    <div className="mt-1 flex items-center gap-x-2 gap-y-1 flex-wrap text-[9px] text-muted-foreground">
+                      <Badge
+                        variant="secondary"
+                        className={`text-[9px] px-1 py-0 h-4 shrink-0 whitespace-nowrap ${statusColors[doc.status]}`}
+                      >
+                        {STATUS_LABELS[doc.status]}
+                      </Badge>
+                      <span>{doc.wordCount || 0}w</span>
+                      <span>{timeAgo(doc.updatedAt)}</span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                      <ScoreBar label="AI" score={doc.aiDetectionScore} max={5} invert />
+                      <ScoreBar label="SEO" score={doc.semanticScore} max={100} />
+                      <ScoreBar label="Q" score={doc.contentQualityScore} max={100} />
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                    <ScoreBar label="AI" score={doc.aiDetectionScore} max={5} invert />
-                    <ScoreBar label="SEO" score={doc.semanticScore} max={100} />
-                    <ScoreBar label="Q" score={doc.contentQualityScore} max={100} />
-                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => handleDelete(doc.id, e)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleDelete(doc.id, e); }}
+                    className="opacity-40 group-hover:opacity-100 hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 text-muted-foreground cursor-pointer shrink-0 mt-0.5"
+                    title="Delete document"
+                    aria-label="Delete document"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={(e) => handleDelete(doc.id, e)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleDelete(doc.id, e); }}
-                  className="absolute right-1.5 top-1.5 opacity-0 group-hover:opacity-100 hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 text-muted-foreground cursor-pointer"
-                  title="Delete document"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
               </div>
-            </div>
-          ))}
-          {filtered.length === 0 && (
-            <p className="text-xs text-muted-foreground text-center py-8">
-              No documents yet
-            </p>
-          )}
-        </div>
-      </ScrollArea>
+            ))}
+            {filtered.length === 0 && (
+              <p className="text-xs text-muted-foreground text-center py-8">
+                No documents yet
+              </p>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
 
-      <div className="p-2 border-t border-border space-y-0.5">
+      <div className="shrink-0 border-t border-border bg-card p-2 space-y-0.5">
         <Link
           href={withProjectScope('/mission-control', activeProjectId)}
           className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
