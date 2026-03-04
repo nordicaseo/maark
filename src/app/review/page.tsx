@@ -305,7 +305,7 @@ function ReviewCard({ doc, activeProjectId }: { doc: ReviewDocument; activeProje
             </Link>
           )}
           <Link
-            href={`/documents/${doc.id}`}
+            href={withProjectScope(`/documents/${doc.id}`, activeProjectId)}
             className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 rounded-md transition-colors"
           >
             <ExternalLink className="h-3.5 w-3.5" />
