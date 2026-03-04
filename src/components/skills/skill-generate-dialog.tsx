@@ -67,9 +67,9 @@ export function SkillGenerateDialog({ open, onOpenChange, onGenerated, projectId
         text += decoder.decode(value, { stream: true });
         setOutput(text);
       }
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        setOutput(`Error: ${err.message || 'Generation failed'}`);
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name !== 'AbortError') {
+        setOutput(`Error: ${(err as { message?: string })?.message || 'Generation failed'}`);
       }
     }
     setGenerating(false);

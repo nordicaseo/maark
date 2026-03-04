@@ -1,7 +1,9 @@
-export function debounce<T extends (...args: any[]) => any>(
+type AnyFn = (...args: unknown[]) => unknown;
+
+export function debounce<T extends AnyFn>(
   fn: T,
   ms: number
-): T & { cancel: () => void } {
+): ((...args: Parameters<T>) => void) & { cancel: () => void } {
   let timer: NodeJS.Timeout | null = null;
 
   const debounced = (...args: Parameters<T>) => {
@@ -13,5 +15,5 @@ export function debounce<T extends (...args: any[]) => any>(
     if (timer) clearTimeout(timer);
   };
 
-  return debounced as T & { cancel: () => void };
+  return debounced;
 }

@@ -1,7 +1,7 @@
 import { Mark, mergeAttributes } from '@tiptap/core';
 
 export interface CommentMarkOptions {
-  HTMLAttributes: Record<string, any>;
+  HTMLAttributes: Record<string, unknown>;
 }
 
 declare module '@tiptap/core' {

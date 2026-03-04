@@ -21,17 +21,21 @@ function InviteContent() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!token) {
-      setInvite({ valid: false, error: 'No invite token provided' });
-      setLoading(false);
-      return;
-    }
+    const timeout = window.setTimeout(() => {
+      if (!token) {
+        setInvite({ valid: false, error: 'No invite token provided' });
+        setLoading(false);
+        return;
+      }
 
-    fetch(`/api/auth/invite?token=${encodeURIComponent(token)}`)
-      .then((res) => res.json())
-      .then((data) => setInvite(data))
-      .catch(() => setInvite({ valid: false, error: 'Failed to validate invitation' }))
-      .finally(() => setLoading(false));
+      fetch(`/api/auth/invite?token=${encodeURIComponent(token)}`)
+        .then((res) => res.json())
+        .then((data) => setInvite(data))
+        .catch(() => setInvite({ valid: false, error: 'Failed to validate invitation' }))
+        .finally(() => setLoading(false));
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
   }, [token]);
 
   const handleSignIn = async (provider: 'google' | 'github') => {

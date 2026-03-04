@@ -44,7 +44,7 @@ export function QualityPanel({ result, analyzing }: QualityPanelProps) {
   if (!result) {
     return (
       <div className="text-center py-12 text-muted-foreground">
-        <p className="text-sm">Click "Analyze" to check content quality</p>
+        <p className="text-sm">Click &quot;Analyze&quot; to check content quality</p>
         <p className="text-xs mt-1">Measures readability, structure, and completeness</p>
       </div>
     );

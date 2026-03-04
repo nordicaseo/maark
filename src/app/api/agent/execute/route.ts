@@ -130,9 +130,10 @@ export async function POST(req: NextRequest) {
           .where(eq(skillParts.skillId, resolvedSkillId));
 
         if (parts.length > 0) {
-          skillContent = parts
-            .sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-            .map((p: any) => p.content)
+          const orderedParts = (parts as Array<{ sortOrder?: number | null; content: string }>)
+            .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+          skillContent = orderedParts
+            .map((p) => p.content)
             .join('\n\n');
         } else if (skill.content) {
           skillContent = skill.content;

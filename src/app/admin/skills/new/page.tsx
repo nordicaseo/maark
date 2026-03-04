@@ -151,8 +151,8 @@ export default function SkillWizardPage() {
         // Fetch projects for save step
         fetch('/api/projects').then(r => r.ok ? r.json() : []).then(setProjects).catch(() => {});
       }
-    } catch (err: any) {
-      setError(err.message || 'Analysis failed');
+    } catch (err: unknown) {
+      setError((err as { message?: string })?.message || 'Analysis failed');
     } finally {
       setAnalyzing(false);
     }
@@ -231,8 +231,8 @@ export default function SkillWizardPage() {
       }
 
       router.push(`/admin/skills/${skill.id}`);
-    } catch (err: any) {
-      setError(err.message || 'Failed to save skill');
+    } catch (err: unknown) {
+      setError((err as { message?: string })?.message || 'Failed to save skill');
     } finally {
       setSaving(false);
     }

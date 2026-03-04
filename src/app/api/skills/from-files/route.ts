@@ -99,10 +99,11 @@ export async function POST(req: NextRequest) {
         ],
       });
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error generating skill from files:', error);
+    const message = (error as { message?: string })?.message;
     return NextResponse.json(
-      { error: error.message || 'Failed to process files' },
+      { error: message || 'Failed to process files' },
       { status: 500 }
     );
   }

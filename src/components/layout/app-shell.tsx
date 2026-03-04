@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { marked } from 'marked';
+import type { JSONContent } from '@tiptap/core';
 import { DocumentList } from '@/components/documents/document-list';
 import { TiptapEditor } from '@/components/editor/tiptap-editor';
 import { AnalysisSidebar } from '@/components/sidebar/analysis-sidebar';
@@ -204,8 +205,8 @@ export function AppShell({ documentId }: AppShellProps) {
           setSaveStatus('saved');
           fetchDocuments();
         }
-      } catch (err: any) {
-        if (err.name === 'AbortError') {
+      } catch (err: unknown) {
+        if ((err as { name?: string })?.name === 'AbortError') {
           // User cancelled — keep what's in the editor, do a final parse + save
           const finalHtml = marked.parse(accumulated || '', { async: false }) as string;
           if (finalHtml && editor) {
@@ -327,17 +328,22 @@ ${editorHtml}
   }, []);
 
   useEffect(() => {
-    fetchDocuments();
+    const timeout = window.setTimeout(() => {
+      void fetchDocuments();
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [fetchDocuments]);
 
   useEffect(() => {
-    if (documentId) {
-      fetchDocument(documentId);
-    }
+    if (!documentId) return;
+    const timeout = window.setTimeout(() => {
+      void fetchDocument(documentId);
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [documentId, fetchDocument]);
 
   const handleSave = useCallback(
-    async (content: any, text: string, wordCount: number) => {
+    async (content: JSONContent, text: string, wordCount: number) => {
       if (!document || isAiWriting) return; // Don't auto-save during AI writing
       setSaveStatus('saving');
       setPlainText(text);

@@ -11,6 +11,7 @@ import {
 } from '@/lib/sync/document-task-sync';
 import { useTeamMembers } from './team-members-provider';
 import { generateHTML } from '@tiptap/core';
+import type { JSONContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import Underline from '@tiptap/extension-underline';
@@ -64,6 +65,15 @@ interface TaskDetailPanelProps {
   onClose: () => void;
 }
 
+interface AgentRunResult {
+  error?: string;
+  revisionsApplied?: number;
+  wordCount?: number;
+  aiDetectionScore?: number | null;
+  contentQualityScore?: number | null;
+  previewUrl?: string;
+}
+
 export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
   const tasks = useQuery(api.tasks.list, {});
   const task = tasks?.find((t) => t._id === taskId) ?? null;
@@ -81,14 +91,14 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
   const { members: teamMembers, getMember } = useTeamMembers();
   const [agentRunning, setAgentRunning] = useState(false);
   const [feedbackRunning, setFeedbackRunning] = useState(false);
-  const [lastResult, setLastResult] = useState<any>(null);
+  const [lastResult, setLastResult] = useState<AgentRunResult | null>(null);
   const [messageText, setMessageText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // ─── Document content preview ──────────────────────────────────
   const [docPreview, setDocPreview] = useState<{
     title: string;
-    content: any | null;       // TipTap JSON
+    content: JSONContent | null;
     plainText: string | null;
     wordCount: number;
     status: string;
@@ -125,7 +135,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
         if (!cancelled && doc) {
           setDocPreview({
             title: doc.title,
-            content: doc.content,
+            content: doc.content as JSONContent | null,
             plainText: doc.plainText,
             wordCount: doc.wordCount || 0,
             status: doc.status,

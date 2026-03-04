@@ -42,7 +42,7 @@ export const updateStatus = mutation({
     currentTaskId: v.optional(v.id("tasks")),
   },
   handler: async (ctx, args) => {
-    const updates: Record<string, any> = {
+    const updates: Record<string, unknown> = {
       status: args.status,
       updatedAt: Date.now(),
     };

@@ -1,24 +1,27 @@
-export function extractPlainText(tiptapJson: any): string {
+import type { JSONContent } from '@tiptap/core';
+
+export function extractPlainText(tiptapJson: JSONContent | null | undefined): string {
   if (!tiptapJson || !tiptapJson.content) return '';
 
-  function walk(node: any): string {
+  function walk(node: JSONContent): string {
     if (node.type === 'text') return node.text || '';
     if (!node.content) return '';
+    const nodeType = node.type ?? '';
 
     const texts = node.content.map(walk);
     const joined = texts.join('');
 
     if (
       ['paragraph', 'heading', 'blockquote', 'listItem', 'taskItem'].includes(
-        node.type
+        nodeType
       )
     ) {
       return joined + '\n';
     }
-    if (['bulletList', 'orderedList', 'taskList'].includes(node.type)) {
+    if (['bulletList', 'orderedList', 'taskList'].includes(nodeType)) {
       return joined + '\n';
     }
-    if (node.type === 'horizontalRule') return '\n---\n';
+    if (nodeType === 'horizontalRule') return '\n---\n';
 
     return joined;
   }

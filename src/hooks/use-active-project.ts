@@ -44,7 +44,10 @@ export function useActiveProject(initialValue: number | null = null) {
 
   useEffect(() => {
     const synced = readInitialProjectId(initialValue);
-    setActiveProjectIdState((prev) => (prev === synced ? prev : synced));
+    const timeout = window.setTimeout(() => {
+      setActiveProjectIdState((prev) => (prev === synced ? prev : synced));
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [initialValue]);
 
   const setActiveProjectId = useCallback((projectId: number | null) => {

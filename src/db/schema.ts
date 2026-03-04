@@ -1,63 +1,17 @@
-// Re-export the correct schema based on environment
-// In local dev (no POSTGRES_URL), we use SQLite
-// In production (Vercel), we use Postgres
+import * as pgSchema from './schema-pg';
+import * as sqliteSchema from './schema-sqlite';
 
-const isVercel = !!process.env.POSTGRES_URL;
+const schema = process.env.POSTGRES_URL ? pgSchema : sqliteSchema;
 
-let documents: any;
-let serpCache: any;
-let analysisSnapshots: any;
-let users: any;
-let projects: any;
-let projectMembers: any;
-let skills: any;
-let skillParts: any;
-let aiProviders: any;
-let aiModelConfig: any;
-let documentComments: any;
-let invitations: any;
-
-if (isVercel) {
-  const pg = require('./schema-pg');
-  documents = pg.documents;
-  serpCache = pg.serpCache;
-  analysisSnapshots = pg.analysisSnapshots;
-  users = pg.users;
-  projects = pg.projects;
-  projectMembers = pg.projectMembers;
-  skills = pg.skills;
-  skillParts = pg.skillParts;
-  aiProviders = pg.aiProviders;
-  aiModelConfig = pg.aiModelConfig;
-  documentComments = pg.documentComments;
-  invitations = pg.invitations;
-} else {
-  const sqlite = require('./schema-sqlite');
-  documents = sqlite.documents;
-  serpCache = sqlite.serpCache;
-  analysisSnapshots = sqlite.analysisSnapshots;
-  users = sqlite.users;
-  projects = sqlite.projects;
-  projectMembers = sqlite.projectMembers;
-  skills = sqlite.skills;
-  skillParts = sqlite.skillParts;
-  aiProviders = sqlite.aiProviders;
-  aiModelConfig = sqlite.aiModelConfig;
-  documentComments = sqlite.documentComments;
-  invitations = sqlite.invitations;
-}
-
-export {
-  documents,
-  serpCache,
-  analysisSnapshots,
-  users,
-  projects,
-  projectMembers,
-  skills,
-  skillParts,
-  aiProviders,
-  aiModelConfig,
-  documentComments,
-  invitations,
-};
+export const documents = schema.documents;
+export const serpCache = schema.serpCache;
+export const analysisSnapshots = schema.analysisSnapshots;
+export const users = schema.users;
+export const projects = schema.projects;
+export const projectMembers = schema.projectMembers;
+export const skills = schema.skills;
+export const skillParts = schema.skillParts;
+export const aiProviders = schema.aiProviders;
+export const aiModelConfig = schema.aiModelConfig;
+export const documentComments = schema.documentComments;
+export const invitations = schema.invitations;

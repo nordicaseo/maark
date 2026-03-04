@@ -63,10 +63,13 @@ export async function POST(req: NextRequest) {
     }
 
     return Response.json({ url: imageUrl, revisedPrompt });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Image generation error:', error);
 
-    if (error?.status === 400) {
+    const status = (error as { status?: number })?.status;
+    const message = (error as { message?: string })?.message;
+
+    if (status === 400) {
       return Response.json(
         { error: 'Image generation was rejected. Try a different prompt.' },
         { status: 400 }
@@ -74,7 +77,7 @@ export async function POST(req: NextRequest) {
     }
 
     return Response.json(
-      { error: error?.message || 'Image generation failed' },
+      { error: message || 'Image generation failed' },
       { status: 500 }
     );
   }

@@ -10,12 +10,26 @@ export async function GET() {
   const auth = await requireRole('admin');
   if (auth.error) return auth.error;
   try {
-    const configs = await db.select().from(aiModelConfig);
-    const providers = await db.select().from(aiProviders);
+    const configs = (await db.select().from(aiModelConfig)) as Array<{
+      id: number;
+      action: string;
+      providerId: number;
+      model: string;
+      maxTokens: number;
+      temperature: number;
+    }>;
+    const providers = (await db.select().from(aiProviders)) as Array<{
+      id: number;
+      name: string;
+      displayName: string | null;
+    }>;
 
-    const providerMap = new Map<number, any>(providers.map((p: any) => [p.id, p]));
+    const providerMap = new Map<number, (typeof providers)[number]>();
+    for (const provider of providers) {
+      providerMap.set(provider.id, provider);
+    }
 
-    const enriched = configs.map((c: any) => {
+    const enriched = configs.map((c) => {
       const provider = providerMap.get(c.providerId);
       return {
         ...c,

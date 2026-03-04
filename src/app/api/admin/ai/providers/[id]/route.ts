@@ -20,7 +20,7 @@ export async function PATCH(
   const { id } = await params;
   try {
     const body = await req.json();
-    const updateData: any = { updatedAt: dbNow() };
+    const updateData: Record<string, unknown> = { updatedAt: dbNow() };
 
     if (body.name !== undefined) updateData.name = body.name;
     if (body.displayName !== undefined) updateData.displayName = body.displayName;

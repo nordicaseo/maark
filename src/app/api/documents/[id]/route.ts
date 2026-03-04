@@ -41,7 +41,7 @@ export async function GET(
     }
 
     return NextResponse.json(doc);
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: 'Failed to fetch' }, { status: 500 });
   }
 }
@@ -66,7 +66,7 @@ export async function PATCH(
   try {
     const body = await req.json();
 
-    const updateData: any = { updatedAt: dbNow() };
+    const updateData: Record<string, unknown> = { updatedAt: dbNow() };
     if (body.title !== undefined) updateData.title = body.title;
     if (body.content !== undefined) updateData.content = body.content;
     if (body.plainText !== undefined) updateData.plainText = body.plainText;
@@ -79,13 +79,18 @@ export async function PATCH(
     if (body.semanticScore !== undefined) updateData.semanticScore = body.semanticScore;
     if (body.contentQualityScore !== undefined)
       updateData.contentQualityScore = body.contentQualityScore;
-    if (body.projectId !== undefined)
-      updateData.projectId = body.projectId ? parseInt(body.projectId, 10) : null;
+    const parsedProjectId =
+      body.projectId !== undefined
+        ? (body.projectId ? parseInt(body.projectId, 10) : null)
+        : undefined;
+    if (parsedProjectId !== undefined) {
+      updateData.projectId = parsedProjectId;
+    }
     if (body.authorId !== undefined) updateData.authorId = body.authorId || null;
 
     if (
       body.projectId !== undefined &&
-      !(await userCanAccessProject(user, updateData.projectId))
+      !(await userCanAccessProject(user, parsedProjectId))
     ) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
@@ -125,7 +130,7 @@ export async function PATCH(
     }
 
     return NextResponse.json(doc);
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
   }
 }
@@ -150,7 +155,7 @@ export async function DELETE(
   try {
     await db.delete(documents).where(eq(documents.id, documentId));
     return NextResponse.json({ success: true });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: 'Failed to delete' }, { status: 500 });
   }
 }

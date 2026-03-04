@@ -47,19 +47,23 @@ export function SkillEditorDialog({ open, onOpenChange, onSaved, skill, projectI
   }, [open]);
 
   useEffect(() => {
-    if (skill) {
-      setName(skill.name);
-      setDescription(skill.description || '');
-      setContent(skill.content);
-      setIsGlobal(skill.isGlobal === 1);
-      setSkillProjectId(skill.projectId?.toString() || 'none');
-    } else {
-      setName('');
-      setDescription('');
-      setContent('');
-      setIsGlobal(false);
-      setSkillProjectId(projectId?.toString() || 'none');
-    }
+    const timeout = window.setTimeout(() => {
+      if (skill) {
+        setName(skill.name);
+        setDescription(skill.description || '');
+        setContent(skill.content);
+        setIsGlobal(skill.isGlobal === 1);
+        setSkillProjectId(skill.projectId?.toString() || 'none');
+      } else {
+        setName('');
+        setDescription('');
+        setContent('');
+        setIsGlobal(false);
+        setSkillProjectId(projectId?.toString() || 'none');
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
   }, [skill, open, projectId]);
 
   const handleSave = async () => {

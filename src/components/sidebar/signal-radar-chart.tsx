@@ -54,6 +54,22 @@ interface CustomTickProps {
   fontSize?: number;
 }
 
+interface RadarDatum {
+  name: string;
+  fullName: string;
+  score: number;
+  weight: number;
+}
+
+interface CustomTooltipPayload {
+  payload: RadarDatum;
+}
+
+interface CustomTooltipProps {
+  active?: boolean;
+  payload?: CustomTooltipPayload[];
+}
+
 function CustomTick({ x = 0, y = 0, payload, signals = [], fontSize = 9 }: CustomTickProps) {
   if (!payload) return null;
   const signal = signals[payload.index];
@@ -74,9 +90,9 @@ function CustomTick({ x = 0, y = 0, payload, signals = [], fontSize = 9 }: Custo
   );
 }
 
-function CustomTooltip({ active, payload }: any) {
+function CustomTooltip({ active, payload }: CustomTooltipProps) {
   if (!active || !payload?.[0]) return null;
-  const data = payload[0].payload;
+  const data = payload[0].payload as RadarDatum;
   return (
     <div className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 shadow-xl">
       <p className="text-xs font-semibold text-white">{data.fullName}</p>
@@ -94,7 +110,7 @@ function CustomTooltip({ active, payload }: any) {
 }
 
 export function SignalRadarChart({ signals, size = 'small' }: SignalRadarChartProps) {
-  const data = signals.map((s) => ({
+  const data: RadarDatum[] = signals.map((s) => ({
     name: SHORT_NAMES[s.signalId] || s.name,
     fullName: `#${s.signalId} ${s.name}`,
     score: s.score,

@@ -30,7 +30,10 @@ export function SkillsPanel({ projectId }: SkillsPanelProps) {
   }, [projectId]);
 
   useEffect(() => {
-    fetchSkills();
+    const timeout = window.setTimeout(() => {
+      void fetchSkills();
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [fetchSkills]);
 
   const handleEdit = (skill: Skill) => {

@@ -70,13 +70,17 @@ export async function PATCH(
   try {
     const body = await req.json();
 
-    const updateData: any = { updatedAt: dbNow() };
+    const updateData: Record<string, unknown> = { updatedAt: dbNow() };
     if (body.name !== undefined) updateData.name = body.name;
     if (body.description !== undefined) updateData.description = body.description;
     if (body.content !== undefined) updateData.content = body.content;
-    if (body.projectId !== undefined) {
-      updateData.projectId = body.projectId ? parseInt(body.projectId, 10) : null;
-      if (!(await userCanAccessProject(auth.user, updateData.projectId))) {
+    const parsedProjectId =
+      body.projectId !== undefined
+        ? (body.projectId ? parseInt(body.projectId, 10) : null)
+        : undefined;
+    if (parsedProjectId !== undefined) {
+      updateData.projectId = parsedProjectId;
+      if (!(await userCanAccessProject(auth.user, parsedProjectId))) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
     }

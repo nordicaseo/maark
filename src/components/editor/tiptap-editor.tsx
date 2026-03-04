@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
 import type { Editor } from '@tiptap/react';
+import type { JSONContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import CharacterCount from '@tiptap/extension-character-count';
@@ -25,7 +26,7 @@ import type { Document } from '@/types/document';
 
 interface TiptapEditorProps {
   document: Document;
-  onSave: (content: any, plainText: string, wordCount: number) => void;
+  onSave: (content: JSONContent, plainText: string, wordCount: number) => void;
   onEditorReady?: (editor: Editor) => void;
   isAiWriting?: boolean;
   onAddComment?: (data: { quotedText: string; selectionFrom: number; selectionTo: number }) => void;

@@ -86,7 +86,7 @@ export function SemanticPanel({ result, serpData, keyword, analyzing }: Semantic
     return (
       <div className="text-center py-12 text-muted-foreground">
         <p className="text-sm mb-1">Target: <span className="font-medium text-foreground">{keyword}</span></p>
-        <p className="text-xs">Click "Analyze" to fetch SERP data and score semantic coverage</p>
+        <p className="text-xs">Click &quot;Analyze&quot; to fetch SERP data and score semantic coverage</p>
       </div>
     );
   }

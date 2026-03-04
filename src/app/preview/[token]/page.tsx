@@ -23,7 +23,7 @@ import { CheckCircle2 } from 'lucide-react';
 
 interface PreviewDoc {
   title: string;
-  content: any;
+  content: unknown;
   plainText: string | null;
   status: string;
   contentType: string;

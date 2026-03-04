@@ -12,5 +12,5 @@ export interface ContentTemplate {
   icon: string;
   suggestedStructure: TemplateSection[];
   targetWordCount: { min: number; max: number };
-  defaultTiptapContent: any;
+  defaultTiptapContent: unknown;
 }

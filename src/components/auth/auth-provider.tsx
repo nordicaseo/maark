@@ -33,9 +33,12 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const supabaseConfigured =
+    !!process.env.NEXT_PUBLIC_SUPABASE_URL &&
+    !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const [user, setUser] = useState<AuthUser | null>(null);
   const [supabaseUser, setSupabaseUser] = useState<SupabaseUser | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(supabaseConfigured);
 
   const fetchAppUser = useCallback(async () => {
     try {
@@ -52,13 +55,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // Skip Supabase init if env vars aren't configured
-    if (
-      !process.env.NEXT_PUBLIC_SUPABASE_URL ||
-      !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-    ) {
-      setIsLoading(false);
-      return;
-    }
+    if (!supabaseConfigured) return;
 
     const supabase = createClient();
 
@@ -85,7 +82,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     return () => subscription.unsubscribe();
-  }, [fetchAppUser]);
+  }, [fetchAppUser, supabaseConfigured]);
 
   const signOut = useCallback(async () => {
     const supabase = createClient();

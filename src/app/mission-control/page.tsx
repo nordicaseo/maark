@@ -5,6 +5,7 @@ import { useAuth } from '@/components/auth/auth-provider';
 import { useConvexAvailable } from '@/lib/convex/provider';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import type { Id } from '../../../convex/_generated/dataModel';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { TeamMembersProvider } from '@/components/mission-control/team-members-provider';
 import { SkillsProvider } from '@/components/mission-control/skills-provider';
@@ -60,7 +61,7 @@ export default function MissionControlPage() {
   const { activeProjectId: projectId, setActiveProjectId: setProjectId } = useActiveProject();
   const [showNewTask, setShowNewTask] = useState(false);
   const [showAgents, setShowAgents] = useState(true);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<Id<'tasks'> | null>(null);
   const [showActivity, setShowActivity] = useState(true);
 
   if (isLoading) {
@@ -224,7 +225,7 @@ export default function MissionControlPage() {
             <KanbanBoard
               projectId={projectId}
               onNewTask={() => setShowNewTask(true)}
-              onTaskClick={(taskId: any) => setSelectedTaskId(taskId)}
+              onTaskClick={setSelectedTaskId}
             />
           </main>
 
@@ -241,7 +242,7 @@ export default function MissionControlPage() {
 
         <NewTaskDialog open={showNewTask} onOpenChange={setShowNewTask} projectId={projectId} />
 
-        <TaskDetailPanel taskId={selectedTaskId as any} onClose={() => setSelectedTaskId(null)} />
+        <TaskDetailPanel taskId={selectedTaskId} onClose={() => setSelectedTaskId(null)} />
       </div>
       </SkillsProvider>
     </TeamMembersProvider>

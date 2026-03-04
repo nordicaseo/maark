@@ -86,9 +86,12 @@ export default function AdminSkillsPage() {
   }, []);
 
   useEffect(() => {
-    Promise.all([fetchSkills(), fetchProjects()]).finally(() =>
-      setLoading(false)
-    );
+    const timeout = window.setTimeout(() => {
+      Promise.all([fetchSkills(), fetchProjects()]).finally(() =>
+        setLoading(false)
+      );
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [fetchSkills, fetchProjects]);
 
   /* ── Helpers ────────────────────────────────────────────────────── */

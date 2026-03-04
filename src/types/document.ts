@@ -59,7 +59,7 @@ export interface Document {
   authorId: string | null;
   authorName?: string | null;
   title: string;
-  content: any;
+  content: unknown;
   plainText: string | null;
   status: DocumentStatus;
   contentType: ContentFormat;

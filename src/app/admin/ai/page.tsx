@@ -132,9 +132,12 @@ export default function AdminAIPage() {
   }, []);
 
   useEffect(() => {
-    Promise.all([fetchProviders(), fetchConfigs()]).finally(() =>
-      setLoading(false)
-    );
+    const timeout = window.setTimeout(() => {
+      Promise.all([fetchProviders(), fetchConfigs()]).finally(() =>
+        setLoading(false)
+      );
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [fetchProviders, fetchConfigs]);
 
   /* ── Provider CRUD ──────────────────────────────────────────────── */
@@ -160,7 +163,12 @@ export default function AdminAIPage() {
     try {
       let res: Response;
       if (editingProvider) {
-        const body: any = {
+        const body: {
+          name: string;
+          displayName: string;
+          isActive: boolean;
+          apiKey?: string;
+        } = {
           name: providerForm.name,
           displayName: providerForm.displayName,
           isActive: providerForm.isActive,

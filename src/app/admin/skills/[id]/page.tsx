@@ -62,8 +62,14 @@ export default function SkillBuilderPage() {
   }, [id]);
 
   useEffect(() => {
-    fetchSkill();
-    fetch('/api/projects').then(r => r.ok ? r.json() : []).then(setProjects).catch(() => {});
+    const timeout = window.setTimeout(() => {
+      void fetchSkill();
+      fetch('/api/projects')
+        .then((r) => (r.ok ? r.json() : []))
+        .then(setProjects)
+        .catch(() => {});
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [fetchSkill]);
 
   const handleSave = async () => {

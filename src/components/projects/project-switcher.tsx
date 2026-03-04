@@ -30,7 +30,10 @@ export function ProjectSwitcher({ activeProjectId, onProjectChange }: ProjectSwi
   }, []);
 
   useEffect(() => {
-    fetchProjects();
+    const timeout = window.setTimeout(() => {
+      void fetchProjects();
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [fetchProjects]);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);

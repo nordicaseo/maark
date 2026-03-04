@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
 
     // Build comment instructions
     const commentInstructions = comments
-      .map((c: any, i: number) => {
+      .map((c: { content: string; quotedText: string | null }, i: number) => {
         const parts = [`Comment ${i + 1}: "${c.content}"`];
         if (c.quotedText) {
           parts.push(`  Referenced text: "${c.quotedText}"`);
@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
         try {
           const perplexity = new PerplexityProvider(perplexityKey);
           const researchQuery = comments
-            .map((c: any) => c.content)
+            .map((c: { content: string }) => c.content)
             .join('. ')
             .substring(0, 500);
 

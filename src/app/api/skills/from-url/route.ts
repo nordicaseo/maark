@@ -153,10 +153,11 @@ export async function POST(req: NextRequest) {
         'Cache-Control': 'no-cache',
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error generating skill from URL:', error);
+    const message = (error as { message?: string })?.message;
     return new Response(
-      JSON.stringify({ error: error.message || 'Failed to generate skill from URL' }),
+      JSON.stringify({ error: message || 'Failed to generate skill from URL' }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }

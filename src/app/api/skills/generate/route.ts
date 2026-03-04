@@ -91,10 +91,11 @@ export async function POST(req: NextRequest) {
         parts: [{ partType: 'custom', label: 'Generated Content', content: fullText }],
       });
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error generating skill:', error);
+    const message = (error as { message?: string })?.message;
     return NextResponse.json(
-      { error: error.message || 'Failed to generate skill' },
+      { error: message || 'Failed to generate skill' },
       { status: 500 }
     );
   }

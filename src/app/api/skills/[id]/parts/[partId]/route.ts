@@ -25,7 +25,7 @@ export async function PATCH(
 
   try {
     const body = await req.json();
-    const updateData: any = { updatedAt: dbNow() };
+    const updateData: Record<string, unknown> = { updatedAt: dbNow() };
     if (body.label !== undefined) updateData.label = body.label;
     if (body.content !== undefined) updateData.content = body.content;
     if (body.sortOrder !== undefined) updateData.sortOrder = body.sortOrder;

@@ -103,7 +103,7 @@ export async function PUT(
     const now = dbNow();
 
     for (const part of parts) {
-      const updateData: any = { updatedAt: now };
+      const updateData: Record<string, unknown> = { updatedAt: now };
       if (part.label !== undefined) updateData.label = part.label;
       if (part.content !== undefined) updateData.content = part.content;
       if (part.sortOrder !== undefined) updateData.sortOrder = part.sortOrder;
@@ -140,7 +140,7 @@ async function recomposeSkillContent(skillId: number) {
 
   if (parts.length > 0) {
     const composed = parts
-      .map((p: any) => `## ${p.label}\n\n${p.content}`)
+      .map((p: { label: string; content: string }) => `## ${p.label}\n\n${p.content}`)
       .join('\n\n');
 
     await db

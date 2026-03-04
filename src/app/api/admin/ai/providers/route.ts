@@ -14,8 +14,17 @@ export async function GET() {
   const auth = await requireRole('admin');
   if (auth.error) return auth.error;
   try {
-    const rows = await db.select().from(aiProviders).orderBy(desc(aiProviders.createdAt));
-    const masked = rows.map((r: any) => ({
+    const rows = (await db
+      .select()
+      .from(aiProviders)
+      .orderBy(desc(aiProviders.createdAt))) as Array<{
+      id: number;
+      name: string;
+      displayName: string | null;
+      apiKey: string;
+      isActive: boolean;
+    }>;
+    const masked = rows.map((r) => ({
       ...r,
       apiKey: maskApiKey(r.apiKey),
     }));

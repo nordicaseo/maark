@@ -44,7 +44,7 @@ export async function GET(request: Request) {
 
             // ── Check for invitation (by token or email) ──────────────
             const inviteToken = searchParams.get('invite_token');
-            let matchedInvitation: any = null;
+            let matchedInvitation: (typeof invitations.$inferSelect) | null = null;
 
             if (inviteToken) {
               const [inv] = await db

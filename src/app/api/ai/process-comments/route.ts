@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
           )
         );
       // Filter to requested IDs
-      comments = comments.filter((c: any) => commentIds.includes(c.id));
+      comments = comments.filter((c: { id: number }) => commentIds.includes(c.id));
     } else {
       comments = await db
         .select()
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Build comment instructions
-    const commentInstructions = comments.map((c: any, i: number) => {
+    const commentInstructions = comments.map((c: { content: string; quotedText: string | null }, i: number) => {
       const parts = [`Comment ${i + 1}: "${c.content}"`];
       if (c.quotedText) {
         parts.push(`  Referenced text: "${c.quotedText}"`);
@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
           const perplexity = new PerplexityProvider(perplexityKey);
           // Extract research topics from comments
           const researchQuery = comments
-            .map((c: any) => c.content)
+            .map((c: { content: string }) => c.content)
             .join('. ')
             .substring(0, 500);
 

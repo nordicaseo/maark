@@ -39,17 +39,21 @@ export function ProjectDialog({ open, onOpenChange, onSaved, project }: ProjectD
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (project) {
-      setName(project.name);
-      setDescription(project.description || '');
-      setDefaultFormat(project.defaultContentFormat || 'blog_post');
-      setBrandVoice(project.brandVoice || '');
-    } else {
-      setName('');
-      setDescription('');
-      setDefaultFormat('blog_post');
-      setBrandVoice('');
-    }
+    const timeout = window.setTimeout(() => {
+      if (project) {
+        setName(project.name);
+        setDescription(project.description || '');
+        setDefaultFormat(project.defaultContentFormat || 'blog_post');
+        setBrandVoice(project.brandVoice || '');
+      } else {
+        setName('');
+        setDescription('');
+        setDefaultFormat('blog_post');
+        setBrandVoice('');
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
   }, [project, open]);
 
   const handleSave = async () => {

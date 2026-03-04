@@ -5,6 +5,15 @@ interface SerpUrl {
   title: string;
 }
 
+interface GoogleCseItem {
+  link?: string;
+  title?: string;
+}
+
+interface GoogleCseResponse {
+  items?: GoogleCseItem[];
+}
+
 export async function fetchSerpUrls(keyword: string): Promise<SerpUrl[]> {
   const apiKey = process.env.GOOGLE_CSE_API_KEY;
   const cseId = process.env.GOOGLE_CSE_ID;
@@ -23,11 +32,15 @@ export async function fetchSerpUrls(keyword: string): Promise<SerpUrl[]> {
     return [];
   }
 
-  const data = await res.json();
-  return (data.items || []).map((item: any) => ({
-    url: item.link,
-    title: item.title,
-  }));
+  const data = (await res.json()) as GoogleCseResponse;
+  return (data.items || [])
+    .filter((item): item is Required<Pick<GoogleCseItem, 'link' | 'title'>> =>
+      typeof item.link === 'string' && typeof item.title === 'string'
+    )
+    .map((item) => ({
+      url: item.link,
+      title: item.title,
+    }));
 }
 
 export async function scrapePageContent(url: string): Promise<string> {

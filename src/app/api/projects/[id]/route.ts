@@ -54,7 +54,7 @@ export async function PATCH(
   try {
     const body = await req.json();
 
-    const updateData: any = { updatedAt: dbNow() };
+    const updateData: Record<string, unknown> = { updatedAt: dbNow() };
     if (body.name !== undefined) updateData.name = body.name;
     if (body.description !== undefined) updateData.description = body.description;
     if (body.defaultContentFormat !== undefined) updateData.defaultContentFormat = body.defaultContentFormat;

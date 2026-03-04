@@ -20,8 +20,8 @@ async function getSerpData(keyword: string) {
     const TTL = 48 * 60 * 60 * 1000; // 48 hours
     if (age < TTL) {
       return {
-        entities: cached.entities as any[],
-        lsiKeywords: cached.lsiKeywords as any[],
+        entities: cached.entities as { term: string }[],
+        lsiKeywords: cached.lsiKeywords as { term: string }[],
         topUrls: cached.topUrls as string[],
         fetchedAt: typeof cached.fetchedAt === 'string' ? cached.fetchedAt : cached.fetchedAt.toISOString(),
       };

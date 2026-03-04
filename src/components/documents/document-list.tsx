@@ -76,7 +76,7 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
       ? documents
       : documents.filter((d) => d.status === filter);
 
-  const handleDelete = async (id: number, e: React.MouseEvent) => {
+  const handleDelete = async (id: number, e: React.SyntheticEvent) => {
     e.stopPropagation();
     try {
       await fetch(`/api/documents/${id}`, { method: 'DELETE' });
@@ -145,7 +145,7 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
                   role="button"
                   tabIndex={0}
                   onClick={(e) => handleDelete(doc.id, e)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleDelete(doc.id, e as any); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleDelete(doc.id, e); }}
                   className="opacity-50 hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 text-muted-foreground cursor-pointer shrink-0"
                   title="Delete document"
                 >

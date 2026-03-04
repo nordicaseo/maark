@@ -2,7 +2,7 @@ const isVercel = !!process.env.POSTGRES_URL;
 
 let _initPromise: Promise<void> | null = null;
 
-async function initPostgres(sql: any) {
+async function initPostgres(sql: { query: (statement: string) => Promise<unknown> }) {
   // ── Enums ──
   await sql.query(`
     DO $$ BEGIN
@@ -219,7 +219,12 @@ async function initPostgres(sql: any) {
   `);
 }
 
-function addColumnSafe(sqlite: any, table: string, column: string, type: string) {
+function addColumnSafe(
+  sqlite: { exec: (statement: string) => void },
+  table: string,
+  column: string,
+  type: string
+) {
   try {
     sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   } catch {
@@ -229,12 +234,15 @@ function addColumnSafe(sqlite: any, table: string, column: string, type: string)
 
 function createDb() {
   if (isVercel) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { sql } = require('@vercel/postgres');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { drizzle } = require('drizzle-orm/vercel-postgres');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const pgSchema = require('./schema-pg');
 
     if (!_initPromise) {
-      _initPromise = initPostgres(sql).catch((err: any) => {
+      _initPromise = initPostgres(sql).catch((err: unknown) => {
         console.error('DB init error:', err);
         _initPromise = null;
       });
@@ -243,9 +251,13 @@ function createDb() {
     return drizzle(sql, { schema: pgSchema });
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const Database = require('better-sqlite3');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { drizzle } = require('drizzle-orm/better-sqlite3');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const sqliteSchema = require('./schema-sqlite');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const path = require('path');
 
   const dbPath = path.join(process.cwd(), 'local.db');
@@ -432,6 +444,9 @@ function createDb() {
   return drizzle(sqlite, { schema: sqliteSchema });
 }
 
+// The DB client is runtime-selected (Postgres on Vercel, SQLite locally),
+// so we intentionally expose a unified untyped surface to app routes.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const db = createDb() as any;
 
 /**

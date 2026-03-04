@@ -111,7 +111,7 @@ export const updateStatus = mutation({
   handler: async (ctx, args) => {
     const task = await ctx.db.get(args.id);
 
-    const updates: Record<string, any> = {
+    const updates: Record<string, unknown> = {
       status: args.status,
       updatedAt: Date.now(),
     };
@@ -149,7 +149,7 @@ export const updateStatusFromSync = mutation({
     const task = await ctx.db.get(args.id);
     if (!task || task.status === args.status) return; // Already matches — no-op
 
-    const updates: Record<string, any> = {
+    const updates: Record<string, unknown> = {
       status: args.status,
       updatedAt: Date.now(),
     };

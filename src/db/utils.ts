@@ -3,6 +3,6 @@
  * - PostgreSQL (Vercel): Date object (Drizzle timestamp columns expect Date)
  * - SQLite (local):      ISO string  (text columns store strings)
  */
-export function dbNow(): any {
+export function dbNow(): Date | string {
   return process.env.POSTGRES_URL ? new Date() : new Date().toISOString();
 }

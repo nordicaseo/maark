@@ -87,9 +87,9 @@ export function AiRewriterPanel({
         text += decoder.decode(value, { stream: true });
         setOutput(text);
       }
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        setOutput(`Error: ${err.message || 'Rewrite failed'}`);
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name !== 'AbortError') {
+        setOutput(`Error: ${(err as { message?: string })?.message || 'Rewrite failed'}`);
       }
     }
 
