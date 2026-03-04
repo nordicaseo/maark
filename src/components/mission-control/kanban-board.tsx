@@ -6,10 +6,12 @@ import {
   DragOverlay,
   closestCorners,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragCancelEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
 import {
@@ -52,7 +54,10 @@ export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardPr
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 120, tolerance: 6 },
+    }),
     useSensor(KeyboardSensor)
   );
 
@@ -94,7 +99,12 @@ export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardPr
       if (currentTask?.status === targetStatus) return;
 
       // Optimistic: update immediately via Convex mutation
-      await updateStatus({ id: taskId, status: targetStatus });
+      try {
+        await updateStatus({ id: taskId, status: targetStatus });
+      } catch (error) {
+        console.error('Failed to update task status from drag-and-drop:', error);
+        return;
+      }
 
       // Sync status to linked Drizzle document (fire-and-forget)
       if (currentTask?.documentId) {
@@ -113,6 +123,10 @@ export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardPr
     },
     [tasks, updateStatus]
   );
+
+  const handleDragCancel = useCallback((_event: DragCancelEvent) => {
+    setActiveTask(null);
+  }, []);
 
   if (!projectId) {
     return (
@@ -136,6 +150,7 @@ export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardPr
       collisionDetection={closestCorners}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
     >
       <div className="flex gap-4 overflow-x-auto pb-4">
         {COLUMNS.map((col) => {
