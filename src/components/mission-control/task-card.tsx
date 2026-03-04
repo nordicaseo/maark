@@ -65,7 +65,7 @@ export function SortableTaskCard({
       style={style}
       {...attributes}
       {...listeners}
-      className={`mc-card cursor-grab active:cursor-grabbing ${isDragging ? 'dragging' : ''}`}
+      className={`mc-card group cursor-grab active:cursor-grabbing ${isDragging ? 'dragging' : ''}`}
       onClick={onClick}
     >
       <TaskCardContent task={task} />
@@ -89,7 +89,7 @@ function TaskCardContent({ task }: { task: Task }) {
   };
 
   return (
-    <div className="space-y-2 group/card">
+    <div className="space-y-2">
       {/* Header: priority + title + delete */}
       <div className="flex items-start gap-2">
         <div className={`mc-priority-dot mt-1.5 ${PRIORITY_COLORS[task.priority] || 'low'}`} />
@@ -105,7 +105,7 @@ function TaskCardContent({ task }: { task: Task }) {
         </div>
         <button
           onClick={handleDelete}
-          className="opacity-0 group-hover/card:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 shrink-0 mt-0.5"
+          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 shrink-0 mt-0.5"
           style={{ color: 'var(--mc-text-muted)' }}
           title="Delete task"
         >

@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, FileText, Trash2, Settings, User, Tag, Eye, Kanban } from 'lucide-react';
+import { Plus, FileText, Trash2, Settings, Eye, Kanban } from 'lucide-react';
 import Link from 'next/link';
 import { CreateDialog } from './create-dialog';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
@@ -127,62 +127,39 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
               tabIndex={0}
               onClick={() => router.push(`/documents/${doc.id}`)}
               onKeyDown={(e) => { if (e.key === 'Enter') router.push(`/documents/${doc.id}`); }}
-              className={`w-full text-left rounded-lg p-3 transition-colors hover:bg-accent group cursor-pointer ${
+              className={`w-full text-left rounded-md p-2 transition-colors hover:bg-accent cursor-pointer ${
                 activeId === doc.id ? 'bg-accent' : ''
               }`}
             >
-              <div className="flex items-start gap-2">
-                <FileText className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate">{doc.title}</p>
-                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                    <Badge
-                      variant="secondary"
-                      className={`text-[10px] px-1.5 py-0 ${statusColors[doc.status]}`}
-                    >
-                      {STATUS_LABELS[doc.status]}
-                    </Badge>
-                    <span className="text-[10px] text-muted-foreground">
-                      {CONTENT_FORMAT_LABELS[doc.contentType] || doc.contentType}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground">
-                      {doc.wordCount || 0}w
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
-                    {doc.authorName && (
-                      <span className="flex items-center gap-0.5 truncate">
-                        <User className="h-2.5 w-2.5" />
-                        {doc.authorName}
-                      </span>
-                    )}
-                    {doc.targetKeyword && (
-                      <span className="flex items-center gap-0.5 truncate max-w-[120px]">
-                        <Tag className="h-2.5 w-2.5 shrink-0" />
-                        {doc.targetKeyword}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between mt-1.5">
-                    <span className="text-[9px] text-muted-foreground">
-                      {timeAgo(doc.updatedAt)}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <ScoreBar label="AI" score={doc.aiDetectionScore} max={5} invert />
-                      <ScoreBar label="SEO" score={doc.semanticScore} max={100} />
-                      <ScoreBar label="Q" score={doc.contentQualityScore} max={100} />
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        onClick={(e) => handleDelete(doc.id, e)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') handleDelete(doc.id, e as any); }}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity ml-1 p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 text-muted-foreground cursor-pointer shrink-0"
-                        title="Delete document"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </div>
-                    </div>
-                  </div>
+              {/* Row 1: icon + title + status + delete */}
+              <div className="flex items-center gap-1.5">
+                <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <p className="text-sm font-medium truncate flex-1 min-w-0">{doc.title}</p>
+                <Badge
+                  variant="secondary"
+                  className={`text-[9px] px-1 py-0 shrink-0 ${statusColors[doc.status]}`}
+                >
+                  {STATUS_LABELS[doc.status]}
+                </Badge>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => handleDelete(doc.id, e)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleDelete(doc.id, e as any); }}
+                  className="opacity-50 hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 text-muted-foreground cursor-pointer shrink-0"
+                  title="Delete document"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </div>
+              </div>
+              {/* Row 2: word count + time + score bars */}
+              <div className="flex items-center gap-2 mt-1 ml-5 text-[9px] text-muted-foreground">
+                <span>{doc.wordCount || 0}w</span>
+                <span>{timeAgo(doc.updatedAt)}</span>
+                <div className="flex items-center gap-1.5 ml-auto">
+                  <ScoreBar label="AI" score={doc.aiDetectionScore} max={5} invert />
+                  <ScoreBar label="SEO" score={doc.semanticScore} max={100} />
+                  <ScoreBar label="Q" score={doc.contentQualityScore} max={100} />
                 </div>
               </div>
             </div>
