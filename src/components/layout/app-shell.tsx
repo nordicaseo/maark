@@ -14,6 +14,7 @@ import type { SerpData } from '@/types/serp';
 import { InlineCommentForm } from '@/components/editor/inline-comment-form';
 import { cleanHtmlForExport } from '@/lib/utils/html-export';
 import { useActiveProject } from '@/hooks/use-active-project';
+import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
 
 interface AppShellProps {
   documentId?: number;
@@ -36,6 +37,7 @@ export function AppShell({ documentId }: AppShellProps) {
 
   // Project state
   const { activeProjectId, setActiveProjectId } = useActiveProject();
+  useProjectScopeSync(activeProjectId, setActiveProjectId);
 
   // Copy as HTML feedback state
   const [htmlCopied, setHtmlCopied] = useState(false);

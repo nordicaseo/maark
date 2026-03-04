@@ -10,6 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useActiveProject } from '@/hooks/use-active-project';
+import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
+import { withProjectScope } from '@/lib/project-context';
 import type { ManagedPage } from '@/types/page';
 
 function boolBadge(value: number | null | undefined, trueLabel: string, falseLabel: string) {
@@ -28,6 +30,7 @@ export default function PagesPage() {
   const { user, isLoading: authLoading } = useAuth();
   const router = useRouter();
   const { activeProjectId, setActiveProjectId } = useActiveProject();
+  useProjectScopeSync(activeProjectId, setActiveProjectId);
   const [pages, setPages] = useState<ManagedPage[]>([]);
   const [loading, setLoading] = useState(true);
   const [newUrl, setNewUrl] = useState('');
@@ -123,7 +126,10 @@ export default function PagesPage() {
         <div className="max-w-6xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-4 min-w-0">
-              <Link href="/documents" className="text-muted-foreground hover:text-foreground transition-colors">
+              <Link
+                href={withProjectScope('/documents', activeProjectId)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
                 <ArrowLeft className="h-5 w-5" />
               </Link>
               <div className="min-w-0">

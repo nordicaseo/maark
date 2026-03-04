@@ -9,9 +9,11 @@ import type { Id } from '../../../convex/_generated/dataModel';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { TeamMembersProvider } from '@/components/mission-control/team-members-provider';
 import { SkillsProvider } from '@/components/mission-control/skills-provider';
-import { ArrowLeft, Loader2, Bot, AlertTriangle, Activity } from 'lucide-react';
+import { ArrowLeft, Loader2, Bot, AlertTriangle, Activity, Search, Globe } from 'lucide-react';
 import Link from 'next/link';
 import { useActiveProject } from '@/hooks/use-active-project';
+import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
+import { withProjectScope } from '@/lib/project-context';
 import './mission-control-theme.css';
 
 // Lazy-load all Convex-dependent components so their modules are only
@@ -59,6 +61,7 @@ export default function MissionControlPage() {
   const convexAvailable = useConvexAvailable();
   const router = useRouter();
   const { activeProjectId: projectId, setActiveProjectId: setProjectId } = useActiveProject();
+  useProjectScopeSync(projectId, setProjectId);
   const [showNewTask, setShowNewTask] = useState(false);
   const [showAgents, setShowAgents] = useState(true);
   const [selectedTaskId, setSelectedTaskId] = useState<Id<'tasks'> | null>(null);
@@ -92,7 +95,7 @@ export default function MissionControlPage() {
         >
           <div className="flex items-center gap-4">
             <Link
-              href="/documents"
+              href={withProjectScope('/documents', projectId)}
               style={{ color: 'var(--mc-text-secondary)' }}
               className="hover:opacity-80 transition-opacity"
             >
@@ -138,7 +141,10 @@ export default function MissionControlPage() {
               <p>2. Copy your deployment URL</p>
               <p>3. Add NEXT_PUBLIC_CONVEX_URL to .env.local</p>
             </div>
-            <Link href="/documents" className="mc-btn-secondary inline-flex items-center gap-2">
+            <Link
+              href={withProjectScope('/documents', projectId)}
+              className="mc-btn-secondary inline-flex items-center gap-2"
+            >
               <ArrowLeft className="h-3.5 w-3.5" />
               Back to Editor
             </Link>
@@ -160,7 +166,7 @@ export default function MissionControlPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <Link
-                href="/documents"
+                href={withProjectScope('/documents', projectId)}
                 style={{ color: 'var(--mc-text-secondary)' }}
                 className="hover:opacity-80 transition-opacity"
               >
@@ -181,6 +187,20 @@ export default function MissionControlPage() {
               <div className="w-48">
                 <ProjectSwitcher activeProjectId={projectId} onProjectChange={setProjectId} />
               </div>
+              <Link
+                href={withProjectScope('/keywords', projectId)}
+                className="mc-btn-secondary flex items-center gap-1.5"
+              >
+                <Search className="h-3.5 w-3.5" />
+                Keywords
+              </Link>
+              <Link
+                href={withProjectScope('/pages', projectId)}
+                className="mc-btn-secondary flex items-center gap-1.5"
+              >
+                <Globe className="h-3.5 w-3.5" />
+                Pages
+              </Link>
               <button
                 onClick={() => setShowAgents(!showAgents)}
                 className="mc-btn-secondary flex items-center gap-1.5"

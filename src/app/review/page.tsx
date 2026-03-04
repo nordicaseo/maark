@@ -19,6 +19,8 @@ import Link from 'next/link';
 import { STATUS_LABELS, CONTENT_FORMAT_LABELS } from '@/types/document';
 import type { DocumentStatus, ContentFormat } from '@/types/document';
 import { useActiveProject } from '@/hooks/use-active-project';
+import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
+import { withProjectScope } from '@/lib/project-context';
 
 interface ReviewDocument {
   id: number;
@@ -78,6 +80,7 @@ export default function ReviewPage() {
   const [docs, setDocs] = useState<ReviewDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const { activeProjectId, setActiveProjectId } = useActiveProject();
+  useProjectScopeSync(activeProjectId, setActiveProjectId);
   const [statusFilter, setStatusFilter] = useState<string>('all');
 
   const fetchDocs = useCallback(async () => {
@@ -134,7 +137,7 @@ export default function ReviewPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <Link
-                href="/documents"
+                href={withProjectScope('/documents', activeProjectId)}
                 className="text-muted-foreground hover:text-foreground transition-colors"
               >
                 <ArrowLeft className="h-5 w-5" />
@@ -199,7 +202,7 @@ export default function ReviewPage() {
                 </h2>
                 <div className="grid gap-3">
                   {withComments.map((doc) => (
-                    <ReviewCard key={doc.id} doc={doc} />
+                    <ReviewCard key={doc.id} doc={doc} activeProjectId={activeProjectId} />
                   ))}
                 </div>
               </section>
@@ -213,7 +216,7 @@ export default function ReviewPage() {
                 </h2>
                 <div className="grid gap-3">
                   {noComments.map((doc) => (
-                    <ReviewCard key={doc.id} doc={doc} />
+                    <ReviewCard key={doc.id} doc={doc} activeProjectId={activeProjectId} />
                   ))}
                 </div>
               </section>
@@ -225,14 +228,14 @@ export default function ReviewPage() {
   );
 }
 
-function ReviewCard({ doc }: { doc: ReviewDocument }) {
+function ReviewCard({ doc, activeProjectId }: { doc: ReviewDocument; activeProjectId: number | null }) {
   return (
     <div className="bg-card border border-border rounded-lg p-4 hover:border-border/80 transition-colors">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1">
             <Link
-              href={`/documents/${doc.id}`}
+              href={withProjectScope(`/documents/${doc.id}`, activeProjectId)}
               className="text-sm font-medium hover:underline truncate"
             >
               {doc.title}
