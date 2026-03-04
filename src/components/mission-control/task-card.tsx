@@ -10,7 +10,10 @@ import {
   Bot,
   Tag,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
+import { useMutation } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import { useTeamMembers } from './team-members-provider';
 import { useSkills } from './skills-provider';
@@ -73,12 +76,21 @@ export function SortableTaskCard({
 function TaskCardContent({ task }: { task: Task }) {
   const { getMember } = useTeamMembers();
   const { getSkillName } = useSkills();
+  const removeTask = useMutation(api.tasks.remove);
   const assignee = task.assigneeId ? getMember(task.assigneeId) : undefined;
   const skillName = task.skillId ? getSkillName(task.skillId) : undefined;
 
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (confirm('Delete this task?')) {
+      removeTask({ id: task._id });
+    }
+  };
+
   return (
-    <div className="space-y-2">
-      {/* Header: priority + title */}
+    <div className="space-y-2 group/card">
+      {/* Header: priority + title + delete */}
       <div className="flex items-start gap-2">
         <div className={`mc-priority-dot mt-1.5 ${PRIORITY_COLORS[task.priority] || 'low'}`} />
         <div className="min-w-0 flex-1">
@@ -91,6 +103,14 @@ function TaskCardContent({ task }: { task: Task }) {
             </p>
           )}
         </div>
+        <button
+          onClick={handleDelete}
+          className="opacity-0 group-hover/card:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 shrink-0 mt-0.5"
+          style={{ color: 'var(--mc-text-muted)' }}
+          title="Delete task"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
       </div>
 
       {/* Tags */}

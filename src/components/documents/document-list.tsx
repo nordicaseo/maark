@@ -134,18 +134,7 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
               <div className="flex items-start gap-2">
                 <FileText className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-medium truncate pr-1">{doc.title}</p>
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={(e) => handleDelete(doc.id, e)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') handleDelete(doc.id, e as any); }}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity h-5 w-5 flex items-center justify-center hover:text-red-400 cursor-pointer shrink-0"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </div>
-                  </div>
+                  <p className="text-sm font-medium truncate">{doc.title}</p>
                   <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                     <Badge
                       variant="secondary"
@@ -178,10 +167,20 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
                     <span className="text-[9px] text-muted-foreground">
                       {timeAgo(doc.updatedAt)}
                     </span>
-                    <div className="flex gap-2">
+                    <div className="flex items-center gap-2">
                       <ScoreBar label="AI" score={doc.aiDetectionScore} max={5} invert />
                       <ScoreBar label="SEO" score={doc.semanticScore} max={100} />
                       <ScoreBar label="Q" score={doc.contentQualityScore} max={100} />
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => handleDelete(doc.id, e)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleDelete(doc.id, e as any); }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity ml-1 p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 text-muted-foreground cursor-pointer shrink-0"
+                        title="Delete document"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </div>
                     </div>
                   </div>
                 </div>
