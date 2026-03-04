@@ -34,17 +34,17 @@ export function TeamMembersProvider({
   projectId?: number | null;
 }) {
   const [members, setMembers] = useState<TeamMember[]>([]);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!projectId) return;
+
     const params = new URLSearchParams();
-    if (projectId) params.set('projectId', String(projectId));
-    const url = params.size > 0 ? `/api/team/members?${params.toString()}` : '/api/team/members';
+    params.set('projectId', String(projectId));
+    const url = `/api/team/members?${params.toString()}`;
     fetch(url)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setMembers(data))
-      .catch(() => setMembers([]))
-      .finally(() => setLoading(false));
+      .catch(() => setMembers([]));
   }, [projectId]);
 
   const getMember = useCallback(
@@ -52,8 +52,9 @@ export function TeamMembersProvider({
     [members]
   );
 
+  const scopedMembers = projectId ? members : [];
   return (
-    <TeamMembersContext.Provider value={{ members, getMember, loading }}>
+    <TeamMembersContext.Provider value={{ members: scopedMembers, getMember, loading: false }}>
       {children}
     </TeamMembersContext.Provider>
   );

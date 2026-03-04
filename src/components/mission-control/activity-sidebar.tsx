@@ -115,8 +115,17 @@ export function ActivitySidebar({ projectId }: ActivitySidebarProps) {
 // ── Activity Feed ────────────────────────────────────────────────
 
 function ActivityFeed({ projectId }: { projectId: number | null }) {
-  const queryArgs = projectId ? { projectId } : {};
-  const activities = useQuery(api.activities.list, queryArgs);
+  const activities = useQuery(api.activities.list, projectId ? { projectId } : 'skip');
+
+  if (!projectId) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-4">
+        <p className="text-xs" style={{ color: 'var(--mc-text-tertiary)' }}>
+          Select a project to load activity.
+        </p>
+      </div>
+    );
+  }
 
   if (!activities) {
     return (
@@ -200,10 +209,19 @@ interface MessagesFeedProps {
 
 function MessagesFeed({ projectId, user }: MessagesFeedProps) {
   const [draft, setDraft] = useState('');
-  const queryArgs = projectId ? { projectId } : {};
-  const messages = useQuery(api.messages.list, queryArgs);
+  const messages = useQuery(api.messages.list, projectId ? { projectId } : 'skip');
   const sendMessage = useMutation(api.messages.send);
   const createActivity = useMutation(api.activities.create);
+
+  if (!projectId) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-4">
+        <p className="text-xs" style={{ color: 'var(--mc-text-tertiary)' }}>
+          Select a project to load messages.
+        </p>
+      </div>
+    );
+  }
 
   const handleSend = async () => {
     if (!draft.trim() || !user) return;

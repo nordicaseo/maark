@@ -195,7 +195,11 @@ export default function MissionControlPage() {
                 <Activity className="h-3.5 w-3.5" />
                 Activity
               </button>
-              <button onClick={() => setShowNewTask(true)} className="mc-btn-primary">
+              <button
+                onClick={() => setShowNewTask(true)}
+                className="mc-btn-primary"
+                disabled={!projectId}
+              >
                 + New Task
               </button>
             </div>
@@ -227,6 +231,12 @@ export default function MissionControlPage() {
                 <p className="mc-header-mono mt-0.5">Drag tasks between stages</p>
               </div>
             </div>
+            {!projectId && (
+              <div className="mb-4 rounded-md border px-3 py-2 text-xs"
+                style={{ borderColor: 'var(--mc-border)', color: 'var(--mc-text-secondary)' }}>
+                Select a project in the header to load Mission Control tasks and agents.
+              </div>
+            )}
             <KanbanBoard
               projectId={projectId}
               onNewTask={() => setShowNewTask(true)}

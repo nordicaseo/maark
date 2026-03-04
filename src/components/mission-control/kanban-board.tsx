@@ -46,7 +46,7 @@ interface KanbanBoardProps {
 }
 
 export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardProps) {
-  const tasks = useQuery(api.tasks.list, projectId ? { projectId } : {});
+  const tasks = useQuery(api.tasks.list, projectId ? { projectId } : 'skip');
   const updateStatus = useMutation(api.tasks.updateStatus);
 
   const [activeTask, setActiveTask] = useState<Task | null>(null);
@@ -113,6 +113,14 @@ export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardPr
     },
     [tasks, updateStatus]
   );
+
+  if (!projectId) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="mc-header-mono">Select a project to load tasks</p>
+      </div>
+    );
+  }
 
   if (!tasks) {
     return (

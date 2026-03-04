@@ -31,17 +31,17 @@ export function SkillsProvider({
   projectId?: number | null;
 }) {
   const [skills, setSkills] = useState<Skill[]>([]);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!projectId) return;
+
     const params = new URLSearchParams();
-    if (projectId) params.set('projectId', String(projectId));
-    const url = params.size > 0 ? `/api/skills?${params.toString()}` : '/api/skills';
+    params.set('projectId', String(projectId));
+    const url = `/api/skills?${params.toString()}`;
     fetch(url)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setSkills(data))
-      .catch(() => setSkills([]))
-      .finally(() => setLoading(false));
+      .catch(() => setSkills([]));
   }, [projectId]);
 
   const getSkillName = useCallback(
@@ -49,8 +49,9 @@ export function SkillsProvider({
     [skills]
   );
 
+  const scopedSkills = projectId ? skills : [];
   return (
-    <SkillsContext.Provider value={{ skills, getSkillName, loading }}>
+    <SkillsContext.Provider value={{ skills: scopedSkills, getSkillName, loading: false }}>
       {children}
     </SkillsContext.Provider>
   );

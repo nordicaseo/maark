@@ -135,8 +135,7 @@ interface WorkflowEvent {
 }
 
 export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
-  const tasks = useQuery(api.tasks.list, {});
-  const task = tasks?.find((t) => t._id === taskId) ?? null;
+  const task = useQuery(api.tasks.get, taskId ? { id: taskId } : 'skip');
   const agents = useQuery(api.agents.list);
   const updateTask = useMutation(api.tasks.update);
   const updateStatus = useMutation(api.tasks.updateStatus);
