@@ -35,12 +35,14 @@ export async function POST(
     if (convex) {
       const linkedTasks = await convex.query(api.tasks.getByDocument, {
         documentId: doc.id,
+        projectId: doc.projectId ?? undefined,
       });
       for (const task of linkedTasks) {
         if (task.status !== 'ACCEPTED') {
           await convex.mutation(api.tasks.updateStatusFromSync, {
             id: task._id,
             status: 'ACCEPTED',
+            expectedProjectId: doc.projectId ?? undefined,
           });
         }
       }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getProviderForAction } from '@/lib/ai';
 import { requireRole } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
+import { hasRole } from '@/lib/permissions';
 import { logAuditEvent } from '@/lib/observability';
 
 const STRUCTURED_SYSTEM = `You are an expert at analyzing brand documents and creating structured writing skill parts. You will receive text content extracted from uploaded files. Analyze thoroughly and return a JSON object with structured skill parts.
@@ -36,11 +37,14 @@ export async function POST(req: NextRequest) {
       typeof projectIdRaw === 'string' && projectIdRaw.trim()
         ? Number.parseInt(projectIdRaw, 10)
         : null;
-    if (
-      parsedProjectId !== null &&
-      Number.isFinite(parsedProjectId) &&
-      !(await userCanAccessProject(auth.user, parsedProjectId))
-    ) {
+    const projectId = parsedProjectId !== null && Number.isFinite(parsedProjectId)
+      ? parsedProjectId
+      : null;
+
+    if (projectId === null && !hasRole(auth.user.role, 'admin')) {
+      return NextResponse.json({ error: 'projectId is required for scoped skill generation' }, { status: 400 });
+    }
+    if (projectId !== null && !(await userCanAccessProject(auth.user, projectId))) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -107,7 +111,7 @@ export async function POST(req: NextRequest) {
         userId: auth.user.id,
         action: 'skills.from_files',
         resourceType: 'skill',
-        projectId: parsedProjectId,
+        projectId,
         metadata: { fileCount: files.length, partsCount: Array.isArray(parsed?.parts) ? parsed.parts.length : null },
       });
       return NextResponse.json(parsed);
@@ -116,7 +120,7 @@ export async function POST(req: NextRequest) {
         userId: auth.user.id,
         action: 'skills.from_files',
         resourceType: 'skill',
-        projectId: parsedProjectId,
+        projectId,
         metadata: { fileCount: files.length, partsCount: 1, fallback: true },
       });
       return NextResponse.json({

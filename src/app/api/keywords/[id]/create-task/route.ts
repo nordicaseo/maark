@@ -63,6 +63,7 @@ export async function POST(
       .update(keywords)
       .set({
         status: 'in_progress',
+        ownerId: keyword.ownerId || auth.user.id,
         lastTaskId: created.taskId,
         updatedAt: dbNow(),
       })

@@ -41,7 +41,10 @@ export function SkillGenerateDialog({ open, onOpenChange, onGenerated, projectId
       const res = await fetch('/api/skills/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description }),
+        body: JSON.stringify({
+          description,
+          projectId: projectId ?? undefined,
+        }),
         signal: controller.signal,
       });
 
@@ -73,7 +76,7 @@ export function SkillGenerateDialog({ open, onOpenChange, onGenerated, projectId
       }
     }
     setGenerating(false);
-  }, [description]);
+  }, [description, projectId]);
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();

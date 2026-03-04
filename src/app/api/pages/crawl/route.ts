@@ -149,17 +149,30 @@ export async function POST(req: NextRequest) {
       try {
         const convex = getConvexClient();
         if (convex) {
-          await convex.mutation(api.tasks.create, {
-            title: `Fix SEO issues: ${crawl.finalUrl}`,
-            description: `${crawl.issues.length} crawl issue(s) detected.`,
-            type: 'research',
-            status: 'BACKLOG',
-            priority: crawl.issues.some((i) => i.severity === 'critical' || i.severity === 'high')
-              ? 'HIGH'
-              : 'MEDIUM',
+          const existingTasks = await convex.query(api.tasks.list, {
             projectId,
-            tags: ['seo', 'crawler', 'page'],
+            limit: 500,
           });
+          const existingOpenIssueTask = existingTasks.find(
+            (task) =>
+              task.status !== 'COMPLETED' &&
+              task.tags?.includes('crawler_issue') &&
+              task.tags?.includes(`page:${pageId}`)
+          );
+
+          if (!existingOpenIssueTask) {
+            await convex.mutation(api.tasks.create, {
+              title: `Fix SEO issues: ${crawl.finalUrl}`,
+              description: `${crawl.issues.length} crawl issue(s) detected.`,
+              type: 'research',
+              status: 'BACKLOG',
+              priority: crawl.issues.some((i) => i.severity === 'critical' || i.severity === 'high')
+                ? 'HIGH'
+                : 'MEDIUM',
+              projectId,
+              tags: ['seo', 'crawler', 'page', 'crawler_issue', `page:${pageId}`],
+            });
+          }
         }
       } catch (error) {
         await logAlertEvent({

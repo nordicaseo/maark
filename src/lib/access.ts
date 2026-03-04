@@ -142,3 +142,92 @@ export function getRequestedProjectId(req: NextRequest): number | null {
   const fromCookie = parseProjectId(req.cookies.get(ACTIVE_PROJECT_COOKIE_KEY)?.value ?? null);
   return fromCookie;
 }
+
+export interface ScopedAiContextInput {
+  documentId?: number | null;
+  projectId?: number | null;
+}
+
+export interface ScopedAiContextResult {
+  ok: boolean;
+  error?: string;
+  resolvedProjectId: number | null;
+  statusCode?: number;
+}
+
+/**
+ * Require all non-preview AI actions to execute inside a project scope.
+ * Accepted inputs:
+ * - documentId (project inferred from document)
+ * - projectId (explicit)
+ * - both (must match)
+ */
+export async function validateScopedAiContext(
+  user: AppUser,
+  input: ScopedAiContextInput
+): Promise<ScopedAiContextResult> {
+  await ensureDb();
+
+  const documentId = input.documentId ?? null;
+  const projectId = input.projectId ?? null;
+
+  if (documentId === null && projectId === null) {
+    return {
+      ok: false,
+      error: 'documentId or projectId is required',
+      resolvedProjectId: null,
+      statusCode: 400,
+    };
+  }
+
+  if (documentId !== null) {
+    const [doc] = await db
+      .select({ id: documents.id, projectId: documents.projectId })
+      .from(documents)
+      .where(eq(documents.id, documentId))
+      .limit(1);
+
+    if (!doc) {
+      return {
+        ok: false,
+        error: 'Document not found',
+        resolvedProjectId: null,
+        statusCode: 404,
+      };
+    }
+
+    if (!(await userCanAccessDocument(user, documentId))) {
+      return {
+        ok: false,
+        error: 'Forbidden',
+        resolvedProjectId: null,
+        statusCode: 403,
+      };
+    }
+
+    if (projectId !== null && doc.projectId !== projectId) {
+      return {
+        ok: false,
+        error: 'Document does not belong to project scope',
+        resolvedProjectId: doc.projectId ?? null,
+        statusCode: 400,
+      };
+    }
+
+    return {
+      ok: true,
+      resolvedProjectId: doc.projectId ?? projectId,
+    };
+  }
+
+  if (!(await userCanAccessProject(user, projectId))) {
+    return {
+      ok: false,
+      error: 'Forbidden',
+      resolvedProjectId: null,
+      statusCode: 403,
+    };
+  }
+
+  return { ok: true, resolvedProjectId: projectId };
+}

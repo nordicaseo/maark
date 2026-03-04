@@ -88,7 +88,11 @@ export default function SkillWizardPage() {
         const res = await fetch('/api/skills/from-url/structured', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ urls: validUrls, description: description.trim() || undefined }),
+          body: JSON.stringify({
+            urls: validUrls,
+            description: description.trim() || undefined,
+            projectId: projectId !== 'none' ? parseInt(projectId, 10) : undefined,
+          }),
         });
 
         if (!res.ok) {
@@ -102,6 +106,7 @@ export default function SkillWizardPage() {
         const formData = new FormData();
         files.forEach(f => formData.append('files', f));
         if (description.trim()) formData.append('description', description.trim());
+        if (projectId !== 'none') formData.append('projectId', projectId);
 
         const res = await fetch('/api/skills/from-files', {
           method: 'POST',
@@ -119,7 +124,10 @@ export default function SkillWizardPage() {
         const res = await fetch('/api/skills/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ description: description.trim() }),
+          body: JSON.stringify({
+            description: description.trim(),
+            projectId: projectId !== 'none' ? parseInt(projectId, 10) : undefined,
+          }),
         });
 
         if (!res.ok) throw new Error('Failed to generate skill');

@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import OpenAI from 'openai';
 import { requireRole } from '@/lib/auth';
-import { userCanAccessProject } from '@/lib/access';
+import { validateScopedAiContext } from '@/lib/access';
 import { logAuditEvent } from '@/lib/observability';
 
 export async function POST(req: NextRequest) {
@@ -9,17 +9,29 @@ export async function POST(req: NextRequest) {
   if (auth.error) return auth.error;
 
   try {
-    const { prompt, style, size, projectId } = await req.json();
+    const {
+      prompt,
+      style,
+      size,
+      projectId: rawProjectId,
+      documentId: rawDocumentId,
+    } = await req.json();
 
     if (!prompt || typeof prompt !== 'string') {
       return Response.json({ error: 'Prompt is required' }, { status: 400 });
     }
-    if (
-      projectId !== undefined &&
-      projectId !== null &&
-      !(await userCanAccessProject(auth.user, Number(projectId)))
-    ) {
-      return Response.json({ error: 'Forbidden' }, { status: 403 });
+    const parsedProjectId = rawProjectId !== undefined && rawProjectId !== null
+      ? Number(rawProjectId)
+      : null;
+    const parsedDocumentId = rawDocumentId !== undefined && rawDocumentId !== null
+      ? Number(rawDocumentId)
+      : null;
+    const projectId = Number.isFinite(parsedProjectId) ? parsedProjectId : null;
+    const documentId = Number.isFinite(parsedDocumentId) ? parsedDocumentId : null;
+
+    const scoped = await validateScopedAiContext(auth.user, { projectId, documentId });
+    if (!scoped.ok) {
+      return Response.json({ error: scoped.error || 'Forbidden' }, { status: scoped.statusCode || 403 });
     }
 
     // Try OPENAI_API_KEY first, then check DB providers
@@ -78,8 +90,9 @@ export async function POST(req: NextRequest) {
     await logAuditEvent({
       userId: auth.user.id,
       action: 'ai.images.generate',
-      resourceType: 'ai_image',
-      projectId: projectId ?? null,
+      resourceType: documentId ? 'document' : 'ai_image',
+      resourceId: documentId ?? null,
+      projectId: scoped.resolvedProjectId,
       metadata: { style: style || null, promptLength: prompt.length, size: size || null },
     });
 

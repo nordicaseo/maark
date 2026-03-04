@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getProviderForAction } from '@/lib/ai';
 import { requireRole } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
+import { hasRole } from '@/lib/permissions';
 import { logAuditEvent } from '@/lib/observability';
 
 const STRUCTURED_SYSTEM = `You are an expert at creating AI writing skill documents. Generate a detailed, structured skill with clearly separated parts.
@@ -33,7 +34,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { description, projectId } = body;
+    const { description, projectId: rawProjectId } = body;
 
     if (!description) {
       return NextResponse.json(
@@ -41,11 +42,16 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (
-      projectId !== undefined &&
-      projectId !== null &&
-      !(await userCanAccessProject(auth.user, Number(projectId)))
-    ) {
+    const parsedProjectId =
+      rawProjectId !== undefined && rawProjectId !== null && rawProjectId !== ''
+        ? Number(rawProjectId)
+        : null;
+    const projectId = Number.isFinite(parsedProjectId) ? parsedProjectId : null;
+
+    if (projectId === null && !hasRole(auth.user.role, 'admin')) {
+      return NextResponse.json({ error: 'projectId is required for scoped skill generation' }, { status: 400 });
+    }
+    if (projectId !== null && !(await userCanAccessProject(auth.user, projectId))) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -83,7 +89,7 @@ export async function POST(req: NextRequest) {
         userId: auth.user.id,
         action: 'skills.generate',
         resourceType: 'skill',
-        projectId: projectId ?? null,
+        projectId,
         metadata: { descriptionLength: description.length, partsCount: Array.isArray(parsed?.parts) ? parsed.parts.length : null },
       });
       return NextResponse.json(parsed);
@@ -101,7 +107,7 @@ export async function POST(req: NextRequest) {
           userId: auth.user.id,
           action: 'skills.generate',
           resourceType: 'skill',
-          projectId: projectId ?? null,
+          projectId,
           metadata: { descriptionLength: description.length, partsCount: parts.length, fallback: 'sections' },
         });
         return NextResponse.json({
@@ -116,7 +122,7 @@ export async function POST(req: NextRequest) {
         userId: auth.user.id,
         action: 'skills.generate',
         resourceType: 'skill',
-        projectId: projectId ?? null,
+        projectId,
         metadata: { descriptionLength: description.length, partsCount: 1, fallback: 'single' },
       });
       return NextResponse.json({

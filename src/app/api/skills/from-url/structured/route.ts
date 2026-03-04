@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getProviderForAction } from '@/lib/ai';
 import { requireRole } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
+import { hasRole } from '@/lib/permissions';
 import { logAuditEvent } from '@/lib/observability';
 
 const STRUCTURED_SYSTEM = `You are an expert at analyzing websites and extracting structured brand information. You will receive text content from one or more web pages. Analyze thoroughly and return a JSON array of skill parts.
@@ -76,16 +77,25 @@ export async function POST(req: NextRequest) {
   if (auth.error) return auth.error;
 
   try {
-    const { urls, description, projectId } = await req.json() as { urls: string[]; description?: string; projectId?: number };
+    const { urls, description, projectId: rawProjectId } = await req.json() as {
+      urls: string[];
+      description?: string;
+      projectId?: number;
+    };
 
     if (!urls || !Array.isArray(urls) || urls.length === 0) {
       return NextResponse.json({ error: 'At least one URL is required' }, { status: 400 });
     }
-    if (
-      projectId !== undefined &&
-      projectId !== null &&
-      !(await userCanAccessProject(auth.user, Number(projectId)))
-    ) {
+    const parsedProjectId =
+      rawProjectId !== undefined && rawProjectId !== null
+        ? Number(rawProjectId)
+        : null;
+    const projectId = Number.isFinite(parsedProjectId) ? parsedProjectId : null;
+
+    if (projectId === null && !hasRole(auth.user.role, 'admin')) {
+      return NextResponse.json({ error: 'projectId is required for scoped skill generation' }, { status: 400 });
+    }
+    if (projectId !== null && !(await userCanAccessProject(auth.user, projectId))) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -147,7 +157,7 @@ export async function POST(req: NextRequest) {
         userId: auth.user.id,
         action: 'skills.from_url.structured',
         resourceType: 'skill',
-        projectId: projectId ?? null,
+        projectId,
         metadata: { urlCount: urlsToProcess.length, extractedSourceCount: texts.length, partsCount: Array.isArray(parsed?.parts) ? parsed.parts.length : null },
       });
       return NextResponse.json(parsed);
@@ -157,7 +167,7 @@ export async function POST(req: NextRequest) {
         userId: auth.user.id,
         action: 'skills.from_url.structured',
         resourceType: 'skill',
-        projectId: projectId ?? null,
+        projectId,
         metadata: { urlCount: urlsToProcess.length, extractedSourceCount: texts.length, fallback: true, partsCount: 1 },
       });
       return NextResponse.json({

@@ -100,6 +100,7 @@ export async function createTopicWorkflow(input: CreateTopicWorkflowInput) {
 
     await convex.mutation(api.tasks.update, {
       id: created.taskId,
+      expectedProjectId: input.projectId,
       documentId: contentDocumentId,
     });
   }

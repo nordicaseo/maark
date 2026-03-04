@@ -114,6 +114,7 @@ export async function PATCH(
         if (convex) {
             const linkedTasks = await convex.query(api.tasks.getByDocument, {
               documentId,
+              projectId: doc.projectId ?? undefined,
             });
           const targetTaskStatus = documentStatusToTaskStatus(body.status);
 
@@ -122,6 +123,7 @@ export async function PATCH(
               await convex.mutation(api.tasks.updateStatusFromSync, {
                 id: task._id,
                 status: targetTaskStatus,
+                expectedProjectId: doc.projectId ?? undefined,
               });
             }
           }

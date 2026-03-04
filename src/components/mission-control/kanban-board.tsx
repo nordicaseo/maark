@@ -48,7 +48,7 @@ interface KanbanBoardProps {
 }
 
 export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardProps) {
-  const tasks = useQuery(api.tasks.list, projectId ? { projectId } : 'skip');
+  const tasks = useQuery(api.tasks.list, projectId ? { projectId, limit: 500 } : 'skip');
   const updateStatus = useMutation(api.tasks.updateStatus);
 
   const [activeTask, setActiveTask] = useState<Task | null>(null);
@@ -100,7 +100,11 @@ export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardPr
 
       // Optimistic: update immediately via Convex mutation
       try {
-        await updateStatus({ id: taskId, status: targetStatus });
+        await updateStatus({
+          id: taskId,
+          status: targetStatus,
+          expectedProjectId: currentTask?.projectId ?? projectId ?? undefined,
+        });
       } catch (error) {
         console.error('Failed to update task status from drag-and-drop:', error);
         return;
@@ -121,7 +125,7 @@ export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardPr
         );
       }
     },
-    [tasks, updateStatus]
+    [tasks, updateStatus, projectId]
   );
 
   const handleDragCancel = useCallback((_event: DragCancelEvent) => {

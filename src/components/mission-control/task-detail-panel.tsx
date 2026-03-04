@@ -25,6 +25,8 @@ import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
+import { useAuth } from '@/components/auth/auth-provider';
+import { withProjectScope } from '@/lib/project-context';
 import {
   X,
   Play,
@@ -113,6 +115,7 @@ const STAGE_OWNERS: Record<TopicStageKey, string> = {
 interface TaskDetailPanelProps {
   taskId: Id<'tasks'> | null;
   onClose: () => void;
+  projectId?: number | null;
 }
 
 interface AgentRunResult {
@@ -134,9 +137,13 @@ interface WorkflowEvent {
   createdAt: number;
 }
 
-export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
-  const task = useQuery(api.tasks.get, taskId ? { id: taskId } : 'skip');
-  const agents = useQuery(api.agents.list);
+export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelProps) {
+  const { user } = useAuth();
+  const task = useQuery(
+    api.tasks.get,
+    taskId ? { id: taskId, projectId: projectId ?? undefined } : 'skip'
+  );
+  const agents = useQuery(api.agents.list, { limit: 300 });
   const updateTask = useMutation(api.tasks.update);
   const updateStatus = useMutation(api.tasks.updateStatus);
   const updateAgentStatus = useMutation(api.agents.updateStatus);
@@ -361,13 +368,21 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
     try {
       // Pick an agent (assigned, or first online)
       let agentId = task.assignedAgentId;
-      if (!agentId && onlineAgents.length > 0) {
-        agentId = onlineAgents[0]._id;
-        await updateTask({ id: task._id, assignedAgentId: agentId });
+        if (!agentId && onlineAgents.length > 0) {
+          agentId = onlineAgents[0]._id;
+        await updateTask({
+          id: task._id,
+          expectedProjectId: task.projectId ?? undefined,
+          assignedAgentId: agentId,
+        });
       }
 
       // Move task to IN_PROGRESS
-      await updateStatus({ id: task._id, status: 'IN_PROGRESS' });
+      await updateStatus({
+        id: task._id,
+        status: 'IN_PROGRESS',
+        expectedProjectId: task.projectId ?? undefined,
+      });
       syncStatusToDrizzle(task.documentId, 'IN_PROGRESS');
 
       // Set agent to WORKING
@@ -408,10 +423,15 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
       const existingDeliverables = task.deliverables || [];
       await updateTask({
         id: task._id,
+        expectedProjectId: task.projectId ?? undefined,
         documentId: result.documentId,
         deliverables: [...existingDeliverables, result.deliverable],
       });
-      await updateStatus({ id: task._id, status: 'IN_REVIEW' });
+      await updateStatus({
+        id: task._id,
+        status: 'IN_REVIEW',
+        expectedProjectId: task.projectId ?? undefined,
+      });
       syncStatusToDrizzle(result.documentId || task.documentId, 'IN_REVIEW');
 
       // Set agent back to ONLINE
@@ -421,7 +441,11 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
     } catch (err) {
       console.error('Agent start error:', err);
       // Revert status on failure
-      await updateStatus({ id: task._id, status: task.status });
+      await updateStatus({
+        id: task._id,
+        status: task.status,
+        expectedProjectId: task.projectId ?? undefined,
+      });
       setLastResult({ error: (err as Error).message });
     } finally {
       setAgentRunning(false);
@@ -436,7 +460,11 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
 
     try {
       // Move back to IN_PROGRESS while processing
-      await updateStatus({ id: task._id, status: 'IN_PROGRESS' });
+      await updateStatus({
+        id: task._id,
+        status: 'IN_PROGRESS',
+        expectedProjectId: task.projectId ?? undefined,
+      });
       syncStatusToDrizzle(task.documentId, 'IN_PROGRESS');
 
       const res = await fetch('/api/agent/process-feedback', {
@@ -459,11 +487,19 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
       setLastResult(result);
 
       // Move back to IN_REVIEW
-      await updateStatus({ id: task._id, status: 'IN_REVIEW' });
+      await updateStatus({
+        id: task._id,
+        status: 'IN_REVIEW',
+        expectedProjectId: task.projectId ?? undefined,
+      });
       syncStatusToDrizzle(task.documentId, 'IN_REVIEW');
     } catch (err) {
       console.error('Feedback processing error:', err);
-      await updateStatus({ id: task._id, status: 'IN_REVIEW' });
+      await updateStatus({
+        id: task._id,
+        status: 'IN_REVIEW',
+        expectedProjectId: task.projectId ?? undefined,
+      });
       setLastResult({ error: (err as Error).message });
     } finally {
       setFeedbackRunning(false);
@@ -476,7 +512,11 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
       await handleAdvanceWorkflowStage('complete');
       return;
     }
-    await updateStatus({ id: task._id, status: 'COMPLETED' });
+    await updateStatus({
+      id: task._id,
+      status: 'COMPLETED',
+      expectedProjectId: task.projectId ?? undefined,
+    });
     syncStatusToDrizzle(task.documentId, 'COMPLETED');
   };
 
@@ -537,7 +577,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
               <FileText className="h-3.5 w-3.5" />
               <span>Document #{task.documentId}</span>
               <a
-                href={`/documents/${task.documentId}`}
+                href={withProjectScope(`/documents/${task.documentId}`, task.projectId)}
                 className="underline"
                 style={{ color: 'var(--mc-accent)' }}
               >
@@ -719,7 +759,11 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
             value={task.assigneeId || ''}
             onChange={async (e) => {
               const newAssignee = e.target.value || undefined;
-              await updateTask({ id: task._id, assigneeId: newAssignee });
+              await updateTask({
+                id: task._id,
+                expectedProjectId: task.projectId ?? undefined,
+                assigneeId: newAssignee,
+              });
             }}
             className="w-full text-xs py-1.5 px-2 rounded-md border bg-white"
             style={{ borderColor: 'var(--mc-border)', color: 'var(--mc-text-primary)' }}
@@ -860,6 +904,42 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
                     Research summary
                   </p>
                   <p style={{ color: 'var(--mc-text-tertiary)' }}>{docPreview.researchSnapshot.summary}</p>
+                  {docPreview.researchSnapshot.facts && docPreview.researchSnapshot.facts.length > 0 && (
+                    <div className="mt-1 space-y-0.5" style={{ color: 'var(--mc-text-tertiary)' }}>
+                      {docPreview.researchSnapshot.facts.slice(0, 4).map((fact, idx) => (
+                        <p key={`${fact}-${idx}`}>• {fact}</p>
+                      ))}
+                    </div>
+                  )}
+                  {docPreview.researchSnapshot.statistics && docPreview.researchSnapshot.statistics.length > 0 && (
+                    <div className="mt-1 space-y-0.5" style={{ color: 'var(--mc-text-tertiary)' }}>
+                      {docPreview.researchSnapshot.statistics.slice(0, 4).map((stat, idx) => (
+                        <p key={`${stat.stat}-${idx}`}>
+                          • {stat.stat}
+                          {stat.source ? ` (${stat.source})` : ''}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                  {docPreview.researchSnapshot.sources && docPreview.researchSnapshot.sources.length > 0 && (
+                    <div className="mt-1.5 space-y-0.5">
+                      <p className="font-medium" style={{ color: 'var(--mc-text-secondary)' }}>
+                        Sources
+                      </p>
+                      {docPreview.researchSnapshot.sources.slice(0, 3).map((source, idx) => (
+                        <a
+                          key={`${source.url}-${idx}`}
+                          href={source.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block underline truncate"
+                          style={{ color: 'var(--mc-accent)' }}
+                        >
+                          {source.title || source.url}
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p style={{ color: 'var(--mc-text-muted)' }}>No research summary yet.</p>
@@ -1111,8 +1191,8 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
               taskId,
               projectId: task.projectId ?? undefined,
               authorType: 'user',
-              authorId: 'current-user',
-              authorName: 'You',
+              authorId: user?.id || 'current-user',
+              authorName: user?.name || user?.email || 'User',
               content: text,
             });
             messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

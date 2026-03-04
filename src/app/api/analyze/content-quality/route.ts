@@ -5,7 +5,7 @@ import { documents } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { analyzeContentQuality } from '@/lib/analyzers/content-quality';
 import { requireRole } from '@/lib/auth';
-import { userCanAccessDocument, userCanAccessProject } from '@/lib/access';
+import { validateScopedAiContext } from '@/lib/access';
 import { logAuditEvent } from '@/lib/observability';
 
 export async function POST(req: NextRequest) {
@@ -14,7 +14,12 @@ export async function POST(req: NextRequest) {
 
   await ensureDb();
   try {
-    const { documentId, text, contentType, projectId } = await req.json();
+    const {
+      documentId: rawDocumentId,
+      text,
+      contentType,
+      projectId: rawProjectId,
+    } = await req.json();
 
     if (!text || text.trim().length < 20) {
       return NextResponse.json(
@@ -22,20 +27,18 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (
-      documentId !== undefined &&
-      documentId !== null &&
-      !(await userCanAccessDocument(auth.user, Number(documentId)))
-    ) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-    if (
-      (documentId === undefined || documentId === null) &&
-      projectId !== undefined &&
-      projectId !== null &&
-      !(await userCanAccessProject(auth.user, Number(projectId)))
-    ) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    const parsedDocumentId = rawDocumentId !== undefined && rawDocumentId !== null
+      ? Number(rawDocumentId)
+      : null;
+    const parsedProjectId = rawProjectId !== undefined && rawProjectId !== null
+      ? Number(rawProjectId)
+      : null;
+    const documentId = Number.isFinite(parsedDocumentId) ? parsedDocumentId : null;
+    const projectId = Number.isFinite(parsedProjectId) ? parsedProjectId : null;
+
+    const scoped = await validateScopedAiContext(auth.user, { documentId, projectId });
+    if (!scoped.ok) {
+      return NextResponse.json({ error: scoped.error || 'Forbidden' }, { status: scoped.statusCode || 403 });
     }
 
     const result = analyzeContentQuality(text, contentType || 'blog_post');
@@ -55,7 +58,7 @@ export async function POST(req: NextRequest) {
       action: 'analyze.content_quality',
       resourceType: documentId ? 'document' : 'analysis',
       resourceId: documentId ?? null,
-      projectId: projectId ?? null,
+      projectId: scoped.resolvedProjectId,
       metadata: { textLength: text.length, score: result.score, contentType: contentType || null },
     });
 

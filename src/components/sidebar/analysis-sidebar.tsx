@@ -126,6 +126,38 @@ function SidebarContent({
                     ))}
                   </ul>
                 )}
+                {document.researchSnapshot.statistics && document.researchSnapshot.statistics.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-medium text-muted-foreground">Stats</p>
+                    <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-0.5">
+                      {document.researchSnapshot.statistics.slice(0, 5).map((stat, idx) => (
+                        <li key={`${stat.stat}-${idx}`}>
+                          {stat.stat}
+                          {stat.source ? ` (${stat.source})` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {document.researchSnapshot.sources && document.researchSnapshot.sources.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-medium text-muted-foreground">Sources</p>
+                    <ul className="text-xs text-muted-foreground space-y-0.5">
+                      {document.researchSnapshot.sources.slice(0, 5).map((source, idx) => (
+                        <li key={`${source.url}-${idx}`} className="truncate">
+                          <a
+                            href={source.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline hover:text-foreground"
+                          >
+                            {source.title || source.url}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </>
             ) : (
               <p className="text-xs text-muted-foreground">No research snapshot yet.</p>

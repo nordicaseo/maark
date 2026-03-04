@@ -21,6 +21,8 @@ interface AiRewriterPanelProps {
   plainText: string;
   contentType: ContentType;
   targetKeyword: string | null;
+  documentId?: number | null;
+  projectId?: number | null;
   onReplace: (text: string) => void;
 }
 
@@ -29,6 +31,8 @@ export function AiRewriterPanel({
   plainText,
   contentType,
   targetKeyword,
+  documentId,
+  projectId,
   onReplace,
 }: AiRewriterPanelProps) {
   const [rewriting, setRewriting] = useState(false);
@@ -60,6 +64,8 @@ export function AiRewriterPanel({
           compositeScore: aiResult.compositeScore,
           contentType,
           targetKeyword,
+          documentId: documentId ?? undefined,
+          projectId: projectId ?? undefined,
         }),
         signal: controller.signal,
       });
@@ -94,7 +100,7 @@ export function AiRewriterPanel({
     }
 
     setRewriting(false);
-  }, [plainText, aiResult, contentType, targetKeyword]);
+  }, [plainText, aiResult, contentType, targetKeyword, documentId, projectId]);
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();

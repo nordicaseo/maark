@@ -21,7 +21,7 @@ const STATUS_DOTS: Record<string, string> = {
 };
 
 export function AgentsSidebar() {
-  const agents = useQuery(api.agents.list);
+  const agents = useQuery(api.agents.list, { limit: 300 });
 
   if (!agents) {
     return (

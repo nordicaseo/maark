@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { getProviderForAction } from '@/lib/ai';
 import { requireRole } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
+import { hasRole } from '@/lib/permissions';
 import { logAuditEvent } from '@/lib/observability';
 
 const SKILL_FROM_URL_SYSTEM = `You are an expert at analyzing websites and creating AI writing skill documents. You will receive the extracted text content from a website. Analyze it thoroughly to understand:
@@ -100,7 +101,7 @@ export async function POST(req: NextRequest) {
   if (auth.error) return auth.error;
 
   try {
-    const { url, projectId } = await req.json();
+    const { url, projectId: rawProjectId } = await req.json();
 
     if (!url || typeof url !== 'string') {
       return new Response(
@@ -108,11 +109,19 @@ export async function POST(req: NextRequest) {
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
-    if (
-      projectId !== undefined &&
-      projectId !== null &&
-      !(await userCanAccessProject(auth.user, Number(projectId)))
-    ) {
+    const parsedProjectId =
+      rawProjectId !== undefined && rawProjectId !== null && rawProjectId !== ''
+        ? Number(rawProjectId)
+        : null;
+    const projectId = Number.isFinite(parsedProjectId) ? parsedProjectId : null;
+
+    if (projectId === null && !hasRole(auth.user.role, 'admin')) {
+      return new Response(
+        JSON.stringify({ error: 'projectId is required for scoped skill generation' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (projectId !== null && !(await userCanAccessProject(auth.user, projectId))) {
       return new Response(
         JSON.stringify({ error: 'Forbidden' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }
@@ -166,7 +175,7 @@ export async function POST(req: NextRequest) {
       userId: auth.user.id,
       action: 'skills.from_url',
       resourceType: 'skill',
-      projectId: projectId ?? null,
+      projectId,
       metadata: { url: parsed.href, extractedLength: siteText.length },
     });
 

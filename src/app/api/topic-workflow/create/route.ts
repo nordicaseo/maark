@@ -14,7 +14,7 @@ import {
   createTopicWorkflow,
   type TopicWorkflowEntryPoint,
 } from '@/lib/topic-workflow';
-import { logAuditEvent } from '@/lib/observability';
+import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 
 const ENTRY_POINTS = new Set<TopicWorkflowEntryPoint>([
   'mission_control',
@@ -165,6 +165,13 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
+    await logAlertEvent({
+      source: 'topic_workflow',
+      eventType: 'create_failed',
+      severity: 'error',
+      message: 'Topic workflow creation failed.',
+      metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
+    });
     console.error('Topic workflow create failed:', error);
     return NextResponse.json({ error: 'Failed to create topic workflow' }, { status: 500 });
   }

@@ -19,6 +19,7 @@ import { api } from '../../../convex/_generated/api';
 import type { Doc } from '../../../convex/_generated/dataModel';
 import { useTeamMembers } from './team-members-provider';
 import { useSkills } from './skills-provider';
+import { withProjectScope } from '@/lib/project-context';
 
 type Task = Doc<'tasks'>;
 type DragAttributes = ReturnType<typeof useSortable>['attributes'];
@@ -120,7 +121,7 @@ function TaskCardContent({
     e.stopPropagation();
     e.preventDefault();
     if (confirm('Delete this task?')) {
-      removeTask({ id: task._id });
+      removeTask({ id: task._id, expectedProjectId: task.projectId ?? undefined });
     }
   };
 
@@ -205,7 +206,7 @@ function TaskCardContent({
         <div className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
           {task.documentId && (
             <a
-              href={`/documents/${task.documentId}`}
+              href={withProjectScope(`/documents/${task.documentId}`, task.projectId)}
               className="flex items-center gap-0.5 hover:underline"
               style={{ color: 'var(--mc-accent)' }}
               onClick={(e) => e.stopPropagation()}

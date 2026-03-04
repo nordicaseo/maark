@@ -5,6 +5,9 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/components/auth/auth-provider';
 import { hasRole } from '@/lib/permissions';
+import { useActiveProject } from '@/hooks/use-active-project';
+import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
+import { withProjectScope } from '@/lib/project-context';
 import {
   FolderOpen,
   Sparkles,
@@ -37,13 +40,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname();
   const router = useRouter();
   const { user, isLoading, signOut } = useAuth();
+  const { activeProjectId, setActiveProjectId } = useActiveProject();
+  useProjectScopeSync(activeProjectId, setActiveProjectId);
   const shouldRedirect = !isLoading && (!user || !hasRole(user.role, 'admin'));
 
   useEffect(() => {
     if (shouldRedirect) {
-      router.replace('/documents');
+      router.replace(withProjectScope('/documents', activeProjectId));
     }
-  }, [shouldRedirect, router]);
+  }, [shouldRedirect, router, activeProjectId]);
 
   // Redirect non-admin users away from admin
   if (isLoading) {
@@ -71,6 +76,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         <nav className="flex-1 p-2 space-y-0.5">
           {NAV_ITEMS.map((item) => {
+            const href = item.href.startsWith('/admin')
+              ? item.href
+              : withProjectScope(item.href, activeProjectId);
             const isActive =
               item.href === '/admin'
                 ? pathname === '/admin'
@@ -79,7 +87,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             return (
               <Link
                 key={item.href}
-                href={item.href}
+                href={href}
                 className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors ${
                   isActive
                     ? 'bg-accent text-accent-foreground font-medium'
@@ -95,7 +103,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         <div className="p-2 border-t border-border space-y-0.5">
           <Link
-            href="/documents"
+            href={withProjectScope('/documents', activeProjectId)}
             className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" />

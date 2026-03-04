@@ -2,8 +2,19 @@ import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 
 export const list = query({
-  handler: async (ctx) => {
-    return await ctx.db.query("agents").collect();
+  args: {
+    status: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = Math.max(1, Math.min(args.limit ?? 200, 1000));
+    if (args.status) {
+      return await ctx.db
+        .query("agents")
+        .withIndex("by_status", (q) => q.eq("status", args.status!))
+        .take(limit);
+    }
+    return await ctx.db.query("agents").take(limit);
   },
 });
 

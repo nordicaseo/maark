@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { hasRole } from '@/lib/permissions';
+import { canSkipOutlineReviewByRole } from '@/lib/topic-workflow-rules';
 import { requireRole } from '@/lib/auth';
 import {
   advanceTopicWorkflowStage,
   getWorkflowTaskForUser,
   type TopicStageKey,
 } from '@/lib/topic-workflow';
-import { logAuditEvent } from '@/lib/observability';
+import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import type { Id } from '../../../../../convex/_generated/dataModel';
 
 const STAGES = new Set<TopicStageKey>([
@@ -44,7 +45,10 @@ export async function POST(req: NextRequest) {
 
     const { task } = await getWorkflowTaskForUser(auth.user, taskId);
 
-    if (skipOptionalOutlineReview && !hasRole(auth.user.role, 'admin')) {
+    const canSkipOutlineReview =
+      hasRole(auth.user.role, 'admin') || canSkipOutlineReviewByRole(auth.user.role);
+
+    if (skipOptionalOutlineReview && !canSkipOutlineReview) {
       return NextResponse.json(
         { error: 'Only PM/lead roles can skip outline review.' },
         { status: 403 }
@@ -81,6 +85,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    await logAlertEvent({
+      source: 'topic_workflow',
+      eventType: 'advance_failed',
+      severity: 'error',
+      message: 'Topic workflow stage advance failed.',
+      metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
+    });
     console.error('Topic workflow stage advance failed:', error);
     return NextResponse.json({ error: 'Failed to advance workflow stage' }, { status: 500 });
   }

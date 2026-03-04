@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { getProviderForAction } from '@/lib/ai';
 import { requireRole } from '@/lib/auth';
-import { userCanAccessDocument, userCanAccessProject } from '@/lib/access';
+import { validateScopedAiContext } from '@/lib/access';
 import { logAuditEvent } from '@/lib/observability';
 
 export async function POST(req: NextRequest) {
@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
   if (auth.error) return auth.error;
 
   try {
-    const { html, documentId, projectId } = await req.json();
+    const { html, documentId: rawDocumentId, projectId: rawProjectId } = await req.json();
 
     if (!html || html.trim().length < 20) {
       return new Response(
@@ -18,25 +18,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (
-      documentId !== undefined &&
-      documentId !== null &&
-      !(await userCanAccessDocument(auth.user, Number(documentId)))
-    ) {
+    const parsedDocumentId = rawDocumentId !== undefined && rawDocumentId !== null
+      ? Number(rawDocumentId)
+      : null;
+    const parsedProjectId = rawProjectId !== undefined && rawProjectId !== null
+      ? Number(rawProjectId)
+      : null;
+    const documentId = Number.isFinite(parsedDocumentId) ? parsedDocumentId : null;
+    const projectId = Number.isFinite(parsedProjectId) ? parsedProjectId : null;
+
+    const scoped = await validateScopedAiContext(auth.user, { documentId, projectId });
+    if (!scoped.ok) {
       return new Response(
-        JSON.stringify({ error: 'Forbidden' }),
-        { status: 403, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-    if (
-      (documentId === undefined || documentId === null) &&
-      projectId !== undefined &&
-      projectId !== null &&
-      !(await userCanAccessProject(auth.user, Number(projectId)))
-    ) {
-      return new Response(
-        JSON.stringify({ error: 'Forbidden' }),
-        { status: 403, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: scoped.error || 'Forbidden' }),
+        { status: scoped.statusCode || 403, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
@@ -75,7 +70,7 @@ Return ONLY the cleaned HTML content. No wrapping <html>/<body> tags. No comment
       action: 'ai.format',
       resourceType: documentId ? 'document' : 'ai',
       resourceId: documentId ?? null,
-      projectId: projectId ?? null,
+      projectId: scoped.resolvedProjectId,
       metadata: { contentLength: html.length },
     });
 

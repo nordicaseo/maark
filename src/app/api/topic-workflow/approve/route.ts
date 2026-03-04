@@ -5,7 +5,7 @@ import {
   recordTopicWorkflowApproval,
   type TopicApprovalGate,
 } from '@/lib/topic-workflow';
-import { logAuditEvent } from '@/lib/observability';
+import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import type { Id } from '../../../../../convex/_generated/dataModel';
 
 const GATES = new Set<TopicApprovalGate>([
@@ -70,6 +70,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    await logAlertEvent({
+      source: 'topic_workflow',
+      eventType: 'approval_failed',
+      severity: 'error',
+      message: 'Topic workflow approval failed.',
+      metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
+    });
     console.error('Topic workflow approval failed:', error);
     return NextResponse.json({ error: 'Failed to record workflow approval' }, { status: 500 });
   }

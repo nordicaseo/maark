@@ -7,7 +7,7 @@ import { scrapeSerpContent } from '@/lib/serp/scraper';
 import { TfIdf, extractEntities } from '@/lib/serp/tfidf';
 import { analyzeSemanticCoverage } from '@/lib/analyzers/semantic';
 import { requireRole } from '@/lib/auth';
-import { userCanAccessDocument, userCanAccessProject } from '@/lib/access';
+import { validateScopedAiContext } from '@/lib/access';
 import { logAuditEvent } from '@/lib/observability';
 
 async function getSerpData(keyword: string) {
@@ -90,7 +90,12 @@ export async function POST(req: NextRequest) {
 
   await ensureDb();
   try {
-    const { documentId, text, keyword, projectId } = await req.json();
+    const {
+      documentId: rawDocumentId,
+      text,
+      keyword,
+      projectId: rawProjectId,
+    } = await req.json();
 
     if (!keyword) {
       return NextResponse.json(
@@ -98,20 +103,18 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (
-      documentId !== undefined &&
-      documentId !== null &&
-      !(await userCanAccessDocument(auth.user, Number(documentId)))
-    ) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-    if (
-      (documentId === undefined || documentId === null) &&
-      projectId !== undefined &&
-      projectId !== null &&
-      !(await userCanAccessProject(auth.user, Number(projectId)))
-    ) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    const parsedDocumentId = rawDocumentId !== undefined && rawDocumentId !== null
+      ? Number(rawDocumentId)
+      : null;
+    const parsedProjectId = rawProjectId !== undefined && rawProjectId !== null
+      ? Number(rawProjectId)
+      : null;
+    const documentId = Number.isFinite(parsedDocumentId) ? parsedDocumentId : null;
+    const projectId = Number.isFinite(parsedProjectId) ? parsedProjectId : null;
+
+    const scoped = await validateScopedAiContext(auth.user, { documentId, projectId });
+    if (!scoped.ok) {
+      return NextResponse.json({ error: scoped.error || 'Forbidden' }, { status: scoped.statusCode || 403 });
     }
 
     const serpData = await getSerpData(keyword);
@@ -136,7 +139,7 @@ export async function POST(req: NextRequest) {
       action: 'analyze.semantic',
       resourceType: documentId ? 'document' : 'analysis',
       resourceId: documentId ?? null,
-      projectId: projectId ?? null,
+      projectId: scoped.resolvedProjectId,
       metadata: { keyword, score: semantic.score, textLength: typeof text === 'string' ? text.length : 0 },
     });
 

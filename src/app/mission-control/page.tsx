@@ -277,7 +277,11 @@ export default function MissionControlPage() {
 
         <NewTaskDialog open={showNewTask} onOpenChange={setShowNewTask} projectId={projectId} />
 
-        <TaskDetailPanel taskId={selectedTaskId} onClose={() => setSelectedTaskId(null)} />
+        <TaskDetailPanel
+          taskId={selectedTaskId}
+          projectId={projectId}
+          onClose={() => setSelectedTaskId(null)}
+        />
       </div>
       </SkillsProvider>
     </TeamMembersProvider>

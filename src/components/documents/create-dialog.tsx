@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/select';
 import { Loader2 } from 'lucide-react';
 import { CONTENT_FORMAT_GROUPS, CONTENT_FORMAT_LABELS, type ContentFormat } from '@/types/document';
+import { withProjectScope } from '@/lib/project-context';
 
 interface CreateDialogProps {
   open: boolean;
@@ -64,9 +65,9 @@ export function CreateDialog({ open, onOpenChange, onCreated, projectId }: Creat
         setTitle('');
         setKeyword('');
         if (documentId) {
-          router.push(`/documents/${documentId}`);
+          router.push(withProjectScope(`/documents/${documentId}`, projectId));
         } else {
-          router.push('/mission-control');
+          router.push(withProjectScope('/mission-control', projectId));
         }
       }
     } catch {}

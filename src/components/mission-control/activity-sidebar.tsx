@@ -115,7 +115,10 @@ export function ActivitySidebar({ projectId }: ActivitySidebarProps) {
 // ── Activity Feed ────────────────────────────────────────────────
 
 function ActivityFeed({ projectId }: { projectId: number | null }) {
-  const activities = useQuery(api.activities.list, projectId ? { projectId } : 'skip');
+  const activities = useQuery(
+    api.activities.list,
+    projectId ? { projectId, limit: 120 } : 'skip'
+  );
 
   if (!projectId) {
     return (
@@ -209,7 +212,10 @@ interface MessagesFeedProps {
 
 function MessagesFeed({ projectId, user }: MessagesFeedProps) {
   const [draft, setDraft] = useState('');
-  const messages = useQuery(api.messages.list, projectId ? { projectId } : 'skip');
+  const messages = useQuery(
+    api.messages.list,
+    projectId ? { projectId, limit: 120 } : 'skip'
+  );
   const sendMessage = useMutation(api.messages.send);
   const createActivity = useMutation(api.activities.create);
 

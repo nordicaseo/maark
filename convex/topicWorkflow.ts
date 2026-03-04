@@ -44,6 +44,17 @@ const stageOwnerChains: Record<TopicStageKey, string[]> = {
   complete: ["project-manager"],
 };
 
+const roleAliases: Record<string, string[]> = {
+  researcher: ["researcher", "seo", "editor", "writer"],
+  outliner: ["outliner", "editor", "writer", "content"],
+  writer: ["writer", "content", "editor"],
+  "seo-reviewer": ["seo-reviewer", "seo", "editor"],
+  "project-manager": ["project-manager", "lead", "editor"],
+  seo: ["seo", "seo-reviewer", "editor"],
+  content: ["content", "writer", "editor"],
+  lead: ["lead", "project-manager", "editor", "seo-reviewer"],
+};
+
 function stageOwnerSummary(stage: TopicStageKey): string {
   const chain = stageOwnerChains[stage] || ["lead"];
   if (chain.length === 1) return chain[0];
@@ -94,6 +105,49 @@ function flagsWithDefaults(task: Doc<"tasks">) {
     outlineReviewOptional: task.workflowFlags?.outlineReviewOptional ?? true,
     seoReviewRequired: task.workflowFlags?.seoReviewRequired ?? true,
   };
+}
+
+function normalizedRoleCandidates(role: string): string[] {
+  const roleKey = role.toLowerCase();
+  const base = roleAliases[roleKey] || [roleKey];
+  return Array.from(new Set([roleKey, ...base]));
+}
+
+async function resolveStageOwnerAgent(
+  ctx: MutationCtx,
+  stage: TopicStageKey
+): Promise<{ agent: Doc<"agents">; requestedRole: string; matchedRole: string } | null> {
+  const chain = stageOwnerChains[stage] || [];
+  if (chain.length === 0) return null;
+
+  const onlineAgents = await ctx.db
+    .query("agents")
+    .withIndex("by_status", (q) => q.eq("status", "ONLINE"))
+    .collect();
+  const idleAgents = await ctx.db
+    .query("agents")
+    .withIndex("by_status", (q) => q.eq("status", "IDLE"))
+    .collect();
+
+  for (const requestedRole of chain) {
+    if (requestedRole === "human") continue;
+
+    const candidates = normalizedRoleCandidates(requestedRole);
+    const findByRole = (agents: Doc<"agents">[]) =>
+      agents.find((agent) => candidates.includes(agent.role.toLowerCase()));
+
+    const online = findByRole(onlineAgents);
+    if (online) {
+      return { agent: online, requestedRole, matchedRole: online.role };
+    }
+
+    const idle = findByRole(idleAgents);
+    if (idle) {
+      return { agent: idle, requestedRole, matchedRole: idle.role };
+    }
+  }
+
+  return null;
 }
 
 async function postWorkflowDiscussion(
@@ -213,6 +267,42 @@ async function insertHandoffEvent(
   });
 }
 
+async function assignStageOwner(
+  ctx: MutationCtx,
+  args: {
+    taskId: Id<"tasks">;
+    projectId?: number;
+    stageKey: TopicStageKey;
+  }
+) {
+  const assignment = await resolveStageOwnerAgent(ctx, args.stageKey);
+  if (!assignment) return null;
+
+  await ctx.db.patch(args.taskId, {
+    assignedAgentId: assignment.agent._id,
+    updatedAt: Date.now(),
+  });
+
+  const summary = `PM assigned ${assignment.agent.name} to ${args.stageKey} (requested ${assignment.requestedRole}, matched ${assignment.matchedRole}).`;
+  await insertWorkflowEvent(ctx, {
+    taskId: args.taskId,
+    projectId: args.projectId,
+    stageKey: args.stageKey,
+    eventType: "assignment",
+    actorType: "system",
+    actorName: "Workflow PM",
+    summary,
+    payload: {
+      assignedAgentId: assignment.agent._id,
+      assignedAgentName: assignment.agent.name,
+      requestedRole: assignment.requestedRole,
+      matchedRole: assignment.matchedRole,
+    },
+  });
+
+  return assignment;
+}
+
 async function transitionStage(
   ctx: MutationCtx,
   args: {
@@ -263,6 +353,12 @@ async function transitionStage(
     actorId: args.actorId,
     actorName: args.actorName,
     summary,
+  });
+
+  await assignStageOwner(ctx, {
+    taskId: task._id,
+    projectId: task.projectId,
+    stageKey: args.toStage,
   });
 
   await insertHandoffEvent(ctx, {
@@ -377,6 +473,12 @@ export const createTopicFromSource = mutation({
         keywordId: args.keywordId,
         keywordClusterId: args.keywordClusterId,
       },
+    });
+
+    await assignStageOwner(ctx, {
+      taskId,
+      projectId: args.projectId,
+      stageKey: initialStage,
     });
 
     await insertHandoffEvent(ctx, {

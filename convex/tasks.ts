@@ -5,40 +5,55 @@ export const list = query({
   args: {
     projectId: v.optional(v.number()),
     status: v.optional(v.string()),
+    limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const limit = Math.max(1, Math.min(args.limit ?? 300, 1000));
+
     if (args.projectId !== undefined) {
       return await ctx.db
         .query("tasks")
         .withIndex("by_project", (q) => q.eq("projectId", args.projectId!))
         .order("desc")
-        .collect();
+        .take(limit);
     }
     if (args.status) {
       return await ctx.db
         .query("tasks")
         .withIndex("by_status", (q) => q.eq("status", args.status!))
         .order("desc")
-        .collect();
+        .take(limit);
     }
-    return await ctx.db.query("tasks").order("desc").collect();
+    // Never return global task data by default.
+    return [];
   },
 });
 
 export const getByDocument = query({
-  args: { documentId: v.number() },
+  args: {
+    documentId: v.number(),
+    projectId: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const tasks = await ctx.db
       .query("tasks")
       .withIndex("by_document", (q) => q.eq("documentId", args.documentId))
       .collect();
+    if (args.projectId === undefined) return tasks;
+    return tasks.filter((task) => task.projectId === args.projectId);
   },
 });
 
 export const get = query({
-  args: { id: v.id("tasks") },
+  args: {
+    id: v.id("tasks"),
+    projectId: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.id);
+    const task = await ctx.db.get(args.id);
+    if (!task) return null;
+    if (args.projectId !== undefined && task.projectId !== args.projectId) return null;
+    return task;
   },
 });
 
@@ -99,6 +114,7 @@ export const create = mutation({
 export const update = mutation({
   args: {
     id: v.id("tasks"),
+    expectedProjectId: v.optional(v.number()),
     title: v.optional(v.string()),
     description: v.optional(v.string()),
     type: v.optional(v.string()),
@@ -143,7 +159,12 @@ export const update = mutation({
     topicKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { id, ...updates } = args;
+    const { id, expectedProjectId, ...updates } = args;
+    const existing = await ctx.db.get(id);
+    if (!existing) return;
+    if (expectedProjectId !== undefined && existing.projectId !== expectedProjectId) {
+      throw new Error("Task project scope mismatch.");
+    }
     await ctx.db.patch(id, { ...updates, updatedAt: Date.now() });
   },
 });
@@ -152,9 +173,14 @@ export const updateStatus = mutation({
   args: {
     id: v.id("tasks"),
     status: v.string(),
+    expectedProjectId: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const task = await ctx.db.get(args.id);
+    if (!task) return;
+    if (args.expectedProjectId !== undefined && task.projectId !== args.expectedProjectId) {
+      throw new Error("Task project scope mismatch.");
+    }
 
     const updates: Record<string, unknown> = {
       status: args.status,
@@ -189,10 +215,14 @@ export const updateStatusFromSync = mutation({
   args: {
     id: v.id("tasks"),
     status: v.string(),
+    expectedProjectId: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const task = await ctx.db.get(args.id);
     if (!task || task.status === args.status) return; // Already matches — no-op
+    if (args.expectedProjectId !== undefined && task.projectId !== args.expectedProjectId) {
+      throw new Error("Task project scope mismatch.");
+    }
 
     const updates: Record<string, unknown> = {
       status: args.status,
@@ -209,8 +239,16 @@ export const updateStatusFromSync = mutation({
 });
 
 export const remove = mutation({
-  args: { id: v.id("tasks") },
+  args: {
+    id: v.id("tasks"),
+    expectedProjectId: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.id);
+    if (!task) return;
+    if (args.expectedProjectId !== undefined && task.projectId !== args.expectedProjectId) {
+      throw new Error("Task project scope mismatch.");
+    }
     await ctx.db.delete(args.id);
   },
 });

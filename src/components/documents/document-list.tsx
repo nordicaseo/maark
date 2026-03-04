@@ -82,7 +82,7 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
     try {
       await fetch(`/api/documents/${id}`, { method: 'DELETE' });
       onRefresh();
-      if (activeId === id) router.push('/documents');
+      if (activeId === id) router.push(withProjectScope('/documents', activeProjectId));
     } catch {}
   };
 
