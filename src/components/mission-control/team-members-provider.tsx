@@ -26,17 +26,26 @@ export function useTeamMembers() {
   return useContext(TeamMembersContext);
 }
 
-export function TeamMembersProvider({ children }: { children: React.ReactNode }) {
+export function TeamMembersProvider({
+  children,
+  projectId,
+}: {
+  children: React.ReactNode;
+  projectId?: number | null;
+}) {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/team/members')
+    const params = new URLSearchParams();
+    if (projectId) params.set('projectId', String(projectId));
+    const url = params.size > 0 ? `/api/team/members?${params.toString()}` : '/api/team/members';
+    fetch(url)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setMembers(data))
       .catch(() => setMembers([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [projectId]);
 
   const getMember = useCallback(
     (id: string) => members.find((m) => m.id === id),

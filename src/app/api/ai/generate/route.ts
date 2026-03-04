@@ -1,5 +1,8 @@
 import { NextRequest } from 'next/server';
 import { getProviderForAction } from '@/lib/ai';
+import { requireRole } from '@/lib/auth';
+import { userCanAccessDocument, userCanAccessProject } from '@/lib/access';
+import { logAuditEvent } from '@/lib/observability';
 
 const CONTENT_TYPE_PROMPTS: Record<string, string> = {
   blog_post: 'Write in a conversational, informative blog style. Use personal anecdotes where appropriate. Vary sentence length naturally.',
@@ -14,9 +17,43 @@ const CONTENT_TYPE_PROMPTS: Record<string, string> = {
 };
 
 export async function POST(req: NextRequest) {
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
+
   try {
-    const { instruction, contentType, targetKeyword, existingContent, tone, skillContent } =
+    const {
+      instruction,
+      contentType,
+      targetKeyword,
+      existingContent,
+      tone,
+      skillContent,
+      documentId,
+      projectId,
+    } =
       await req.json();
+
+    if (
+      documentId !== undefined &&
+      documentId !== null &&
+      !(await userCanAccessDocument(auth.user, Number(documentId)))
+    ) {
+      return new Response(
+        JSON.stringify({ error: 'Forbidden' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (
+      (documentId === undefined || documentId === null) &&
+      projectId !== undefined &&
+      projectId !== null &&
+      !(await userCanAccessProject(auth.user, Number(projectId)))
+    ) {
+      return new Response(
+        JSON.stringify({ error: 'Forbidden' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
 
     const { provider, model, maxTokens, temperature } = await getProviderForAction('writing');
 
@@ -61,6 +98,19 @@ Important writing guidelines:
       messages: [{ role: 'user', content: userMessage }],
       maxTokens,
       temperature,
+    });
+
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'ai.generate',
+      resourceType: documentId ? 'document' : 'ai',
+      resourceId: documentId ?? null,
+      projectId: projectId ?? null,
+      metadata: {
+        contentType: contentType || null,
+        hasSkillContent: Boolean(skillContent),
+        instructionLength: typeof instruction === 'string' ? instruction.length : 0,
+      },
     });
 
     return new Response(stream, {

@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getProviderForAction } from '@/lib/ai';
+import { requireRole } from '@/lib/auth';
+import { userCanAccessProject } from '@/lib/access';
+import { logAuditEvent } from '@/lib/observability';
 
 const STRUCTURED_SYSTEM = `You are an expert at creating AI writing skill documents. Generate a detailed, structured skill with clearly separated parts.
 
@@ -25,15 +28,25 @@ Guidelines:
 - Make it specific enough to produce consistent, high-quality content`;
 
 export async function POST(req: NextRequest) {
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
+
   try {
     const body = await req.json();
-    const { description } = body;
+    const { description, projectId } = body;
 
     if (!description) {
       return NextResponse.json(
         { error: 'description is required' },
         { status: 400 }
       );
+    }
+    if (
+      projectId !== undefined &&
+      projectId !== null &&
+      !(await userCanAccessProject(auth.user, Number(projectId)))
+    ) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const { provider, model, maxTokens, temperature } = await getProviderForAction('skill_generation');
@@ -66,6 +79,13 @@ export async function POST(req: NextRequest) {
     try {
       const jsonStr = fullText.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim();
       const parsed = JSON.parse(jsonStr);
+      await logAuditEvent({
+        userId: auth.user.id,
+        action: 'skills.generate',
+        resourceType: 'skill',
+        projectId: projectId ?? null,
+        metadata: { descriptionLength: description.length, partsCount: Array.isArray(parsed?.parts) ? parsed.parts.length : null },
+      });
       return NextResponse.json(parsed);
     } catch {
       // Fallback: split markdown by ## headings into multiple parts
@@ -77,6 +97,13 @@ export async function POST(req: NextRequest) {
           const content = lines.slice(1).join('\n').trim();
           return { partType: 'custom', label, content };
         });
+        await logAuditEvent({
+          userId: auth.user.id,
+          action: 'skills.generate',
+          resourceType: 'skill',
+          projectId: projectId ?? null,
+          metadata: { descriptionLength: description.length, partsCount: parts.length, fallback: 'sections' },
+        });
         return NextResponse.json({
           skillName: 'Generated Skill',
           skillDescription: description.trim(),
@@ -85,6 +112,13 @@ export async function POST(req: NextRequest) {
       }
 
       // Last resort: single part
+      await logAuditEvent({
+        userId: auth.user.id,
+        action: 'skills.generate',
+        resourceType: 'skill',
+        projectId: projectId ?? null,
+        metadata: { descriptionLength: description.length, partsCount: 1, fallback: 'single' },
+      });
       return NextResponse.json({
         skillName: 'Generated Skill',
         skillDescription: description.trim(),

@@ -2,11 +2,13 @@ import { NextRequest } from 'next/server';
 import { db, ensureDb } from '@/db';
 import { documents, documentComments } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
-import { getAuthUser } from '@/lib/auth';
+import { requireRole } from '@/lib/auth';
 import { getProviderForAction } from '@/lib/ai';
 import { PerplexityProvider } from '@/lib/ai/providers/perplexity';
 import { contentToHtml } from '@/lib/tiptap/to-html';
 import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
+import { userCanAccessDocument } from '@/lib/access';
+import { logAuditEvent } from '@/lib/observability';
 
 /**
  * POST /api/ai/process-comments
@@ -15,10 +17,8 @@ import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
  * Returns: streamed revised HTML content.
  */
 export async function POST(req: NextRequest) {
-  const user = await getAuthUser();
-  if (!user) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
-  }
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
 
   try {
     const { documentId, commentIds, useResearch } = await req.json();
@@ -28,6 +28,10 @@ export async function POST(req: NextRequest) {
     }
 
     await ensureDb();
+
+    if (!(await userCanAccessDocument(auth.user, Number(documentId)))) {
+      return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 });
+    }
 
     // Fetch document
     const [doc] = await db
@@ -148,6 +152,19 @@ Please revise the article to address all comments. Output the complete revised a
       if (done) break;
       revisedContent += decoder.decode(value, { stream: true });
     }
+
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'ai.process_comments',
+      resourceType: 'document',
+      resourceId: documentId,
+      projectId: doc.projectId ?? null,
+      metadata: {
+        processedCommentCount: comments.length,
+        selectedCommentCount: Array.isArray(commentIds) ? commentIds.length : null,
+        useResearch: Boolean(useResearch),
+      },
+    });
 
     return new Response(normalizeGeneratedHtml(revisedContent), {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' },

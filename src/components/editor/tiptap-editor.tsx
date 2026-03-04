@@ -225,6 +225,7 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting, onA
         onOpenChange={setImageDialogOpen}
         onInsertImage={handleInsertImage}
         contextKeyword={document.targetKeyword || undefined}
+        projectId={document.projectId}
       />
     </div>
   );

@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getProviderForAction } from '@/lib/ai';
+import { requireRole } from '@/lib/auth';
+import { userCanAccessProject } from '@/lib/access';
+import { logAuditEvent } from '@/lib/observability';
 
 const STRUCTURED_SYSTEM = `You are an expert at analyzing brand documents and creating structured writing skill parts. You will receive text content extracted from uploaded files. Analyze thoroughly and return a JSON object with structured skill parts.
 
@@ -21,10 +24,25 @@ partType must be one of: brand_voice, technical_details, brand_history, content_
 Only include parts where you have enough information. Be specific and use examples from the source material.`;
 
 export async function POST(req: NextRequest) {
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
+
   try {
     const formData = await req.formData();
     const files = formData.getAll('files') as File[];
     const description = formData.get('description') as string | null;
+    const projectIdRaw = formData.get('projectId');
+    const parsedProjectId =
+      typeof projectIdRaw === 'string' && projectIdRaw.trim()
+        ? Number.parseInt(projectIdRaw, 10)
+        : null;
+    if (
+      parsedProjectId !== null &&
+      Number.isFinite(parsedProjectId) &&
+      !(await userCanAccessProject(auth.user, parsedProjectId))
+    ) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
 
     if (!files || files.length === 0) {
       return NextResponse.json({ error: 'At least one file is required' }, { status: 400 });
@@ -85,8 +103,22 @@ export async function POST(req: NextRequest) {
     try {
       const jsonStr = fullText.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim();
       const parsed = JSON.parse(jsonStr);
+      await logAuditEvent({
+        userId: auth.user.id,
+        action: 'skills.from_files',
+        resourceType: 'skill',
+        projectId: parsedProjectId,
+        metadata: { fileCount: files.length, partsCount: Array.isArray(parsed?.parts) ? parsed.parts.length : null },
+      });
       return NextResponse.json(parsed);
     } catch {
+      await logAuditEvent({
+        userId: auth.user.id,
+        action: 'skills.from_files',
+        resourceType: 'skill',
+        projectId: parsedProjectId,
+        metadata: { fileCount: files.length, partsCount: 1, fallback: true },
+      });
       return NextResponse.json({
         skillName: 'Generated Skill',
         skillDescription: `Generated from ${files.length} file(s)`,

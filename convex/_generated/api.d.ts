@@ -13,6 +13,7 @@ import type * as agents from "../agents.js";
 import type * as messages from "../messages.js";
 import type * as seed from "../seed.js";
 import type * as tasks from "../tasks.js";
+import type * as topicWorkflow from "../topicWorkflow.js";
 
 import type {
   ApiFromModules,
@@ -26,6 +27,7 @@ declare const fullApi: ApiFromModules<{
   messages: typeof messages;
   seed: typeof seed;
   tasks: typeof tasks;
+  topicWorkflow: typeof topicWorkflow;
 }>;
 
 /**

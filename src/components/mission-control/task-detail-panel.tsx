@@ -10,6 +10,7 @@ import {
   SYNC_SOURCE_KEY,
   SYNC_SOURCE_CONVEX,
 } from '@/lib/sync/document-task-sync';
+import type { Document as SqlDocument } from '@/types/document';
 import { useTeamMembers } from './team-members-provider';
 import { generateHTML } from '@tiptap/core';
 import type { JSONContent } from '@tiptap/core';
@@ -41,6 +42,7 @@ import {
   ChevronDown,
   ChevronUp,
   Send,
+  CheckCheck,
 } from 'lucide-react';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -59,6 +61,55 @@ const PRIORITY_LABELS: Record<string, { label: string; color: string }> = {
   URGENT: { label: 'Urgent', color: 'var(--mc-overdue)' },
 };
 
+type TopicStageKey =
+  | 'research'
+  | 'outline_build'
+  | 'outline_review'
+  | 'prewrite_context'
+  | 'writing'
+  | 'final_review'
+  | 'complete';
+
+const TOPIC_STAGES: TopicStageKey[] = [
+  'research',
+  'outline_build',
+  'outline_review',
+  'prewrite_context',
+  'writing',
+  'final_review',
+  'complete',
+];
+
+const STAGE_LABELS: Record<TopicStageKey, string> = {
+  research: 'Research',
+  outline_build: 'Outline',
+  outline_review: 'Outline Review',
+  prewrite_context: 'Prewrite',
+  writing: 'Writing',
+  final_review: 'SEO Review',
+  complete: 'Complete',
+};
+
+const STAGE_NEXT: Record<TopicStageKey, TopicStageKey | null> = {
+  research: 'outline_build',
+  outline_build: 'outline_review',
+  outline_review: 'prewrite_context',
+  prewrite_context: 'writing',
+  writing: 'final_review',
+  final_review: 'complete',
+  complete: null,
+};
+
+const STAGE_OWNERS: Record<TopicStageKey, string> = {
+  research: 'researcher -> seo -> lead',
+  outline_build: 'outliner -> content -> lead',
+  outline_review: 'human + seo-reviewer',
+  prewrite_context: 'project-manager',
+  writing: 'writer -> content -> lead',
+  final_review: 'seo-reviewer -> seo -> lead',
+  complete: 'pm handoff closed',
+};
+
 interface TaskDetailPanelProps {
   taskId: Id<'tasks'> | null;
   onClose: () => void;
@@ -71,6 +122,16 @@ interface AgentRunResult {
   aiDetectionScore?: number | null;
   contentQualityScore?: number | null;
   previewUrl?: string;
+}
+
+interface WorkflowEvent {
+  _id: Id<'taskWorkflowEvents'>;
+  stageKey: string;
+  eventType: string;
+  actorType: string;
+  actorName?: string;
+  summary: string;
+  createdAt: number;
 }
 
 export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
@@ -90,9 +151,13 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
   const { members: teamMembers, getMember } = useTeamMembers();
   const [agentRunning, setAgentRunning] = useState(false);
   const [feedbackRunning, setFeedbackRunning] = useState(false);
+  const [workflowBusy, setWorkflowBusy] = useState(false);
+  const [workflowLoading, setWorkflowLoading] = useState(false);
+  const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<AgentRunResult | null>(null);
   const [messageText, setMessageText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [workflowEvents, setWorkflowEvents] = useState<WorkflowEvent[]>([]);
 
   // ─── Document content preview ──────────────────────────────────
   const [docPreview, setDocPreview] = useState<{
@@ -102,6 +167,9 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
     wordCount: number;
     status: string;
     contentType: string;
+    researchSnapshot?: SqlDocument['researchSnapshot'];
+    prewriteChecklist?: SqlDocument['prewriteChecklist'];
+    agentQuestions?: SqlDocument['agentQuestions'];
   } | null>(null);
   const [docPreviewLoading, setDocPreviewLoading] = useState(false);
   const [previewExpanded, setPreviewExpanded] = useState(true);
@@ -139,6 +207,9 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
             wordCount: doc.wordCount || 0,
             status: doc.status,
             contentType: doc.contentType,
+            researchSnapshot: doc.researchSnapshot,
+            prewriteChecklist: doc.prewriteChecklist,
+            agentQuestions: doc.agentQuestions,
           });
         }
       })
@@ -148,6 +219,34 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
       });
     return () => { cancelled = true; };
   }, [task?.documentId, task?.updatedAt]);
+
+  const refreshWorkflowContext = useCallback(async () => {
+    if (!taskId || task?.workflowTemplateKey !== 'topic_production_v1') {
+      setWorkflowEvents([]);
+      setWorkflowError(null);
+      return;
+    }
+
+    setWorkflowLoading(true);
+    setWorkflowError(null);
+    try {
+      const res = await fetch(`/api/topic-workflow/context?taskId=${taskId}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to load workflow context');
+      }
+      const data = await res.json();
+      setWorkflowEvents(Array.isArray(data.events) ? data.events : []);
+    } catch (err) {
+      setWorkflowError((err as Error).message);
+    } finally {
+      setWorkflowLoading(false);
+    }
+  }, [taskId, task?.workflowTemplateKey]);
+
+  useEffect(() => {
+    void refreshWorkflowContext();
+  }, [refreshWorkflowContext, task?.updatedAt]);
 
   // Generate HTML from TipTap JSON content
   const previewHtml = useMemo(() => {
@@ -180,9 +279,80 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
 
   if (!taskId || !task) return null;
 
+  const isTopicWorkflow = task.workflowTemplateKey === 'topic_production_v1';
+  const workflowStage = (task.workflowCurrentStageKey || 'research') as TopicStageKey;
+  const workflowFlags = task.workflowFlags || {};
+  const workflowApprovals = task.workflowApprovals || {};
+  const defaultNextStage = STAGE_NEXT[workflowStage];
+  const workflowNextStage =
+    workflowStage === 'outline_build' &&
+    Boolean(workflowFlags.outlineReviewOptional) &&
+    Boolean(workflowApprovals.outlineSkipped)
+      ? 'prewrite_context'
+      : defaultNextStage;
+
   const assignedAgent = agents?.find((a) => a._id === task.assignedAgentId);
   const onlineAgents = agents?.filter((a) => a.status === 'ONLINE') ?? [];
   const priority = PRIORITY_LABELS[task.priority] || PRIORITY_LABELS.MEDIUM;
+
+  const handleAdvanceWorkflowStage = async (
+    toStage: TopicStageKey,
+    options?: { skipOptionalOutlineReview?: boolean; note?: string }
+  ) => {
+    if (!isTopicWorkflow) return;
+    setWorkflowBusy(true);
+    setWorkflowError(null);
+    try {
+      const res = await fetch('/api/topic-workflow/advance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: task._id,
+          toStage,
+          note: options?.note,
+          skipOptionalOutlineReview: options?.skipOptionalOutlineReview,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to advance workflow stage');
+      }
+      await refreshWorkflowContext();
+    } catch (err) {
+      setWorkflowError((err as Error).message);
+    } finally {
+      setWorkflowBusy(false);
+    }
+  };
+
+  const handleWorkflowApproval = async (
+    gate: 'outline_human' | 'outline_seo' | 'seo_final',
+    approved: boolean
+  ) => {
+    if (!isTopicWorkflow) return;
+    setWorkflowBusy(true);
+    setWorkflowError(null);
+    try {
+      const res = await fetch('/api/topic-workflow/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: task._id,
+          gate,
+          approved,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to record approval');
+      }
+      await refreshWorkflowContext();
+    } catch (err) {
+      setWorkflowError((err as Error).message);
+    } finally {
+      setWorkflowBusy(false);
+    }
+  };
 
   // ─── Start Agent: writes the article ─────────────────────────────
   const handleStartAgent = async () => {
@@ -221,6 +391,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
           documentId: task.documentId,
           projectId: task.projectId,
           skillId: task.skillId,
+          agentId,
           contentType: 'blog_post',
           targetKeyword: task.title, // Use title as keyword fallback
         }),
@@ -276,6 +447,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
           taskId: task._id,
           documentId: task.documentId,
           useResearch,
+          agentId: task.assignedAgentId,
         }),
       });
 
@@ -301,11 +473,27 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
 
   // ─── Mark Complete ───────────────────────────────────────────────
   const handleComplete = async () => {
+    if (isTopicWorkflow) {
+      await handleAdvanceWorkflowStage('complete');
+      return;
+    }
     await updateStatus({ id: task._id, status: 'COMPLETED' });
     syncStatusToDrizzle(task.documentId, 'COMPLETED');
   };
 
   const isProcessing = agentRunning || feedbackRunning;
+  const showStartAgent = isTopicWorkflow
+    ? workflowStage === 'writing'
+    : (task.status === 'BACKLOG' || task.status === 'PENDING' || !task.documentId);
+  const showProcessFeedback = isTopicWorkflow
+    ? workflowStage === 'final_review' && Boolean(task.documentId)
+    : task.status === 'IN_REVIEW' && Boolean(task.documentId);
+  const showRerun = isTopicWorkflow
+    ? workflowStage === 'final_review'
+    : task.status === 'IN_REVIEW';
+  const showComplete = isTopicWorkflow
+    ? workflowStage === 'final_review'
+    : task.status === 'IN_REVIEW';
 
   return (
     <div className="fixed inset-y-0 right-0 w-[640px] max-w-full bg-white shadow-xl border-l z-50 flex flex-col"
@@ -381,6 +569,149 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
             </div>
           )}
         </div>
+
+        {/* Topic Workflow */}
+        {isTopicWorkflow && (
+          <div className="space-y-2.5">
+            <h3 className="mc-header-mono text-xs">Topic Workflow</h3>
+            <div className="flex items-center gap-2 flex-wrap text-[10px]">
+              {TOPIC_STAGES.map((stage) => (
+                <span
+                  key={stage}
+                  className="px-1.5 py-0.5 rounded"
+                  style={{
+                    background:
+                      stage === workflowStage
+                        ? 'var(--mc-accent-soft)'
+                        : 'var(--mc-overlay)',
+                    color:
+                      stage === workflowStage
+                        ? 'var(--mc-accent)'
+                        : 'var(--mc-text-tertiary)',
+                    fontWeight: stage === workflowStage ? 600 : 500,
+                  }}
+                >
+                  {STAGE_LABELS[stage]}
+                </span>
+              ))}
+            </div>
+            <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
+              Stage owner: {STAGE_OWNERS[workflowStage]}
+            </p>
+            {task.workflowLastEventText && (
+              <p className="text-xs rounded-md px-2 py-1.5" style={{ background: 'var(--mc-overlay)', color: 'var(--mc-text-secondary)' }}>
+                {task.workflowLastEventText}
+              </p>
+            )}
+            {workflowError && (
+              <p className="text-xs text-red-500">{workflowError}</p>
+            )}
+
+            <div className="flex items-center gap-2 flex-wrap">
+              {workflowNextStage && workflowStage !== 'complete' && (
+                <button
+                  onClick={() => handleAdvanceWorkflowStage(workflowNextStage as TopicStageKey)}
+                  disabled={workflowBusy}
+                  className="mc-btn-secondary text-xs flex items-center gap-1.5"
+                >
+                  {workflowBusy ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <ArrowRight className="h-3 w-3" />
+                  )}
+                  Move to {STAGE_LABELS[workflowNextStage as TopicStageKey]}
+                </button>
+              )}
+              {workflowStage === 'outline_build' && workflowFlags.outlineReviewOptional && (
+                <button
+                  onClick={() =>
+                    handleAdvanceWorkflowStage('prewrite_context', {
+                      skipOptionalOutlineReview: true,
+                      note: 'Outline review skipped by PM/lead.',
+                    })
+                  }
+                  disabled={workflowBusy}
+                  className="mc-btn-secondary text-xs"
+                >
+                  Skip Optional Outline Review
+                </button>
+              )}
+            </div>
+
+            {(workflowStage === 'outline_review' || workflowStage === 'final_review') && (
+              <div className="rounded-md border p-2.5 space-y-2" style={{ borderColor: 'var(--mc-border)' }}>
+                <p className="text-xs font-medium" style={{ color: 'var(--mc-text-secondary)' }}>
+                  Stage Approvals
+                </p>
+                {workflowStage === 'outline_review' && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={() => handleWorkflowApproval('outline_human', true)}
+                      disabled={workflowBusy}
+                      className="mc-btn-secondary text-xs flex items-center gap-1.5"
+                    >
+                      <CheckCheck className="h-3 w-3" />
+                      Human approve
+                    </button>
+                    <button
+                      onClick={() => handleWorkflowApproval('outline_seo', true)}
+                      disabled={workflowBusy}
+                      className="mc-btn-secondary text-xs flex items-center gap-1.5"
+                    >
+                      <CheckCheck className="h-3 w-3" />
+                      SEO approve
+                    </button>
+                    <span className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
+                      Human: {workflowApprovals.outlineHuman ? 'approved' : 'pending'} · SEO: {workflowApprovals.outlineSeo ? 'approved' : 'pending'}
+                    </span>
+                  </div>
+                )}
+                {workflowStage === 'final_review' && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={() => handleWorkflowApproval('seo_final', true)}
+                      disabled={workflowBusy}
+                      className="mc-btn-secondary text-xs flex items-center gap-1.5"
+                    >
+                      <CheckCheck className="h-3 w-3" />
+                      Final SEO approve
+                    </button>
+                    <span className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
+                      Final SEO: {workflowApprovals.seoFinal ? 'approved' : 'pending'}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div>
+              <p className="text-xs font-medium mb-1.5" style={{ color: 'var(--mc-text-secondary)' }}>
+                Workflow Timeline
+              </p>
+              <div className="max-h-36 overflow-y-auto space-y-1.5">
+                {workflowLoading ? (
+                  <div className="text-xs flex items-center gap-2" style={{ color: 'var(--mc-text-tertiary)' }}>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Loading timeline...
+                  </div>
+                ) : workflowEvents.length > 0 ? (
+                  workflowEvents.map((event) => (
+                    <div key={event._id} className="rounded-md px-2 py-1.5 text-xs" style={{ background: 'var(--mc-overlay)' }}>
+                      <p style={{ color: 'var(--mc-text-secondary)' }}>{event.summary}</p>
+                      <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
+                        {event.actorName || event.actorType} · {new Date(event.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs" style={{ color: 'var(--mc-text-muted)' }}>
+                    No workflow events yet.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Assignee */}
         <div>
@@ -519,12 +850,58 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
           </div>
         )}
 
+        {/* Workflow Context from Document */}
+        {task.documentId && docPreview && (
+          <div className="space-y-2">
+            <h3 className="mc-header-mono text-xs">Research & Prewrite Context</h3>
+            <div className="rounded-md border p-2.5 space-y-2 text-xs" style={{ borderColor: 'var(--mc-border)' }}>
+              {docPreview.researchSnapshot?.summary ? (
+                <div>
+                  <p className="font-medium mb-0.5" style={{ color: 'var(--mc-text-secondary)' }}>
+                    Research summary
+                  </p>
+                  <p style={{ color: 'var(--mc-text-tertiary)' }}>{docPreview.researchSnapshot.summary}</p>
+                </div>
+              ) : (
+                <p style={{ color: 'var(--mc-text-muted)' }}>No research summary yet.</p>
+              )}
+              {docPreview.prewriteChecklist && (
+                <div style={{ color: 'var(--mc-text-tertiary)' }}>
+                  <p>
+                    Brand context: {docPreview.prewriteChecklist.brandContextReady ? 'ready' : 'pending'}
+                  </p>
+                  <p>
+                    Internal links: {docPreview.prewriteChecklist.internalLinksReady ? 'ready' : 'pending'}
+                  </p>
+                  <p>
+                    Unresolved questions: {docPreview.prewriteChecklist.unresolvedQuestions}
+                  </p>
+                </div>
+              )}
+              {docPreview.agentQuestions && docPreview.agentQuestions.length > 0 && (
+                <div>
+                  <p className="font-medium mb-1" style={{ color: 'var(--mc-text-secondary)' }}>
+                    Agent questions
+                  </p>
+                  <div className="space-y-1">
+                    {docPreview.agentQuestions.slice(0, 4).map((q) => (
+                      <p key={q.id} style={{ color: 'var(--mc-text-tertiary)' }}>
+                        • {q.question} ({q.status})
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Agent Actions */}
         <div className="space-y-2">
           <h3 className="mc-header-mono text-xs">Agent Actions</h3>
 
           {/* Start Agent — available for BACKLOG, PENDING, or if no content yet */}
-          {(task.status === 'BACKLOG' || task.status === 'PENDING' || !task.documentId) && (
+          {showStartAgent && (
             <button
               onClick={handleStartAgent}
               disabled={isProcessing}
@@ -540,7 +917,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
           )}
 
           {/* Process Feedback — available when IN_REVIEW with a document */}
-          {task.status === 'IN_REVIEW' && task.documentId && (
+          {showProcessFeedback && (
             <div className="space-y-1.5">
               <button
                 onClick={() => handleProcessFeedback(false)}
@@ -566,7 +943,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
           )}
 
           {/* Re-run Agent — available when IN_REVIEW to regenerate */}
-          {task.status === 'IN_REVIEW' && (
+          {showRerun && (
             <button
               onClick={handleStartAgent}
               disabled={isProcessing}
@@ -578,7 +955,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
           )}
 
           {/* Mark Complete — available when IN_REVIEW */}
-          {task.status === 'IN_REVIEW' && (
+          {showComplete && (
             <button
               onClick={handleComplete}
               disabled={isProcessing}
@@ -635,26 +1012,46 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
           </div>
         )}
 
-        {/* Status Flow Diagram */}
+        {/* Status/Workflow Diagram */}
         <div className="pt-2 border-t" style={{ borderColor: 'var(--mc-border)' }}>
-          <h3 className="mc-header-mono text-xs mb-2">Status Flow</h3>
+          <h3 className="mc-header-mono text-xs mb-2">
+            {isTopicWorkflow ? 'Workflow Flow' : 'Status Flow'}
+          </h3>
           <div className="flex items-center gap-1 text-[10px] flex-wrap"
                style={{ color: 'var(--mc-text-tertiary)' }}>
-            {['BACKLOG', 'PENDING', 'IN_PROGRESS', 'IN_REVIEW', 'ACCEPTED', 'COMPLETED'].map((s, i) => (
-              <span key={s} className="flex items-center gap-1">
-                <span
-                  className="px-1.5 py-0.5 rounded"
-                  style={{
-                    background: s === task.status ? 'var(--mc-accent-soft)' : 'var(--mc-overlay)',
-                    color: s === task.status ? 'var(--mc-accent)' : 'var(--mc-text-tertiary)',
-                    fontWeight: s === task.status ? 600 : 400,
-                  }}
-                >
-                  {STATUS_LABELS[s]}
-                </span>
-                {i < 5 && <ArrowRight className="h-3 w-3" />}
-              </span>
-            ))}
+            {isTopicWorkflow
+              ? TOPIC_STAGES.map((stage, i) => (
+                  <span key={stage} className="flex items-center gap-1">
+                    <span
+                      className="px-1.5 py-0.5 rounded"
+                      style={{
+                        background:
+                          stage === workflowStage ? 'var(--mc-accent-soft)' : 'var(--mc-overlay)',
+                        color:
+                          stage === workflowStage ? 'var(--mc-accent)' : 'var(--mc-text-tertiary)',
+                        fontWeight: stage === workflowStage ? 600 : 400,
+                      }}
+                    >
+                      {STAGE_LABELS[stage]}
+                    </span>
+                    {i < TOPIC_STAGES.length - 1 && <ArrowRight className="h-3 w-3" />}
+                  </span>
+                ))
+              : ['BACKLOG', 'PENDING', 'IN_PROGRESS', 'IN_REVIEW', 'ACCEPTED', 'COMPLETED'].map((s, i) => (
+                  <span key={s} className="flex items-center gap-1">
+                    <span
+                      className="px-1.5 py-0.5 rounded"
+                      style={{
+                        background: s === task.status ? 'var(--mc-accent-soft)' : 'var(--mc-overlay)',
+                        color: s === task.status ? 'var(--mc-accent)' : 'var(--mc-text-tertiary)',
+                        fontWeight: s === task.status ? 600 : 400,
+                      }}
+                    >
+                      {STATUS_LABELS[s]}
+                    </span>
+                    {i < 5 && <ArrowRight className="h-3 w-3" />}
+                  </span>
+                ))}
           </div>
         </div>
 

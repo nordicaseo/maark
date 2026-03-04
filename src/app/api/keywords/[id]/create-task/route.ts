@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
-import { documents, keywords } from '@/db/schema';
+import { keywords } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { requireRole } from '@/lib/auth';
 import { userCanAccessKeyword } from '@/lib/access';
-import { getConvexClient } from '@/lib/convex/server';
-import { api } from '../../../../../../convex/_generated/api';
 import { dbNow } from '@/db/utils';
 import { logAuditEvent, logAlertEvent } from '@/lib/observability';
+import { createTopicWorkflow } from '@/lib/topic-workflow';
 
 function parseId(id: string): number | null {
   const n = Number.parseInt(id, 10);
@@ -47,42 +46,24 @@ export async function POST(
       ? body.title.trim()
       : keyword.keyword;
 
-    const [doc] = await db
-      .insert(documents)
-      .values({
-        title,
-        contentType: 'blog_post',
-        targetKeyword: keyword.keyword,
-        projectId: keyword.projectId,
-        authorId: auth.user.id,
-        content: { type: 'doc', content: [{ type: 'paragraph' }] },
-        plainText: '',
-        wordCount: 0,
-        status: 'draft',
-      })
-      .returning();
-
-    const convex = getConvexClient();
-    if (!convex) {
-      return NextResponse.json({ error: 'Mission Control is not configured (Convex URL missing)' }, { status: 500 });
-    }
-
-    const taskId = await convex.mutation(api.tasks.create, {
-      title: `Create content: ${keyword.keyword}`,
-      description: `Produce content for keyword "${keyword.keyword}" (${keyword.intent}).`,
-      type: 'content',
-      status: 'BACKLOG',
-      priority: keyword.priority?.toUpperCase() === 'HIGH' ? 'HIGH' : 'MEDIUM',
-      documentId: doc.id,
+    const created = await createTopicWorkflow({
+      user: auth.user,
       projectId: keyword.projectId,
-      tags: ['keyword', keyword.keyword],
+      topic: title,
+      entryPoint: 'keywords',
+      keywordId: keyword.id,
+      targetKeyword: keyword.keyword,
+      options: {
+        outlineReviewOptional: true,
+        seoReviewRequired: true,
+      },
     });
 
     await db
       .update(keywords)
       .set({
         status: 'in_progress',
-        lastTaskId: String(taskId),
+        lastTaskId: created.taskId,
         updatedAt: dbNow(),
       })
       .where(eq(keywords.id, keywordId));
@@ -93,14 +74,20 @@ export async function POST(
       resourceType: 'keyword',
       resourceId: keyword.id,
       projectId: keyword.projectId,
-      metadata: { taskId: String(taskId), documentId: doc.id, keyword: keyword.keyword },
+      metadata: {
+        taskId: created.taskId,
+        documentId: created.contentDocumentId ?? null,
+        keyword: keyword.keyword,
+        reused: created.reused,
+      },
     });
 
     return NextResponse.json({
       success: true,
       keywordId: keyword.id,
-      documentId: doc.id,
-      taskId: String(taskId),
+      documentId: created.contentDocumentId ?? null,
+      taskId: created.taskId,
+      reused: created.reused,
     });
   } catch (error) {
     await logAlertEvent({

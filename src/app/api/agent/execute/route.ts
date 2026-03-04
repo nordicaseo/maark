@@ -2,11 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
 import { documents, skills, skillParts } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { getProviderForAction } from '@/lib/ai';
 import { randomBytes } from 'crypto';
 import { dbNow } from '@/db/utils';
 import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
-import { logAlertEvent } from '@/lib/observability';
+import { logAlertEvent, logAuditEvent } from '@/lib/observability';
+import { requireRole } from '@/lib/auth';
+import { userCanAccessDocument, userCanAccessProject, userCanAccessSkill } from '@/lib/access';
+import { resolveProviderForAction, type ModelOverride } from '@/lib/ai/model-resolution';
+import { getConvexClient } from '@/lib/convex/server';
+import { api } from '../../../../../convex/_generated/api';
 
 /**
  * POST /api/agent/execute
@@ -34,6 +38,9 @@ import { logAlertEvent } from '@/lib/observability';
  * }
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
+
   try {
     const body = await req.json();
     const {
@@ -45,6 +52,7 @@ export async function POST(req: NextRequest) {
       skillId,
       contentType = 'blog_post',
       targetKeyword,
+      agentId,
     } = body;
 
     if (!taskId || !title) {
@@ -55,6 +63,28 @@ export async function POST(req: NextRequest) {
     }
 
     await ensureDb();
+
+    if (
+      existingDocId !== undefined &&
+      existingDocId !== null &&
+      !(await userCanAccessDocument(auth.user, Number(existingDocId)))
+    ) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    if (
+      projectId !== undefined &&
+      projectId !== null &&
+      !(await userCanAccessProject(auth.user, Number(projectId)))
+    ) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    if (
+      skillId !== undefined &&
+      skillId !== null &&
+      !(await userCanAccessSkill(auth.user, Number(skillId)))
+    ) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
 
     // ─── Auto-resolve skillId if not provided ─────────────────────
     let resolvedSkillId = skillId;
@@ -106,6 +136,7 @@ export async function POST(req: NextRequest) {
           contentType,
           targetKeyword: targetKeyword || null,
           projectId: projectId || null,
+          authorId: auth.user.id,
           content: null,
           plainText: null,
         })
@@ -145,7 +176,23 @@ export async function POST(req: NextRequest) {
     // ─── Step 3: Build instruction and generate content ─────────────
     const instruction = buildInstruction(title, description, targetKeyword, contentType);
 
-    const { provider, model, maxTokens, temperature } = await getProviderForAction('writing');
+    let modelOverride: ModelOverride | undefined;
+    if (agentId) {
+      try {
+        const convex = getConvexClient();
+        if (convex) {
+          const agent = await convex.query(api.agents.get, { id: agentId });
+          modelOverride = agent?.modelOverrides?.writing;
+        }
+      } catch (error) {
+        console.error('Failed to resolve agent model override:', error);
+      }
+    }
+
+    const { provider, model, maxTokens, temperature } = await resolveProviderForAction(
+      'writing',
+      modelOverride
+    );
 
     const systemPrompt = buildSystemPrompt(skillContent, contentType, targetKeyword);
 
@@ -241,6 +288,20 @@ export async function POST(req: NextRequest) {
     }
 
     // ─── Step 7: Return result ──────────────────────────────────────
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'agent.execute',
+      resourceType: 'document',
+      resourceId: docId,
+      projectId: doc.projectId ?? null,
+      metadata: {
+        taskId: String(taskId),
+        skillId: resolvedSkillId ?? null,
+        agentId: agentId ?? null,
+        model,
+      },
+    });
+
     return NextResponse.json({
       success: true,
       taskId,

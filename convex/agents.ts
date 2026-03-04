@@ -16,6 +16,13 @@ export const getOnline = query({
   },
 });
 
+export const get = query({
+  args: { id: v.id("agents") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.id);
+  },
+});
+
 export const register = mutation({
   args: {
     name: v.string(),
@@ -53,5 +60,36 @@ export const updateStatus = mutation({
       updates.currentTaskId = undefined;
     }
     await ctx.db.patch(args.id, updates);
+  },
+});
+
+export const updatePersonaAndModels = mutation({
+  args: {
+    id: v.id("agents"),
+    personaProfile: v.optional(v.object({
+      soul: v.optional(v.string()),
+      heart: v.optional(v.string()),
+      personality: v.optional(v.string()),
+      collaborationStyle: v.optional(v.string()),
+      reviewStyle: v.optional(v.string()),
+    })),
+    modelOverrides: v.optional(
+      v.record(
+        v.string(),
+        v.object({
+          provider: v.optional(v.string()),
+          modelId: v.optional(v.string()),
+          temperature: v.optional(v.number()),
+        })
+      )
+    ),
+  },
+  handler: async (ctx, args) => {
+    const { id, personaProfile, modelOverrides } = args;
+    await ctx.db.patch(id, {
+      personaProfile,
+      modelOverrides,
+      updatedAt: Date.now(),
+    });
   },
 });

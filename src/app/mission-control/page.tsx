@@ -149,8 +149,8 @@ export default function MissionControlPage() {
   }
 
   return (
-    <TeamMembersProvider>
-      <SkillsProvider>
+    <TeamMembersProvider projectId={projectId}>
+      <SkillsProvider projectId={projectId}>
       <div className="mc-wrapper">
         {/* Header */}
         <header

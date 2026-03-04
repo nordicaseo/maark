@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Globe, Loader2, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, FileText, Globe, Loader2, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +33,7 @@ export default function PagesPage() {
   const [newUrl, setNewUrl] = useState('');
   const [saving, setSaving] = useState(false);
   const [crawlingId, setCrawlingId] = useState<number | null>(null);
+  const [topicBusyId, setTopicBusyId] = useState<number | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -98,6 +99,21 @@ export default function PagesPage() {
       await fetchPages();
     } finally {
       setCrawlingId(null);
+    }
+  };
+
+  const handleCreateTopic = async (pageId: number) => {
+    setTopicBusyId(pageId);
+    try {
+      const res = await fetch(`/api/pages/${pageId}/create-topic`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        await fetchPages();
+      }
+    } finally {
+      setTopicBusyId(null);
     }
   };
 
@@ -177,19 +193,34 @@ export default function PagesPage() {
                         {` ${page.openIssues ?? 0} open issues`}
                       </p>
                     </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void handleCrawl(page.id)}
-                      disabled={crawlingId === page.id}
-                    >
-                      {crawlingId === page.id ? (
-                        <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-3.5 w-3.5 mr-1" />
-                      )}
-                      Crawl
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void handleCreateTopic(page.id)}
+                        disabled={topicBusyId === page.id}
+                      >
+                        {topicBusyId === page.id ? (
+                          <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                        ) : (
+                          <FileText className="h-3.5 w-3.5 mr-1" />
+                        )}
+                        Create Topic
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void handleCrawl(page.id)}
+                        disabled={crawlingId === page.id}
+                      >
+                        {crawlingId === page.id ? (
+                          <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5 mr-1" />
+                        )}
+                        Crawl
+                      </Button>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
                     {boolBadge(page.isVerified, 'Verified', 'Not Verified')}

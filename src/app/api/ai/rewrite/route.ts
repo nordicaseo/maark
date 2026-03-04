@@ -1,5 +1,8 @@
 import { NextRequest } from 'next/server';
 import { getProviderForAction } from '@/lib/ai';
+import { requireRole } from '@/lib/auth';
+import { userCanAccessDocument, userCanAccessProject } from '@/lib/access';
+import { logAuditEvent } from '@/lib/observability';
 
 interface SignalInput {
   signalId: number;
@@ -140,13 +143,37 @@ function buildSignalInstructions(signals: SignalInput[]): string {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
+
   try {
-    const { text, signals, compositeScore, contentType, targetKeyword } = await req.json();
+    const { text, signals, compositeScore, contentType, targetKeyword, documentId, projectId } = await req.json();
 
     if (!text || text.trim().length < 50) {
       return new Response(
         JSON.stringify({ error: 'Text too short to rewrite' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (
+      documentId !== undefined &&
+      documentId !== null &&
+      !(await userCanAccessDocument(auth.user, Number(documentId)))
+    ) {
+      return new Response(
+        JSON.stringify({ error: 'Forbidden' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (
+      (documentId === undefined || documentId === null) &&
+      projectId !== undefined &&
+      projectId !== null &&
+      !(await userCanAccessProject(auth.user, Number(projectId)))
+    ) {
+      return new Response(
+        JSON.stringify({ error: 'Forbidden' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
@@ -192,6 +219,19 @@ ${contentType ? `8. This is a ${contentType.replace('_', ' ')} — maintain appr
       ],
       maxTokens: Math.max(maxTokens, 8192),
       temperature,
+    });
+
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'ai.rewrite',
+      resourceType: documentId ? 'document' : 'ai',
+      resourceId: documentId ?? null,
+      projectId: projectId ?? null,
+      metadata: {
+        contentType: contentType || null,
+        targetKeyword: targetKeyword || null,
+        inputLength: text.length,
+      },
     });
 
     return new Response(stream, {

@@ -1,14 +1,42 @@
 import { NextRequest } from 'next/server';
 import { getProviderForAction } from '@/lib/ai';
+import { requireRole } from '@/lib/auth';
+import { userCanAccessDocument, userCanAccessProject } from '@/lib/access';
+import { logAuditEvent } from '@/lib/observability';
 
 export async function POST(req: NextRequest) {
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
+
   try {
-    const { html } = await req.json();
+    const { html, documentId, projectId } = await req.json();
 
     if (!html || html.trim().length < 20) {
       return new Response(
         JSON.stringify({ error: 'Content too short to format' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (
+      documentId !== undefined &&
+      documentId !== null &&
+      !(await userCanAccessDocument(auth.user, Number(documentId)))
+    ) {
+      return new Response(
+        JSON.stringify({ error: 'Forbidden' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (
+      (documentId === undefined || documentId === null) &&
+      projectId !== undefined &&
+      projectId !== null &&
+      !(await userCanAccessProject(auth.user, Number(projectId)))
+    ) {
+      return new Response(
+        JSON.stringify({ error: 'Forbidden' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
@@ -40,6 +68,15 @@ Return ONLY the cleaned HTML content. No wrapping <html>/<body> tags. No comment
       ],
       maxTokens: Math.max(maxTokens, 8192),
       temperature,
+    });
+
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'ai.format',
+      resourceType: documentId ? 'document' : 'ai',
+      resourceId: documentId ?? null,
+      projectId: projectId ?? null,
+      metadata: { contentLength: html.length },
     });
 
     return new Response(stream, {

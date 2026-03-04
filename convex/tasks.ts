@@ -35,6 +35,13 @@ export const getByDocument = query({
   },
 });
 
+export const get = query({
+  args: { id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.id);
+  },
+});
+
 export const create = mutation({
   args: {
     title: v.string(),
@@ -49,6 +56,25 @@ export const create = mutation({
     dueDate: v.optional(v.number()),
     tags: v.optional(v.array(v.string())),
     assigneeId: v.optional(v.string()),
+    workflowTemplateKey: v.optional(v.string()),
+    workflowCurrentStageKey: v.optional(v.string()),
+    workflowStageStatus: v.optional(v.string()),
+    workflowFlags: v.optional(v.object({
+      outlineReviewOptional: v.optional(v.boolean()),
+      seoReviewRequired: v.optional(v.boolean()),
+    })),
+    workflowApprovals: v.optional(v.object({
+      outlineHuman: v.optional(v.boolean()),
+      outlineSeo: v.optional(v.boolean()),
+      seoFinal: v.optional(v.boolean()),
+      outlineSkipped: v.optional(v.boolean()),
+    })),
+    workflowStartedAt: v.optional(v.number()),
+    workflowUpdatedAt: v.optional(v.number()),
+    workflowCompletedAt: v.optional(v.number()),
+    workflowLastEventAt: v.optional(v.number()),
+    workflowLastEventText: v.optional(v.string()),
+    topicKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -96,6 +122,25 @@ export const update = mutation({
     commentCount: v.optional(v.number()),
     startedAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
+    workflowTemplateKey: v.optional(v.string()),
+    workflowCurrentStageKey: v.optional(v.string()),
+    workflowStageStatus: v.optional(v.string()),
+    workflowFlags: v.optional(v.object({
+      outlineReviewOptional: v.optional(v.boolean()),
+      seoReviewRequired: v.optional(v.boolean()),
+    })),
+    workflowApprovals: v.optional(v.object({
+      outlineHuman: v.optional(v.boolean()),
+      outlineSeo: v.optional(v.boolean()),
+      seoFinal: v.optional(v.boolean()),
+      outlineSkipped: v.optional(v.boolean()),
+    })),
+    workflowStartedAt: v.optional(v.number()),
+    workflowUpdatedAt: v.optional(v.number()),
+    workflowCompletedAt: v.optional(v.number()),
+    workflowLastEventAt: v.optional(v.number()),
+    workflowLastEventText: v.optional(v.string()),
+    topicKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { id, ...updates } = args;

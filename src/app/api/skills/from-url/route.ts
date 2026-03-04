@@ -1,5 +1,8 @@
 import { NextRequest } from 'next/server';
 import { getProviderForAction } from '@/lib/ai';
+import { requireRole } from '@/lib/auth';
+import { userCanAccessProject } from '@/lib/access';
+import { logAuditEvent } from '@/lib/observability';
 
 const SKILL_FROM_URL_SYSTEM = `You are an expert at analyzing websites and creating AI writing skill documents. You will receive the extracted text content from a website. Analyze it thoroughly to understand:
 
@@ -93,13 +96,26 @@ async function extractText(url: string): Promise<string> {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
+
   try {
-    const { url } = await req.json();
+    const { url, projectId } = await req.json();
 
     if (!url || typeof url !== 'string') {
       return new Response(
         JSON.stringify({ error: 'URL is required' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (
+      projectId !== undefined &&
+      projectId !== null &&
+      !(await userCanAccessProject(auth.user, Number(projectId)))
+    ) {
+      return new Response(
+        JSON.stringify({ error: 'Forbidden' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
@@ -144,6 +160,14 @@ export async function POST(req: NextRequest) {
       model,
       maxTokens: Math.max(maxTokens, 4096),
       temperature,
+    });
+
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'skills.from_url',
+      resourceType: 'skill',
+      projectId: projectId ?? null,
+      metadata: { url: parsed.href, extractedLength: siteText.length },
     });
 
     return new Response(stream, {

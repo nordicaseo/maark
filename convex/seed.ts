@@ -1,16 +1,14 @@
 import { mutation } from "./_generated/server";
 
 /**
- * Idempotent seed mutation — registers the three default AI agents.
+ * Idempotent seed mutation — ensures default workflow agents exist.
  * Run once via: npx convex run seed:seedAgents
  */
 export const seedAgents = mutation({
   handler: async (ctx) => {
-    // Check if agents already exist
+    // Check existing agents by role so the seed can add missing roles safely.
     const existing = await ctx.db.query("agents").collect();
-    if (existing.length > 0) {
-      return { message: `Skipped — ${existing.length} agent(s) already exist.` };
-    }
+    const existingRoles = new Set(existing.map((a) => a.role));
 
     const now = Date.now();
 
@@ -45,14 +43,82 @@ export const seedAgents = mutation({
         createdAt: now,
         updatedAt: now,
       },
+      {
+        name: "Maple",
+        role: "outliner",
+        specialization: "Structured outlines and narrative flow",
+        skills: ["outline design", "content architecture", "section planning"],
+        status: "ONLINE",
+        tasksCompleted: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        name: "Orion",
+        role: "seo-reviewer",
+        specialization: "SEO and on-page optimization reviews",
+        skills: ["SERP alignment", "on-page SEO", "metadata reviews", "internal linking"],
+        status: "ONLINE",
+        tasksCompleted: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        name: "Pulse",
+        role: "project-manager",
+        specialization: "Workflow orchestration and handoffs",
+        skills: ["workflow planning", "handoffs", "risk checks"],
+        status: "ONLINE",
+        tasksCompleted: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        name: "Helix",
+        role: "seo",
+        specialization: "SEO strategy and keyword alignment",
+        skills: ["keyword strategy", "entity coverage", "ranking factors"],
+        status: "ONLINE",
+        tasksCompleted: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        name: "Lumen",
+        role: "content",
+        specialization: "General content production support",
+        skills: ["content planning", "drafting", "editing support"],
+        status: "ONLINE",
+        tasksCompleted: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        name: "Astra",
+        role: "lead",
+        specialization: "Editorial lead and escalation fallback",
+        skills: ["quality oversight", "final decisions", "workflow escalation"],
+        status: "ONLINE",
+        tasksCompleted: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
     ];
 
     const ids = [];
     for (const agent of agents) {
+      if (existingRoles.has(agent.role)) continue;
       const id = await ctx.db.insert("agents", agent);
       ids.push(id);
     }
 
-    return { message: `Seeded ${ids.length} agents.`, ids };
+    if (ids.length === 0) {
+      return {
+        message: `No new agents needed — ${existing.length} existing agent(s) already cover seeded roles.`,
+        ids,
+      };
+    }
+
+    return { message: `Seeded ${ids.length} missing agent(s).`, ids };
   },
 });

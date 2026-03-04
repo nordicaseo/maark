@@ -127,14 +127,14 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
               tabIndex={0}
               onClick={() => router.push(`/documents/${doc.id}`)}
               onKeyDown={(e) => { if (e.key === 'Enter') router.push(`/documents/${doc.id}`); }}
-              className={`w-full text-left rounded-md p-2 transition-colors hover:bg-accent cursor-pointer overflow-hidden ${
+              className={`w-full text-left rounded-md p-2 transition-colors hover:bg-accent cursor-pointer ${
                 activeId === doc.id ? 'bg-accent' : ''
               }`}
             >
               <div className="flex items-start gap-1.5 min-w-0">
                 <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium leading-5 break-words">{doc.title}</p>
+                  <p className="text-sm font-medium leading-5 break-words pr-1">{doc.title}</p>
                   <div className="mt-1 flex items-center gap-2 flex-wrap text-[9px] text-muted-foreground">
                     <Badge
                       variant="secondary"

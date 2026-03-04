@@ -22,11 +22,6 @@ import {
 } from '@/components/ui/select';
 import { Loader2 } from 'lucide-react';
 
-interface Project {
-  id: number;
-  name: string;
-}
-
 interface Skill {
   id: number;
   name: string;
@@ -45,48 +40,31 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
   const [description, setDescription] = useState('');
   const [type, setType] = useState('content');
   const [priority, setPriority] = useState('MEDIUM');
-  const [selectedProjectId, setSelectedProjectId] = useState<string>(projectId?.toString() || 'none');
-  const [projects, setProjects] = useState<Project[]>([]);
   const [skillsList, setSkillsList] = useState<Skill[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState<string>('auto');
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    if (open) {
-      fetch('/api/projects').then((r) => r.ok ? r.json() : []).then(setProjects).catch(() => {});
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (projectId) {
-      setSelectedProjectId(projectId.toString());
-    }
-  }, [projectId]);
-
   // Fetch skills when project changes or dialog opens
   useEffect(() => {
     if (!open) return;
-    const pid = selectedProjectId !== 'none' ? selectedProjectId : undefined;
+    const pid = projectId ? String(projectId) : undefined;
     const url = pid ? `/api/skills?projectId=${pid}` : '/api/skills';
     fetch(url)
       .then((r) => (r.ok ? r.json() : []))
       .then(setSkillsList)
       .catch(() => setSkillsList([]));
     setSelectedSkillId('auto');
-  }, [open, selectedProjectId]);
+  }, [open, projectId]);
 
   const handleCreate = async () => {
-    if (!title.trim()) return;
+    if (!title.trim() || !projectId) return;
     setSaving(true);
     try {
-      const parsedProjectId =
-        selectedProjectId && selectedProjectId !== 'none'
-          ? parseInt(selectedProjectId)
-          : undefined;
+      const parsedProjectId = projectId;
 
       // For content/edit tasks, auto-create a linked document in the editor
       let documentId: number | undefined;
-      if (type === 'content' || type === 'edit') {
+      if (type === 'edit') {
         try {
           const docRes = await fetch('/api/documents?skipTaskCreation=true', {
             method: 'POST',
@@ -112,16 +90,39 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
           ? parseInt(selectedSkillId)
           : undefined;
 
-      await createTask({
-        title: title.trim(),
-        description: description.trim() || undefined,
-        type,
-        status: 'BACKLOG',
-        priority,
-        projectId: parsedProjectId,
-        skillId: parsedSkillId,
-        documentId,
-      });
+      if (type === 'content') {
+        const workflowRes = await fetch('/api/topic-workflow/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: parsedProjectId,
+            topic: title.trim(),
+            entryPoint: 'mission_control',
+            skillId: parsedSkillId,
+            options: {
+              outlineReviewOptional: true,
+              seoReviewRequired: true,
+            },
+          }),
+        });
+
+        if (!workflowRes.ok) {
+          const err = await workflowRes.json().catch(() => ({}));
+          throw new Error(err.error || 'Failed to create topic workflow task');
+        }
+      } else {
+        await createTask({
+          title: title.trim(),
+          description: description.trim() || undefined,
+          type,
+          status: 'BACKLOG',
+          priority,
+          projectId: parsedProjectId,
+          skillId: parsedSkillId,
+          documentId,
+        });
+      }
+
       setTitle('');
       setDescription('');
       setType('content');
@@ -193,19 +194,11 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
           </div>
           <div>
             <label className="text-sm font-medium mb-1.5 block">Project</label>
-            <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select project..." />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">No project</SelectItem>
-                {projects.map((p) => (
-                  <SelectItem key={p.id} value={p.id.toString()}>
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+              {projectId
+                ? `Using active project #${projectId}`
+                : 'Select a project in the Mission Control header before creating tasks'}
+            </div>
           </div>
           <div>
             <label className="text-sm font-medium mb-1.5 block">Skill</label>
@@ -228,7 +221,7 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleCreate} disabled={saving || !title.trim()}>
+          <Button onClick={handleCreate} disabled={saving || !title.trim() || !projectId}>
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Create Task
           </Button>

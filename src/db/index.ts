@@ -65,6 +65,9 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       ai_risk_level VARCHAR(20),
       semantic_score REAL,
       content_quality_score REAL,
+      research_snapshot JSONB,
+      prewrite_checklist JSONB,
+      agent_questions JSONB,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
@@ -74,6 +77,9 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
   await sql.query(`
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS author_id TEXT REFERENCES users(id) ON DELETE SET NULL;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS research_snapshot JSONB;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS prewrite_checklist JSONB;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS agent_questions JSONB;
   `);
 
   // ── Migrate: Convert content_type from enum to varchar if it's still enum ──
@@ -419,6 +425,9 @@ function createDb() {
       ai_risk_level TEXT,
       semantic_score REAL,
       content_quality_score REAL,
+      research_snapshot TEXT,
+      prewrite_checklist TEXT,
+      agent_questions TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -428,6 +437,9 @@ function createDb() {
   addColumnSafe(sqlite, 'documents', 'project_id', "INTEGER REFERENCES projects(id) ON DELETE SET NULL");
   addColumnSafe(sqlite, 'documents', 'author_id', "TEXT REFERENCES users(id) ON DELETE SET NULL");
   addColumnSafe(sqlite, 'documents', 'preview_token', "TEXT");
+  addColumnSafe(sqlite, 'documents', 'research_snapshot', "TEXT");
+  addColumnSafe(sqlite, 'documents', 'prewrite_checklist', "TEXT");
+  addColumnSafe(sqlite, 'documents', 'agent_questions', "TEXT");
 
   // ── Migrate: Remap old content type values ──
   sqlite.exec(`

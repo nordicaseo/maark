@@ -6,6 +6,9 @@ import { eq } from 'drizzle-orm';
 import { scrapeSerpContent } from '@/lib/serp/scraper';
 import { TfIdf, extractEntities } from '@/lib/serp/tfidf';
 import { analyzeSemanticCoverage } from '@/lib/analyzers/semantic';
+import { requireRole } from '@/lib/auth';
+import { userCanAccessDocument, userCanAccessProject } from '@/lib/access';
+import { logAuditEvent } from '@/lib/observability';
 
 async function getSerpData(keyword: string) {
   await ensureDb();
@@ -82,15 +85,33 @@ async function getSerpData(keyword: string) {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
+
   await ensureDb();
   try {
-    const { documentId, text, keyword } = await req.json();
+    const { documentId, text, keyword, projectId } = await req.json();
 
     if (!keyword) {
       return NextResponse.json(
         { error: 'Keyword is required' },
         { status: 400 }
       );
+    }
+    if (
+      documentId !== undefined &&
+      documentId !== null &&
+      !(await userCanAccessDocument(auth.user, Number(documentId)))
+    ) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    if (
+      (documentId === undefined || documentId === null) &&
+      projectId !== undefined &&
+      projectId !== null &&
+      !(await userCanAccessProject(auth.user, Number(projectId)))
+    ) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const serpData = await getSerpData(keyword);
@@ -109,6 +130,15 @@ export async function POST(req: NextRequest) {
         })
         .where(eq(documents.id, documentId));
     }
+
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'analyze.semantic',
+      resourceType: documentId ? 'document' : 'analysis',
+      resourceId: documentId ?? null,
+      projectId: projectId ?? null,
+      metadata: { keyword, score: semantic.score, textLength: typeof text === 'string' ? text.length : 0 },
+    });
 
     return NextResponse.json({
       semantic,

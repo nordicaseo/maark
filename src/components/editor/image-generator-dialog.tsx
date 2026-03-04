@@ -26,6 +26,7 @@ interface ImageGeneratorDialogProps {
   onOpenChange: (open: boolean) => void;
   onInsertImage: (url: string, alt: string) => void;
   contextKeyword?: string;
+  projectId?: number | null;
 }
 
 export function ImageGeneratorDialog({
@@ -33,6 +34,7 @@ export function ImageGeneratorDialog({
   onOpenChange,
   onInsertImage,
   contextKeyword,
+  projectId,
 }: ImageGeneratorDialogProps) {
   const [prompt, setPrompt] = useState('');
   const [style, setStyle] = useState('natural');
@@ -57,7 +59,7 @@ export function ImageGeneratorDialog({
       const res = await fetch('/api/ai/images', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: prompt.trim(), style }),
+        body: JSON.stringify({ prompt: prompt.trim(), style, projectId: projectId ?? undefined }),
       });
 
       const data = await res.json();

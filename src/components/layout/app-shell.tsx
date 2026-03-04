@@ -126,6 +126,8 @@ export function AppShell({ documentId }: AppShellProps) {
             existingContent: plainText.slice(0, 2000),
             tone,
             skillContent,
+            documentId: document.id,
+            projectId: document.projectId,
           }),
           signal: controller.signal,
         });

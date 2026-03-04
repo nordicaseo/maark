@@ -69,6 +69,28 @@ export interface Document {
   aiRiskLevel: string | null;
   semanticScore: number | null;
   contentQualityScore: number | null;
+  researchSnapshot?: {
+    summary?: string;
+    facts?: string[];
+    statistics?: Array<{ stat: string; source?: string }>;
+    sources?: Array<{ url: string; title?: string }>;
+    analyzedAt?: number;
+  } | null;
+  prewriteChecklist?: {
+    brandContextReady: boolean;
+    internalLinksReady: boolean;
+    unresolvedQuestions: number;
+    completedAt?: number;
+  } | null;
+  agentQuestions?: Array<{
+    id: string;
+    question: string;
+    askedByAgentId?: string;
+    status: 'open' | 'answered';
+    answer?: string;
+    createdAt: number;
+    answeredAt?: number;
+  }> | null;
   createdAt: string;
   updatedAt: string;
 }

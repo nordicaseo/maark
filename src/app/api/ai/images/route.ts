@@ -1,12 +1,25 @@
 import { NextRequest } from 'next/server';
 import OpenAI from 'openai';
+import { requireRole } from '@/lib/auth';
+import { userCanAccessProject } from '@/lib/access';
+import { logAuditEvent } from '@/lib/observability';
 
 export async function POST(req: NextRequest) {
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
+
   try {
-    const { prompt, style, size } = await req.json();
+    const { prompt, style, size, projectId } = await req.json();
 
     if (!prompt || typeof prompt !== 'string') {
       return Response.json({ error: 'Prompt is required' }, { status: 400 });
+    }
+    if (
+      projectId !== undefined &&
+      projectId !== null &&
+      !(await userCanAccessProject(auth.user, Number(projectId)))
+    ) {
+      return Response.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Try OPENAI_API_KEY first, then check DB providers
@@ -61,6 +74,14 @@ export async function POST(req: NextRequest) {
     if (!imageUrl) {
       return Response.json({ error: 'No image generated' }, { status: 500 });
     }
+
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'ai.images.generate',
+      resourceType: 'ai_image',
+      projectId: projectId ?? null,
+      metadata: { style: style || null, promptLength: prompt.length, size: size || null },
+    });
 
     return Response.json({ url: imageUrl, revisedPrompt });
   } catch (error: unknown) {

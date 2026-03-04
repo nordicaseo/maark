@@ -79,6 +79,9 @@ export async function PATCH(
     if (body.semanticScore !== undefined) updateData.semanticScore = body.semanticScore;
     if (body.contentQualityScore !== undefined)
       updateData.contentQualityScore = body.contentQualityScore;
+    if (body.researchSnapshot !== undefined) updateData.researchSnapshot = body.researchSnapshot;
+    if (body.prewriteChecklist !== undefined) updateData.prewriteChecklist = body.prewriteChecklist;
+    if (body.agentQuestions !== undefined) updateData.agentQuestions = body.agentQuestions;
     const parsedProjectId =
       body.projectId !== undefined
         ? (body.projectId ? parseInt(body.projectId, 10) : null)

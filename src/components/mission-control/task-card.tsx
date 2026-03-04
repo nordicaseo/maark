@@ -28,6 +28,16 @@ const PRIORITY_COLORS: Record<string, string> = {
   URGENT: 'urgent',
 };
 
+const WORKFLOW_STAGE_LABELS: Record<string, string> = {
+  research: 'Research',
+  outline_build: 'Outline',
+  outline_review: 'Outline Review',
+  prewrite_context: 'Prewrite',
+  writing: 'Writing',
+  final_review: 'SEO Review',
+  complete: 'Complete',
+};
+
 function timeAgo(ts: number): string {
   const diff = Date.now() - ts;
   const mins = Math.floor(diff / 60000);
@@ -80,6 +90,14 @@ function TaskCardContent({ task }: { task: Task }) {
   const removeTask = useMutation(api.tasks.remove);
   const assignee = task.assigneeId ? getMember(task.assigneeId) : undefined;
   const skillName = task.skillId ? getSkillName(task.skillId) : undefined;
+  const isTopicWorkflow = task.workflowTemplateKey === 'topic_production_v1';
+  const workflowStage = task.workflowCurrentStageKey || 'research';
+  const workflowStageLabel = WORKFLOW_STAGE_LABELS[workflowStage] || workflowStage;
+  const workflowLastEvent = task.workflowLastEventText;
+  const researchReady =
+    isTopicWorkflow &&
+    workflowStage !== 'research' &&
+    workflowStage !== 'outline_build';
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -95,12 +113,25 @@ function TaskCardContent({ task }: { task: Task }) {
       <div className="flex items-start gap-2">
         <div className={`mc-priority-dot mt-1.5 ${PRIORITY_COLORS[task.priority] || 'low'}`} />
         <div className="min-w-0 flex-1">
+          {isTopicWorkflow && (
+            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+              <span className="mc-tag">{workflowStageLabel}</span>
+              {researchReady && (
+                <span className="mc-tag text-green-400">Research Ready</span>
+              )}
+            </div>
+          )}
           <p className="text-sm font-medium leading-snug" style={{ color: 'var(--mc-text-primary)' }}>
             {task.title}
           </p>
           {task.description && (
             <p className="text-xs mt-0.5 line-clamp-2" style={{ color: 'var(--mc-text-secondary)' }}>
               {task.description}
+            </p>
+          )}
+          {isTopicWorkflow && workflowLastEvent && (
+            <p className="text-[10px] mt-1 line-clamp-2" style={{ color: 'var(--mc-text-tertiary)' }}>
+              {workflowLastEvent}
             </p>
           )}
         </div>
@@ -194,7 +225,7 @@ function TaskCardContent({ task }: { task: Task }) {
             )
           )}
           <span className="text-[10px]" style={{ color: 'var(--mc-text-muted)' }}>
-            {timeAgo(task.updatedAt)}
+            {timeAgo(task.workflowLastEventAt || task.updatedAt)}
           </span>
         </div>
       </div>

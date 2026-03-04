@@ -23,17 +23,26 @@ export function useSkills() {
   return useContext(SkillsContext);
 }
 
-export function SkillsProvider({ children }: { children: React.ReactNode }) {
+export function SkillsProvider({
+  children,
+  projectId,
+}: {
+  children: React.ReactNode;
+  projectId?: number | null;
+}) {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/skills')
+    const params = new URLSearchParams();
+    if (projectId) params.set('projectId', String(projectId));
+    const url = params.size > 0 ? `/api/skills?${params.toString()}` : '/api/skills';
+    fetch(url)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setSkills(data))
       .catch(() => setSkills([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [projectId]);
 
   const getSkillName = useCallback(
     (id: number) => skills.find((s) => s.id === id)?.name,

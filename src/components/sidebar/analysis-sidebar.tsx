@@ -83,9 +83,10 @@ function SidebarContent({
 
   return (
     <Tabs defaultValue="write" className="flex flex-col h-full">
-      <TabsList className={`mx-3 mt-3 grid grid-cols-5 shrink-0 ${expanded ? 'mx-4 mt-4' : ''}`}>
+      <TabsList className={`mx-3 mt-3 grid grid-cols-6 shrink-0 ${expanded ? 'mx-4 mt-4' : ''}`}>
         <TabsTrigger value="write" className="text-xs">Write</TabsTrigger>
         <TabsTrigger value="comments" className="text-xs">Comments</TabsTrigger>
+        <TabsTrigger value="workflow" className="text-xs">Workflow</TabsTrigger>
         <TabsTrigger value="ai" className="text-xs">AI</TabsTrigger>
         <TabsTrigger value="seo" className="text-xs">SEO</TabsTrigger>
         <TabsTrigger value="quality" className="text-xs">Quality</TabsTrigger>
@@ -110,6 +111,56 @@ function SidebarContent({
             editor={editor || null}
             refreshKey={commentsRefreshKey}
           />
+        </TabsContent>
+
+        <TabsContent value="workflow" className={`p-3 mt-0 space-y-3 ${expanded ? 'p-4 max-w-2xl mx-auto' : ''}`}>
+          <div className="rounded-md border p-3 space-y-2">
+            <p className="text-xs font-semibold">Research Snapshot</p>
+            {document.researchSnapshot?.summary ? (
+              <>
+                <p className="text-xs text-muted-foreground">{document.researchSnapshot.summary}</p>
+                {document.researchSnapshot.facts && document.researchSnapshot.facts.length > 0 && (
+                  <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-0.5">
+                    {document.researchSnapshot.facts.slice(0, 5).map((fact, idx) => (
+                      <li key={`${fact}-${idx}`}>{fact}</li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">No research snapshot yet.</p>
+            )}
+          </div>
+
+          <div className="rounded-md border p-3 space-y-2">
+            <p className="text-xs font-semibold">Prewrite Checklist</p>
+            {document.prewriteChecklist ? (
+              <div className="text-xs text-muted-foreground space-y-0.5">
+                <p>Brand context: {document.prewriteChecklist.brandContextReady ? 'ready' : 'pending'}</p>
+                <p>Internal links: {document.prewriteChecklist.internalLinksReady ? 'ready' : 'pending'}</p>
+                <p>Unresolved questions: {document.prewriteChecklist.unresolvedQuestions}</p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">No prewrite checklist yet.</p>
+            )}
+          </div>
+
+          <div className="rounded-md border p-3 space-y-2">
+            <p className="text-xs font-semibold">Agent Questions</p>
+            {document.agentQuestions && document.agentQuestions.length > 0 ? (
+              <div className="space-y-1.5">
+                {document.agentQuestions.slice(0, 8).map((q) => (
+                  <div key={q.id} className="text-xs text-muted-foreground">
+                    <p>{q.question}</p>
+                    <p className="text-[11px]">Status: {q.status}</p>
+                    {q.answer && <p className="text-[11px]">Answer: {q.answer}</p>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">No agent questions yet.</p>
+            )}
+          </div>
         </TabsContent>
 
         <TabsContent value="ai" className={`p-3 mt-0 ${expanded ? 'p-4 max-w-2xl mx-auto' : ''}`}>

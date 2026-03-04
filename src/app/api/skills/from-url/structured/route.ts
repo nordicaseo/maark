@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getProviderForAction } from '@/lib/ai';
+import { requireRole } from '@/lib/auth';
+import { userCanAccessProject } from '@/lib/access';
+import { logAuditEvent } from '@/lib/observability';
 
 const STRUCTURED_SYSTEM = `You are an expert at analyzing websites and extracting structured brand information. You will receive text content from one or more web pages. Analyze thoroughly and return a JSON array of skill parts.
 
@@ -69,11 +72,21 @@ async function extractText(url: string): Promise<string> {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
+
   try {
-    const { urls, description } = await req.json() as { urls: string[]; description?: string };
+    const { urls, description, projectId } = await req.json() as { urls: string[]; description?: string; projectId?: number };
 
     if (!urls || !Array.isArray(urls) || urls.length === 0) {
       return NextResponse.json({ error: 'At least one URL is required' }, { status: 400 });
+    }
+    if (
+      projectId !== undefined &&
+      projectId !== null &&
+      !(await userCanAccessProject(auth.user, Number(projectId)))
+    ) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Extract text from all URLs (limit to 5)
@@ -130,9 +143,23 @@ export async function POST(req: NextRequest) {
       // Handle case where AI wraps in markdown code fences
       const jsonStr = fullText.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim();
       const parsed = JSON.parse(jsonStr);
+      await logAuditEvent({
+        userId: auth.user.id,
+        action: 'skills.from_url.structured',
+        resourceType: 'skill',
+        projectId: projectId ?? null,
+        metadata: { urlCount: urlsToProcess.length, extractedSourceCount: texts.length, partsCount: Array.isArray(parsed?.parts) ? parsed.parts.length : null },
+      });
       return NextResponse.json(parsed);
     } catch {
       // Fallback: return raw text as a single custom part
+      await logAuditEvent({
+        userId: auth.user.id,
+        action: 'skills.from_url.structured',
+        resourceType: 'skill',
+        projectId: projectId ?? null,
+        metadata: { urlCount: urlsToProcess.length, extractedSourceCount: texts.length, fallback: true, partsCount: 1 },
+      });
       return NextResponse.json({
         skillName: 'Generated Skill',
         skillDescription: `Generated from ${urlsToProcess.length} URL(s)`,

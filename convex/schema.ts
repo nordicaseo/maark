@@ -42,11 +42,51 @@ export default defineSchema({
     // Tags & Metadata
     tags: v.optional(v.array(v.string())),
     commentCount: v.optional(v.number()),
+
+    // Topic Workflow v1
+    workflowTemplateKey: v.optional(v.string()), // e.g. "topic_production_v1"
+    workflowCurrentStageKey: v.optional(v.string()),
+    workflowStageStatus: v.optional(v.string()), // "pending" | "in_progress" | "blocked" | "complete"
+    workflowFlags: v.optional(v.object({
+      outlineReviewOptional: v.optional(v.boolean()),
+      seoReviewRequired: v.optional(v.boolean()),
+    })),
+    workflowApprovals: v.optional(v.object({
+      outlineHuman: v.optional(v.boolean()),
+      outlineSeo: v.optional(v.boolean()),
+      seoFinal: v.optional(v.boolean()),
+      outlineSkipped: v.optional(v.boolean()),
+    })),
+    workflowStartedAt: v.optional(v.number()),
+    workflowUpdatedAt: v.optional(v.number()),
+    workflowCompletedAt: v.optional(v.number()),
+    workflowLastEventAt: v.optional(v.number()),
+    workflowLastEventText: v.optional(v.string()),
+    topicKey: v.optional(v.string()),
   })
     .index("by_status", ["status"])
     .index("by_project", ["projectId"])
     .index("by_priority", ["priority"])
-    .index("by_document", ["documentId"]),
+    .index("by_document", ["documentId"])
+    .index("by_project_workflow_stage", ["projectId", "workflowCurrentStageKey"]),
+
+  // ── Task Workflow Events ───────────────────────────────────────
+  taskWorkflowEvents: defineTable({
+    taskId: v.id("tasks"),
+    projectId: v.optional(v.number()),
+    stageKey: v.string(),
+    eventType: v.string(), // "created" | "transition" | "approval" | "discussion" | "handoff"
+    fromStageKey: v.optional(v.string()),
+    toStageKey: v.optional(v.string()),
+    actorType: v.string(), // "user" | "agent" | "system"
+    actorId: v.optional(v.string()),
+    actorName: v.optional(v.string()),
+    summary: v.string(),
+    payload: v.optional(v.any()),
+    createdAt: v.number(),
+  })
+    .index("by_task_time", ["taskId", "createdAt"])
+    .index("by_project_time", ["projectId", "createdAt"]),
 
   // ── Agents ─────────────────────────────────────────────────────
   agents: defineTable({
@@ -57,6 +97,23 @@ export default defineSchema({
     skills: v.optional(v.array(v.string())),
     currentTaskId: v.optional(v.id("tasks")),
     tasksCompleted: v.optional(v.number()),
+    personaProfile: v.optional(v.object({
+      soul: v.optional(v.string()),
+      heart: v.optional(v.string()),
+      personality: v.optional(v.string()),
+      collaborationStyle: v.optional(v.string()),
+      reviewStyle: v.optional(v.string()),
+    })),
+    modelOverrides: v.optional(
+      v.record(
+        v.string(),
+        v.object({
+          provider: v.optional(v.string()),
+          modelId: v.optional(v.string()),
+          temperature: v.optional(v.number()),
+        })
+      )
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

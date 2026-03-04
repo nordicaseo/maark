@@ -44,7 +44,7 @@ const baseDoc: Document = {
 };
 
 describe('DocumentList sidebar cards', () => {
-  it('renders long title/status cards with wrapping and clipping protections', () => {
+  it('renders long title/status cards without clipping metadata', () => {
     render(
       <DocumentList
         documents={[baseDoc]}
@@ -64,6 +64,6 @@ describe('DocumentList sidebar cards', () => {
 
     const card = title.closest('[role="button"]');
     expect(card).toBeInTheDocument();
-    expect(card?.className).toContain('overflow-hidden');
+    expect(card?.className).not.toContain('overflow-hidden');
   });
 });

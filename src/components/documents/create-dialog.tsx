@@ -38,25 +38,36 @@ export function CreateDialog({ open, onOpenChange, onCreated, projectId }: Creat
   const [creating, setCreating] = useState(false);
 
   const handleCreate = async () => {
+    if (!projectId) return;
     setCreating(true);
     try {
-      const res = await fetch('/api/documents', {
+      const res = await fetch('/api/topic-workflow/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: title.trim() || 'Untitled',
+          projectId,
+          topic: title.trim() || 'Untitled',
+          entryPoint: 'content_engine',
           contentType,
           targetKeyword: keyword.trim() || null,
-          projectId: projectId ?? null,
+          options: {
+            outlineReviewOptional: true,
+            seoReviewRequired: true,
+          },
         }),
       });
       if (res.ok) {
-        const doc = await res.json();
+        const created = await res.json();
+        const documentId = created.contentDocumentId;
         onCreated();
         onOpenChange(false);
         setTitle('');
         setKeyword('');
-        router.push(`/documents/${doc.id}`);
+        if (documentId) {
+          router.push(`/documents/${documentId}`);
+        } else {
+          router.push('/mission-control');
+        }
       }
     } catch {}
     setCreating(false);
@@ -109,12 +120,17 @@ export function CreateDialog({ open, onOpenChange, onCreated, projectId }: Creat
               Used for SERP entity analysis and semantic scoring
             </p>
           </div>
+          {!projectId && (
+            <p className="text-xs text-muted-foreground">
+              Select a project first to create a topic workflow document.
+            </p>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleCreate} disabled={creating}>
+          <Button onClick={handleCreate} disabled={creating || !projectId}>
             {creating && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Create
           </Button>
