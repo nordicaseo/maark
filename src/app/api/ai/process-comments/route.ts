@@ -6,7 +6,7 @@ import { requireRole } from '@/lib/auth';
 import { getProviderForAction } from '@/lib/ai';
 import { PerplexityProvider } from '@/lib/ai/providers/perplexity';
 import { contentToHtml } from '@/lib/tiptap/to-html';
-import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
+import { normalizeGeneratedHtml, validateRevisedHtmlOutput } from '@/lib/utils/html-normalize';
 import { userCanAccessDocument } from '@/lib/access';
 import { logAuditEvent } from '@/lib/observability';
 
@@ -110,6 +110,8 @@ export async function POST(req: NextRequest) {
     // Get AI provider
     const { provider, model, maxTokens, temperature } = await getProviderForAction('writing');
 
+    const sourceHtml = contentToHtml(doc.content, doc.plainText) || '(No text content available)';
+
     const systemPrompt = `You are an expert editor. You will receive an article and a list of reviewer comments.
 Your job is to revise the article to address ALL the comments.
 
@@ -120,13 +122,15 @@ Instructions:
 - Maintain the article's overall tone and style
 - Preserve all existing formatting (headings, lists, tables, etc.)
 - Output the COMPLETE revised article in clean HTML format
+- Never truncate the document and never stop early
+- Keep heading structure and section coverage unless a comment explicitly asks to remove a section
 - Do NOT include any meta-commentary about the changes — just output the revised article
 
 ${researchContext ? `\nResearch data to incorporate where relevant:\n${researchContext}\n` : ''}`;
 
     const userMessage = `Here is the article to revise:
 
-${contentToHtml(doc.content, doc.plainText) || '(No text content available)'}
+${sourceHtml}
 
 ---
 
@@ -153,6 +157,34 @@ Please revise the article to address all comments. Output the complete revised a
       revisedContent += decoder.decode(value, { stream: true });
     }
 
+    const normalizedHtml = normalizeGeneratedHtml(revisedContent);
+    const validation = validateRevisedHtmlOutput(sourceHtml, normalizedHtml);
+    if (!validation.ok) {
+      await logAuditEvent({
+        userId: auth.user.id,
+        action: 'ai.process_comments_rejected',
+        resourceType: 'document',
+        resourceId: documentId,
+        projectId: doc.projectId ?? null,
+        metadata: {
+          reason: validation.reason,
+          processedCommentCount: comments.length,
+          selectedCommentCount: Array.isArray(commentIds) ? commentIds.length : null,
+          useResearch: Boolean(useResearch),
+          model,
+          metrics: validation.metrics,
+        },
+      });
+      return new Response(
+        JSON.stringify({
+          error: validation.reason || 'AI revision was rejected due to possible truncation.',
+          code: 'REVISION_REJECTED',
+          metrics: validation.metrics,
+        }),
+        { status: 422, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     await logAuditEvent({
       userId: auth.user.id,
       action: 'ai.process_comments',
@@ -163,10 +195,12 @@ Please revise the article to address all comments. Output the complete revised a
         processedCommentCount: comments.length,
         selectedCommentCount: Array.isArray(commentIds) ? commentIds.length : null,
         useResearch: Boolean(useResearch),
+        model,
+        metrics: validation.metrics,
       },
     });
 
-    return new Response(normalizeGeneratedHtml(revisedContent), {
+    return new Response(normalizedHtml, {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' },
     });
   } catch (error) {

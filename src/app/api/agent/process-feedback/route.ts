@@ -5,7 +5,7 @@ import { eq, and } from 'drizzle-orm';
 import { PerplexityProvider } from '@/lib/ai/providers/perplexity';
 import { dbNow } from '@/db/utils';
 import { contentToHtml } from '@/lib/tiptap/to-html';
-import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
+import { normalizeGeneratedHtml, validateRevisedHtmlOutput } from '@/lib/utils/html-normalize';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import { requireRole } from '@/lib/auth';
 import { userCanAccessDocument } from '@/lib/access';
@@ -156,6 +156,7 @@ Instructions:
 - For general comments, apply changes minimally where appropriate
 - Maintain the article's overall tone, style, and structure
 - Output the COMPLETE revised article as clean HTML — same structure as input
+- Never truncate the document and never stop early
 - Do NOT include any meta-commentary, explanations, or markdown fences
 ${researchContext ? `\nResearch data to incorporate where relevant:\n${researchContext}\n` : ''}`;
 
@@ -200,6 +201,34 @@ Revise the article to address all comments. Output the COMPLETE article in the s
 
     // ─── Step 5: Save revised content ───────────────────────────────
     const normalizedHtml = normalizeGeneratedHtml(revisedContent);
+    const validation = validateRevisedHtmlOutput(sourceHtml || '', normalizedHtml);
+    if (!validation.ok) {
+      await logAuditEvent({
+        userId: auth.user.id,
+        action: 'agent.process_feedback_rejected',
+        resourceType: 'document',
+        resourceId: documentId,
+        projectId: doc.projectId ?? null,
+        metadata: {
+          taskId: String(taskId),
+          revisionsApplied: comments.length,
+          useResearch: Boolean(useResearch),
+          agentId: agentId ?? null,
+          model,
+          reason: validation.reason,
+          metrics: validation.metrics,
+        },
+      });
+      return NextResponse.json(
+        {
+          error: validation.reason || 'AI revision was rejected due to possible truncation.',
+          code: 'REVISION_REJECTED',
+          metrics: validation.metrics,
+        },
+        { status: 422 }
+      );
+    }
+
     const plainText = stripHtml(normalizedHtml);
     const wordCount = plainText.split(/\s+/).filter(Boolean).length;
 
@@ -271,6 +300,7 @@ Revise the article to address all comments. Output the COMPLETE article in the s
         useResearch: Boolean(useResearch),
         agentId: agentId ?? null,
         model,
+        metrics: validation.metrics,
       },
     });
 

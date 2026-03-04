@@ -12,7 +12,7 @@ import {
   Search,
 } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
-import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
+import { normalizeGeneratedHtml, validateRevisedHtmlOutput } from '@/lib/utils/html-normalize';
 
 interface Comment {
   id: number;
@@ -204,7 +204,14 @@ export function CommentsPanel({ documentId, editor, onContentReplaced, refreshKe
 
       // Apply revised content to editor
       if (result.trim()) {
+        const sourceHtml = editor.getHTML();
         const normalized = normalizeGeneratedHtml(result);
+        const validation = validateRevisedHtmlOutput(sourceHtml, normalized);
+        if (!validation.ok) {
+          alert(validation.reason || 'AI output was rejected to prevent document truncation.');
+          setProcessing(false);
+          return;
+        }
         editor.chain().focus().clearContent().insertContent(normalized).run();
 
         // Mark processed comments as resolved
