@@ -239,7 +239,7 @@ export default function SkillBuilderPage() {
           <h2 className="text-lg font-semibold">
             Skill Parts ({parts.length})
           </h2>
-          <Select onValueChange={(v) => addPart(v as SkillPartType)}>
+          <Select value="" onValueChange={(v) => addPart(v as SkillPartType)}>
             <SelectTrigger className="w-[180px] h-8 text-sm">
               <div className="flex items-center gap-1">
                 <Plus className="h-3.5 w-3.5" />

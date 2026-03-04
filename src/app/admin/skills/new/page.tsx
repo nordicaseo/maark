@@ -115,7 +115,7 @@ export default function SkillWizardPage() {
 
         result = await res.json();
       } else if (description.trim()) {
-        // Use description-only (via structured URL analysis with no URLs won't work, use generate instead)
+        // Use description-only — returns structured JSON with multiple parts
         const res = await fetch('/api/skills/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -124,23 +124,7 @@ export default function SkillWizardPage() {
 
         if (!res.ok) throw new Error('Failed to generate skill');
 
-        // This returns a stream — collect it
-        const reader = res.body?.getReader();
-        const decoder = new TextDecoder();
-        let text = '';
-        if (reader) {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            text += decoder.decode(value, { stream: true });
-          }
-        }
-
-        result = {
-          skillName: 'Generated Skill',
-          skillDescription: description.trim(),
-          parts: [{ partType: 'custom', label: 'Generated Content', content: text }],
-        };
+        result = await res.json();
       } else {
         setError('Provide at least one URL, file, or description');
         setAnalyzing(false);
@@ -382,7 +366,7 @@ export default function SkillWizardPage() {
               <Button variant="outline" size="sm" onClick={() => setStep('sources')}>
                 <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
               </Button>
-              <Select onValueChange={(v) => addPart(v as SkillPartType)}>
+              <Select value="" onValueChange={(v) => addPart(v as SkillPartType)}>
                 <SelectTrigger className="w-[160px] h-8 text-xs">
                   <div className="flex items-center gap-1">
                     <Plus className="h-3.5 w-3.5" /> Add Part

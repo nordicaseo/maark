@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Pencil, Trash2, Sparkles, Globe, Loader2, Wrench } from 'lucide-react';
+import { Plus, Trash2, Sparkles, Globe, Wrench } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 /* ------------------------------------------------------------------ */
@@ -65,12 +65,6 @@ export default function AdminSkillsPage() {
     isGlobal: false,
   });
 
-  // URL generator state
-  const [urlDialogOpen, setUrlDialogOpen] = useState(false);
-  const [urlInput, setUrlInput] = useState('');
-  const [generating, setGenerating] = useState(false);
-  const [generatedContent, setGeneratedContent] = useState('');
-
   /* ── Fetching ───────────────────────────────────────────────────── */
 
   const fetchSkills = useCallback(async () => {
@@ -113,18 +107,6 @@ export default function AdminSkillsPage() {
     setDialogOpen(true);
   }
 
-  function openEdit(s: Skill) {
-    setEditing(s);
-    setForm({
-      name: s.name,
-      description: s.description || '',
-      content: s.content,
-      projectId: s.projectId ? String(s.projectId) : '',
-      isGlobal: !!s.isGlobal,
-    });
-    setDialogOpen(true);
-  }
-
   async function save() {
     if (!form.name.trim() || !form.content.trim()) return;
 
@@ -164,61 +146,6 @@ export default function AdminSkillsPage() {
     }
   }
 
-  async function generateFromUrl() {
-    if (!urlInput.trim()) return;
-    setGenerating(true);
-    setGeneratedContent('');
-
-    try {
-      const res = await fetch('/api/skills/from-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: urlInput.trim() }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        alert(err.error || 'Failed to analyze URL');
-        setGenerating(false);
-        return;
-      }
-
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      let text = '';
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          text += decoder.decode(value, { stream: true });
-          setGeneratedContent(text);
-        }
-      }
-    } catch {
-      alert('Failed to generate skill from URL');
-    } finally {
-      setGenerating(false);
-    }
-  }
-
-  function useGenerated() {
-    // Extract a name from the first heading
-    const nameMatch = generatedContent.match(/^#\s+(.+)/m);
-    const name = nameMatch ? nameMatch[1].replace(/\s*Content Skill\s*/i, '').trim() : 'Generated Skill';
-
-    setForm({
-      name,
-      description: `Generated from ${urlInput}`,
-      content: generatedContent,
-      projectId: '',
-      isGlobal: false,
-    });
-    setUrlDialogOpen(false);
-    setEditing(null);
-    setDialogOpen(true);
-  }
-
   async function deleteSkill(id: number) {
     if (!confirm('Delete this skill?')) return;
     await fetch(`/api/skills/${id}`, { method: 'DELETE' });
@@ -250,7 +177,7 @@ export default function AdminSkillsPage() {
           <Button variant="outline" onClick={() => router.push('/admin/skills/new')}>
             <Sparkles className="h-4 w-4 mr-1" /> Auto-Create
           </Button>
-          <Button variant="outline" onClick={() => { setUrlInput(''); setGeneratedContent(''); setUrlDialogOpen(true); }}>
+          <Button variant="outline" onClick={() => router.push('/admin/skills/new')}>
             <Globe className="h-4 w-4 mr-1" /> From URL
           </Button>
           <Button onClick={openNew}>
@@ -296,13 +223,6 @@ export default function AdminSkillsPage() {
                   title="Open in Skill Builder"
                 >
                   <Wrench className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => openEdit(s)}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
                 </Button>
                 <Button
                   variant="ghost"
@@ -421,57 +341,6 @@ export default function AdminSkillsPage() {
             >
               {editing ? 'Update' : 'Create'}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      {/* ── URL Generator Dialog ──────────────────────────────────── */}
-      <Dialog open={urlDialogOpen} onOpenChange={setUrlDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Globe className="h-5 w-5" /> Generate Skill from Website
-            </DialogTitle>
-            <DialogDescription>
-              Enter a URL and AI will analyze the site to build a writing skill.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2 flex-1 overflow-hidden flex flex-col">
-            <div className="flex gap-2">
-              <Input
-                value={urlInput}
-                onChange={(e) => setUrlInput(e.target.value)}
-                placeholder="https://example.com"
-                disabled={generating}
-                onKeyDown={(e) => { if (e.key === 'Enter') generateFromUrl(); }}
-              />
-              <Button onClick={generateFromUrl} disabled={generating || !urlInput.trim()}>
-                {generating ? (
-                  <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Analyzing...</>
-                ) : (
-                  <><Sparkles className="h-4 w-4 mr-1" /> Generate</>
-                )}
-              </Button>
-            </div>
-
-            {generatedContent && (
-              <div className="flex-1 overflow-auto border border-border rounded-lg p-4 bg-muted/30">
-                <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed">
-                  {generatedContent}
-                </pre>
-              </div>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setUrlDialogOpen(false)}>
-              Cancel
-            </Button>
-            {generatedContent && !generating && (
-              <Button onClick={useGenerated}>
-                Use This Skill
-              </Button>
-            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
