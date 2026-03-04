@@ -134,8 +134,8 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
               <div className="flex items-start gap-2">
                 <FileText className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-1">
-                    <p className="text-sm font-medium truncate">{doc.title}</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-medium truncate pr-1">{doc.title}</p>
                     <div
                       role="button"
                       tabIndex={0}

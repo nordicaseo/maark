@@ -447,7 +447,7 @@ ${editorHtml}
     <div className="flex h-screen bg-background overflow-hidden">
       {/* Left Sidebar */}
       <div
-        className={`border-r border-border bg-card transition-all duration-200 flex flex-col ${
+        className={`border-r border-border bg-card transition-all duration-200 flex flex-col shrink-0 ${
           leftOpen ? 'w-72' : 'w-0'
         } overflow-hidden`}
       >
@@ -517,7 +517,7 @@ ${editorHtml}
 
       {/* Right Sidebar */}
       <div
-        className={`border-l border-border bg-card transition-all duration-200 ${
+        className={`border-l border-border bg-card transition-all duration-200 shrink-0 ${
           rightOpen ? 'w-[360px]' : 'w-0'
         } overflow-hidden`}
       >
