@@ -209,6 +209,17 @@ export default function MissionControlPage() {
 
           {/* Kanban area */}
           <main className="flex-1 min-w-0 p-6 overflow-x-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2
+                  className="text-sm font-semibold"
+                  style={{ color: 'var(--mc-text-primary)', fontFamily: 'var(--mc-font-sans)' }}
+                >
+                  Content Queue
+                </h2>
+                <p className="mc-header-mono mt-0.5">Drag tasks between stages</p>
+              </div>
+            </div>
             <KanbanBoard
               projectId={projectId}
               onNewTask={() => setShowNewTask(true)}

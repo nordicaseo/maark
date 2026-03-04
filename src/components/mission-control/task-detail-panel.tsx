@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
@@ -10,6 +10,18 @@ import {
   SYNC_SOURCE_CONVEX,
 } from '@/lib/sync/document-task-sync';
 import { useTeamMembers } from './team-members-provider';
+import { generateHTML } from '@tiptap/core';
+import StarterKit from '@tiptap/starter-kit';
+import Image from '@tiptap/extension-image';
+import Underline from '@tiptap/extension-underline';
+import Highlight from '@tiptap/extension-highlight';
+import Link from '@tiptap/extension-link';
+import { Table } from '@tiptap/extension-table';
+import { TableRow } from '@tiptap/extension-table-row';
+import { TableCell } from '@tiptap/extension-table-cell';
+import { TableHeader } from '@tiptap/extension-table-header';
+import TaskList from '@tiptap/extension-task-list';
+import TaskItem from '@tiptap/extension-task-item';
 import {
   X,
   Play,
@@ -76,6 +88,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
   // ─── Document content preview ──────────────────────────────────
   const [docPreview, setDocPreview] = useState<{
     title: string;
+    content: any | null;       // TipTap JSON
     plainText: string | null;
     wordCount: number;
     status: string;
@@ -83,6 +96,21 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
   } | null>(null);
   const [docPreviewLoading, setDocPreviewLoading] = useState(false);
   const [previewExpanded, setPreviewExpanded] = useState(true);
+
+  // Extensions for generating HTML from TipTap JSON
+  const previewExtensions = useMemo(() => [
+    StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
+    Image,
+    Underline,
+    Highlight.configure({ multicolor: true }),
+    Link.configure({ openOnClick: false }),
+    Table.configure({ resizable: false }),
+    TableRow,
+    TableCell,
+    TableHeader,
+    TaskList,
+    TaskItem,
+  ], []);
 
   useEffect(() => {
     if (!task?.documentId) {
@@ -97,6 +125,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
         if (!cancelled && doc) {
           setDocPreview({
             title: doc.title,
+            content: doc.content,
             plainText: doc.plainText,
             wordCount: doc.wordCount || 0,
             status: doc.status,
@@ -110,6 +139,16 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
       });
     return () => { cancelled = true; };
   }, [task?.documentId, task?.updatedAt]);
+
+  // Generate HTML from TipTap JSON content
+  const previewHtml = useMemo(() => {
+    if (!docPreview?.content) return null;
+    try {
+      return generateHTML(docPreview.content, previewExtensions);
+    } catch {
+      return null;
+    }
+  }, [docPreview?.content, previewExtensions]);
 
   // Sync a task status change to the linked Drizzle document (fire-and-forget)
   const syncStatusToDrizzle = useCallback(
@@ -419,7 +458,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
                   <div className="flex items-center justify-center h-32">
                     <Loader2 className="h-4 w-4 animate-spin" style={{ color: 'var(--mc-text-tertiary)' }} />
                   </div>
-                ) : docPreview?.plainText ? (
+                ) : (previewHtml || docPreview?.plainText) ? (
                   <>
                     <div
                       className="flex items-center justify-between px-3 py-2 border-b text-xs"
@@ -430,20 +469,27 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
                       }}
                     >
                       <span className="font-medium truncate" style={{ color: 'var(--mc-text-primary)' }}>
-                        {docPreview.title}
+                        {docPreview?.title}
                       </span>
                       <span className="shrink-0 ml-2">
-                        {docPreview.wordCount.toLocaleString()} words
+                        {docPreview?.wordCount.toLocaleString()} words
                       </span>
                     </div>
-                    <div
-                      className="px-3 py-2 text-xs leading-relaxed overflow-y-auto max-h-80 whitespace-pre-wrap"
-                      style={{ color: 'var(--mc-text-secondary)' }}
-                    >
-                      {docPreview.plainText.length > 3000
-                        ? docPreview.plainText.slice(0, 3000) + '\n\n… (truncated)'
-                        : docPreview.plainText}
-                    </div>
+                    {previewHtml ? (
+                      <div
+                        className="mc-content-preview px-3 py-2 overflow-y-auto max-h-80"
+                        dangerouslySetInnerHTML={{ __html: previewHtml }}
+                      />
+                    ) : (
+                      <div
+                        className="px-3 py-2 text-xs leading-relaxed overflow-y-auto max-h-80 whitespace-pre-wrap"
+                        style={{ color: 'var(--mc-text-secondary)' }}
+                      >
+                        {docPreview!.plainText!.length > 3000
+                          ? docPreview!.plainText!.slice(0, 3000) + '\n\n… (truncated)'
+                          : docPreview!.plainText}
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="flex items-center justify-center h-20">
