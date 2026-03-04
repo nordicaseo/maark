@@ -3,7 +3,7 @@ import { db, ensureDb } from '@/db';
 import { users } from '@/db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { requireRole } from '@/lib/auth';
-import { ROLE_LEVELS, ASSIGNABLE_ROLES } from '@/lib/permissions';
+import { ASSIGNABLE_ROLES } from '@/lib/permissions';
 
 export async function PATCH(
   req: NextRequest,

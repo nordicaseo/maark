@@ -6,7 +6,7 @@ export function signal05PronominalFrequency(
   text: string,
   sentences: string[],
   words: string[],
-  paragraphs: string[]
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   const firstPerson = words.filter((w) => FIRST_PERSON.has(w)).length;
   const impersonal = (
@@ -42,7 +42,7 @@ export function signal05PronominalFrequency(
     score = 5;
   }
 
-  const detail = `First-person: ${fpRatio.toFixed(1)}% | Impersonal constructions: ${impersonal}`;
+  const detail = `First-person: ${fpRatio.toFixed(1)}% | Impersonal: ${impersonal} (${impRatio.toFixed(1)}%)`;
 
   return { signalId: 5, name: 'Pronominal Frequency', score, detail, examples };
 }

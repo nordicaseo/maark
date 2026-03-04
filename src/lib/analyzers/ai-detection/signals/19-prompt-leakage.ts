@@ -3,9 +3,9 @@ import { PROMPT_LEAKAGE_PATTERNS } from '../word-lists';
 
 export function signal19PromptLeakage(
   text: string,
-  sentences: string[],
-  words: string[],
-  paragraphs: string[]
+  _sentences: string[],
+  _words: string[],
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   const textLower = text.toLowerCase().trim();
   const found: RegExp[] = [];

@@ -5,7 +5,7 @@ export function signal01LexicalDiversity(
   text: string,
   sentences: string[],
   words: string[],
-  paragraphs: string[]
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   if (words.length < 20) {
     return {

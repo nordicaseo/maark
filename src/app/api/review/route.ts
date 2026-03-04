@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
-import { documents, documentComments, users, projects, projectMembers } from '@/db/schema';
-import { desc, eq, sql, and } from 'drizzle-orm';
+import { documents, users, projects, projectMembers } from '@/db/schema';
+import { desc, eq, sql } from 'drizzle-orm';
 import { getAuthUser } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {

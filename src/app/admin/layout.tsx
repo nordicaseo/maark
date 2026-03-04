@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/components/auth/auth-provider';
@@ -30,6 +31,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname();
   const router = useRouter();
   const { user, isLoading, signOut } = useAuth();
+  const shouldRedirect = !isLoading && (!user || !hasRole(user.role, 'admin'));
+
+  useEffect(() => {
+    if (shouldRedirect) {
+      router.replace('/documents');
+    }
+  }, [shouldRedirect, router]);
 
   // Redirect non-admin users away from admin
   if (isLoading) {
@@ -40,8 +48,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
   }
 
-  if (!user || !hasRole(user.role, 'admin')) {
-    router.replace('/documents');
+  if (shouldRedirect) {
     return null;
   }
 

@@ -5,7 +5,7 @@ export function signal20PerplexityVolatility(
   text: string,
   sentences: string[],
   words: string[],
-  paragraphs: string[]
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   const uncommon = words.filter((w) => !COMMON_WORDS.has(w) && w.length > 3);
   const uncommonRatio = uncommon.length / Math.max(1, words.length);

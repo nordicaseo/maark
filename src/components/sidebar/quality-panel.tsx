@@ -1,9 +1,8 @@
 'use client';
 
-import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { ScoreGauge } from './score-gauge';
-import { Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Loader2, AlertCircle } from 'lucide-react';
 import type { ContentQualityResult } from '@/types/analysis';
 
 interface QualityPanelProps {

@@ -3,9 +3,9 @@ import { AI_TRANSITION_PHRASES } from '../word-lists';
 
 export function signal08TransitionPredictability(
   text: string,
-  sentences: string[],
-  words: string[],
-  paragraphs: string[]
+  _sentences: string[],
+  _words: string[],
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   const textLower = text.toLowerCase();
   const found: string[] = [];

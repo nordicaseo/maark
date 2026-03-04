@@ -6,8 +6,8 @@ const PRESENT_PATTERN = /\b(is|are|has|does|do)\b/g;
 export function signal13VerbTenseConsistency(
   text: string,
   sentences: string[],
-  words: string[],
-  paragraphs: string[]
+  _words: string[],
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   const tenses: string[] = [];
 

@@ -2,6 +2,7 @@
 
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import NextImage from 'next/image';
 import {
   FileText,
   MessageSquare,
@@ -14,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
-import type { Doc, Id } from '../../../convex/_generated/dataModel';
+import type { Doc } from '../../../convex/_generated/dataModel';
 import { useTeamMembers } from './team-members-provider';
 import { useSkills } from './skills-provider';
 
@@ -174,9 +175,12 @@ function TaskCardContent({ task }: { task: Task }) {
         <div className="flex items-center gap-1.5">
           {assignee && (
             assignee.image ? (
-              <img
+              <NextImage
                 src={assignee.image}
                 alt={assignee.name || ''}
+                width={16}
+                height={16}
+                unoptimized
                 className="h-4 w-4 rounded-full"
                 title={assignee.name || assignee.email}
               />

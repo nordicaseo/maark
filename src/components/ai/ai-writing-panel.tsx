@@ -36,9 +36,7 @@ const TONES = [
 ];
 
 export function AiWritingPanel({
-  contentType,
   targetKeyword,
-  existingContent,
   projectId,
   isWriting,
   onLiveGenerate,

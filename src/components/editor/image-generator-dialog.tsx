@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import NextImage from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
@@ -40,6 +41,8 @@ export function ImageGeneratorDialog({
   const [revisedPrompt, setRevisedPrompt] = useState('');
   const [error, setError] = useState('');
   const [manualUrl, setManualUrl] = useState('');
+  const [generatedPreviewError, setGeneratedPreviewError] = useState(false);
+  const [manualPreviewError, setManualPreviewError] = useState(false);
   const [mode, setMode] = useState<'generate' | 'url'>('generate');
 
   const handleGenerate = async () => {
@@ -48,6 +51,7 @@ export function ImageGeneratorDialog({
     setError('');
     setGeneratedUrl('');
     setRevisedPrompt('');
+    setGeneratedPreviewError(false);
 
     try {
       const res = await fetch('/api/ai/images', {
@@ -65,6 +69,7 @@ export function ImageGeneratorDialog({
 
       setGeneratedUrl(data.url);
       setRevisedPrompt(data.revisedPrompt || '');
+      setGeneratedPreviewError(false);
     } catch {
       setError('Failed to connect to image generation service');
     } finally {
@@ -91,6 +96,8 @@ export function ImageGeneratorDialog({
     setRevisedPrompt('');
     setError('');
     setManualUrl('');
+    setGeneratedPreviewError(false);
+    setManualPreviewError(false);
     setMode('generate');
     onOpenChange(false);
   };
@@ -191,11 +198,21 @@ export function ImageGeneratorDialog({
               {generatedUrl && (
                 <div className="space-y-2">
                   <div className="relative rounded-lg overflow-hidden border border-border bg-muted">
-                    <img
-                      src={generatedUrl}
-                      alt={prompt}
-                      className="w-full h-auto max-h-64 object-contain"
-                    />
+                    {generatedPreviewError ? (
+                      <div className="px-3 py-6 text-xs text-muted-foreground text-center">
+                        Could not load generated image preview.
+                      </div>
+                    ) : (
+                      <NextImage
+                        src={generatedUrl}
+                        alt={prompt || 'Generated image'}
+                        width={1024}
+                        height={1024}
+                        unoptimized
+                        className="w-full h-auto max-h-64 object-contain"
+                        onError={() => setGeneratedPreviewError(true)}
+                      />
+                    )}
                   </div>
                   {revisedPrompt && (
                     <p className="text-xs text-muted-foreground italic">
@@ -213,7 +230,10 @@ export function ImageGeneratorDialog({
                 <Input
                   placeholder="https://example.com/image.jpg"
                   value={manualUrl}
-                  onChange={(e) => setManualUrl(e.target.value)}
+                  onChange={(e) => {
+                    setManualUrl(e.target.value);
+                    setManualPreviewError(false);
+                  }}
                   type="url"
                 />
               </div>
@@ -227,14 +247,21 @@ export function ImageGeneratorDialog({
               </div>
               {manualUrl && (
                 <div className="rounded-lg overflow-hidden border border-border bg-muted">
-                  <img
-                    src={manualUrl}
-                    alt={prompt || 'Preview'}
-                    className="w-full h-auto max-h-64 object-contain"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
+                  {manualPreviewError ? (
+                    <div className="px-3 py-6 text-xs text-muted-foreground text-center">
+                      Could not load image preview from URL.
+                    </div>
+                  ) : (
+                    <NextImage
+                      src={manualUrl}
+                      alt={prompt || 'Preview'}
+                      width={1024}
+                      height={1024}
+                      unoptimized
+                      className="w-full h-auto max-h-64 object-contain"
+                      onError={() => setManualPreviewError(true)}
+                    />
+                  )}
                 </div>
               )}
             </div>

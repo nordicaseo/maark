@@ -4,9 +4,9 @@ import { COLON_LEADINS } from '../word-lists';
 
 export function signal21ColonLeadIn(
   text: string,
-  sentences: string[],
-  words: string[],
-  paragraphs: string[]
+  _sentences: string[],
+  _words: string[],
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   const textLower = text.toLowerCase();
   const found: RegExp[] = [];

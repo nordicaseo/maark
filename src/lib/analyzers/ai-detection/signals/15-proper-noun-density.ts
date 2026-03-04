@@ -7,7 +7,7 @@ export function signal15ProperNounDensity(
   text: string,
   sentences: string[],
   words: string[],
-  paragraphs: string[]
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   const sents = tokenizeSentences(text);
   const properNouns = new Set<string>();

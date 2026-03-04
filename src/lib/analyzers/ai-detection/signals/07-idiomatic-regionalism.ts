@@ -5,7 +5,7 @@ export function signal07IdiomaticRegionalism(
   text: string,
   sentences: string[],
   words: string[],
-  paragraphs: string[]
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   const contractions = (text.toLowerCase().match(/\b\w+'(t|re|ve|ll|d|s|m)\b/g) || []).length;
   const colloquialMarkers = (

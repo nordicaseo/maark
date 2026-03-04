@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { type Editor } from '@tiptap/react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';

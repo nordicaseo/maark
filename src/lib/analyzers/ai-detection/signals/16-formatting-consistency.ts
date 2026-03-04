@@ -3,9 +3,9 @@ import { getParagraphs, tokenizeWords } from '../utils';
 
 export function signal16FormattingConsistency(
   text: string,
-  sentences: string[],
-  words: string[],
-  paragraphs: string[]
+  _sentences: string[],
+  _words: string[],
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   const headers = text.match(/^#{1,6}\s+.+/gm) || [];
   const bulletLists = text.match(/(?:^|\n)\s*[-•*]\s+/g) || [];

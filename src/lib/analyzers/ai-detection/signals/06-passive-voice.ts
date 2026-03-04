@@ -5,8 +5,8 @@ const PASSIVE_PATTERN = /\b(is|are|was|were|be|been|being)\s+(\w+ed|\w+en|\w+t)\
 export function signal06PassiveVoice(
   text: string,
   sentences: string[],
-  words: string[],
-  paragraphs: string[]
+  _words: string[],
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   let passiveCount = 0;
   for (const s of sentences) {

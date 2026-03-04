@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import NextImage from 'next/image';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
-import type { Doc, Id } from '../../../convex/_generated/dataModel';
+import type { Id } from '../../../convex/_generated/dataModel';
 import {
   taskStatusToDocumentStatus,
   SYNC_SOURCE_KEY,
@@ -13,7 +14,7 @@ import { useTeamMembers } from './team-members-provider';
 import { generateHTML } from '@tiptap/core';
 import type { JSONContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
-import Image from '@tiptap/extension-image';
+import TiptapImage from '@tiptap/extension-image';
 import Underline from '@tiptap/extension-underline';
 import Highlight from '@tiptap/extension-highlight';
 import Link from '@tiptap/extension-link';
@@ -41,8 +42,6 @@ import {
   ChevronUp,
   Send,
 } from 'lucide-react';
-
-type Task = Doc<'tasks'>;
 
 const STATUS_LABELS: Record<string, string> = {
   BACKLOG: 'Inbox',
@@ -110,7 +109,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
   // Extensions for generating HTML from TipTap JSON
   const previewExtensions = useMemo(() => [
     StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
-    Image,
+    TiptapImage,
     Underline,
     Highlight.configure({ multicolor: true }),
     Link.configure({ openOnClick: false }),
@@ -408,7 +407,14 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
             return (
               <div className="flex items-center gap-2 mt-1.5 text-xs" style={{ color: 'var(--mc-text-secondary)' }}>
                 {member.image ? (
-                  <img src={member.image} alt={member.name || ''} className="h-5 w-5 rounded-full" />
+                  <NextImage
+                    src={member.image}
+                    alt={member.name || ''}
+                    width={20}
+                    height={20}
+                    unoptimized
+                    className="h-5 w-5 rounded-full"
+                  />
                 ) : (
                   <div className="h-5 w-5 rounded-full bg-gray-200 flex items-center justify-center text-[10px] font-medium">
                     {(member.name || member.email).charAt(0).toUpperCase()}

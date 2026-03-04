@@ -3,9 +3,9 @@ import { DEAD_METAPHORS } from '../word-lists';
 
 export function signal17MetaphorOriginality(
   text: string,
-  sentences: string[],
-  words: string[],
-  paragraphs: string[]
+  _sentences: string[],
+  _words: string[],
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   const textLower = text.toLowerCase();
   const foundDead = DEAD_METAPHORS.filter((m) => textLower.includes(m));

@@ -3,8 +3,8 @@ import { SignalResult } from '../types';
 export function signal10EmotionalVariance(
   text: string,
   sentences: string[],
-  words: string[],
-  paragraphs: string[]
+  _words: string[],
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   const exclamations = (text.match(/!/g) || []).length;
   const questions = (text.match(/\?/g) || []).length;

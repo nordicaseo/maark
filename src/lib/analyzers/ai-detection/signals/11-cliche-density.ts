@@ -4,9 +4,9 @@ import { AI_CLICHES, AI_SIGNATURE_WORDS } from '../word-lists';
 
 export function signal11ClicheDensity(
   text: string,
-  sentences: string[],
-  words: string[],
-  paragraphs: string[]
+  _sentences: string[],
+  _words: string[],
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   const textLower = text.toLowerCase();
   const found: string[] = [];

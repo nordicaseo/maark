@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { useConvexAvailable } from '@/lib/convex/provider';
 import { useRouter } from 'next/navigation';
@@ -64,6 +64,12 @@ export default function MissionControlPage() {
   const [selectedTaskId, setSelectedTaskId] = useState<Id<'tasks'> | null>(null);
   const [showActivity, setShowActivity] = useState(true);
 
+  useEffect(() => {
+    if (!isLoading && !user) {
+      router.replace('/auth/signin');
+    }
+  }, [isLoading, user, router]);
+
   if (isLoading) {
     return (
       <div className="mc-wrapper flex items-center justify-center h-screen">
@@ -73,7 +79,6 @@ export default function MissionControlPage() {
   }
 
   if (!user) {
-    router.replace('/auth/signin');
     return null;
   }
 

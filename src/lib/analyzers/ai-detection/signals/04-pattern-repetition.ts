@@ -4,8 +4,8 @@ import { tokenizeWords } from '../utils';
 export function signal04PatternRepetition(
   text: string,
   sentences: string[],
-  words: string[],
-  paragraphs: string[]
+  _words: string[],
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   if (sentences.length < 4) {
     return {

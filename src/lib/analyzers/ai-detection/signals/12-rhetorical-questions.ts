@@ -3,8 +3,8 @@ import { SignalResult } from '../types';
 export function signal12RhetoricalQuestions(
   text: string,
   sentences: string[],
-  words: string[],
-  paragraphs: string[]
+  _words: string[],
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   const questions = sentences.filter((s) => s.trim().endsWith('?'));
   const totalQ = questions.length;

@@ -12,8 +12,6 @@ import {
   Bot,
   User,
   Send,
-  CheckCircle2,
-  Tag,
 } from 'lucide-react';
 
 interface ActivitySidebarProps {

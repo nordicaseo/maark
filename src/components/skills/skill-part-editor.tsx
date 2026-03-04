@@ -1,6 +1,5 @@
 'use client';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -11,19 +10,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Trash2, GripVertical, ChevronUp, ChevronDown } from 'lucide-react';
+import { Trash2, ChevronUp, ChevronDown } from 'lucide-react';
 import { SKILL_PART_TYPES } from '@/types/skill-part';
 import type { SkillPart, SkillPartType } from '@/types/skill-part';
-
-const PART_TYPE_COLORS: Record<string, string> = {
-  brand_voice: 'bg-purple-500/20 text-purple-400',
-  technical_details: 'bg-blue-500/20 text-blue-400',
-  brand_history: 'bg-amber-500/20 text-amber-400',
-  content_structure: 'bg-green-500/20 text-green-400',
-  keywords: 'bg-cyan-500/20 text-cyan-400',
-  tone_guidelines: 'bg-pink-500/20 text-pink-400',
-  custom: 'bg-zinc-500/20 text-zinc-400',
-};
 
 interface SkillPartEditorProps {
   part: SkillPart;

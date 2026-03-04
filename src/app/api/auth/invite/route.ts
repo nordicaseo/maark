@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
 import { invitations, users } from '@/db/schema';
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
 export async function GET(req: NextRequest) {
   const token = req.nextUrl.searchParams.get('token');

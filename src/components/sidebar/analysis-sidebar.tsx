@@ -78,6 +78,9 @@ function SidebarContent({
   editor,
   commentsRefreshKey,
 }: SidebarContentProps) {
+  void onInsertAiText;
+  void onReplaceContent;
+
   return (
     <Tabs defaultValue="write" className="flex flex-col h-full">
       <TabsList className={`mx-3 mt-3 grid grid-cols-5 shrink-0 ${expanded ? 'mx-4 mt-4' : ''}`}>

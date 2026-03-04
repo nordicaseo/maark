@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import NextImage from 'next/image';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -169,9 +170,12 @@ export default function AdminUsersPage() {
             >
               <div className="flex items-center gap-3">
                 {u.image ? (
-                  <img
+                  <NextImage
                     src={u.image}
                     alt={u.name || u.email}
+                    width={32}
+                    height={32}
+                    unoptimized
                     className="h-8 w-8 rounded-full"
                   />
                 ) : (

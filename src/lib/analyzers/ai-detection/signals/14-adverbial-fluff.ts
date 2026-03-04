@@ -5,7 +5,7 @@ export function signal14AdverbialFluff(
   text: string,
   sentences: string[],
   words: string[],
-  paragraphs: string[]
+  _paragraphs: string[]
 ): Omit<SignalResult, 'weight'> {
   const textLower = text.toLowerCase();
   const found: string[] = [];

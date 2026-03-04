@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/auth/auth-provider';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import {
   ArrowLeft,
   MessageSquare,
@@ -102,6 +101,12 @@ export default function ReviewPage() {
     if (!authLoading && user) fetchDocs();
   }, [authLoading, user, fetchDocs]);
 
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.replace('/auth/signin');
+    }
+  }, [authLoading, user, router]);
+
   if (authLoading) {
     return (
       <div className="flex items-center justify-center h-screen bg-background">
@@ -111,7 +116,6 @@ export default function ReviewPage() {
   }
 
   if (!user) {
-    router.replace('/auth/signin');
     return null;
   }
 

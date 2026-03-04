@@ -32,7 +32,7 @@ import {
   Eye,
   Copy,
 } from 'lucide-react';
-import type { Document, ContentFormat } from '@/types/document';
+import type { Document } from '@/types/document';
 import { CONTENT_FORMAT_GROUPS, CONTENT_FORMAT_LABELS, STATUS_LABELS } from '@/types/document';
 
 interface TopBarProps {

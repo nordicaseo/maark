@@ -1,5 +1,5 @@
 import { AnalysisResult, SignalFunction, SignalResult } from './types';
-import { SIGNAL_WEIGHTS, SIGNAL_NAMES, getRiskLevel } from './weights';
+import { SIGNAL_WEIGHTS, getRiskLevel } from './weights';
 import { tokenizeWords, tokenizeSentences, getParagraphs } from './utils';
 
 import { signal01LexicalDiversity } from './signals/01-lexical-diversity';
