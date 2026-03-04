@@ -12,6 +12,7 @@ import {
   Tag,
   Sparkles,
   Trash2,
+  GripVertical,
 } from 'lucide-react';
 import { useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
@@ -20,6 +21,8 @@ import { useTeamMembers } from './team-members-provider';
 import { useSkills } from './skills-provider';
 
 type Task = Doc<'tasks'>;
+type DragAttributes = ReturnType<typeof useSortable>['attributes'];
+type DragListeners = NonNullable<ReturnType<typeof useSortable>['listeners']>;
 
 const PRIORITY_COLORS: Record<string, string> = {
   LOW: 'low',
@@ -60,6 +63,7 @@ export function SortableTaskCard({
     attributes,
     listeners,
     setNodeRef,
+    setActivatorNodeRef,
     transform,
     transition,
     isDragging,
@@ -74,17 +78,30 @@ export function SortableTaskCard({
     <div
       ref={setNodeRef}
       style={style}
-      {...attributes}
-      {...listeners}
       className={`mc-card group cursor-grab active:cursor-grabbing ${isDragging ? 'dragging' : ''}`}
       onClick={onClick}
     >
-      <TaskCardContent task={task} />
+      <TaskCardContent
+        task={task}
+        dragAttributes={attributes}
+        dragListeners={listeners}
+        setDragHandleRef={setActivatorNodeRef}
+      />
     </div>
   );
 }
 
-function TaskCardContent({ task }: { task: Task }) {
+function TaskCardContent({
+  task,
+  dragAttributes,
+  dragListeners,
+  setDragHandleRef,
+}: {
+  task: Task;
+  dragAttributes: DragAttributes;
+  dragListeners: DragListeners | undefined;
+  setDragHandleRef: (element: HTMLElement | null) => void;
+}) {
   const { getMember } = useTeamMembers();
   const { getSkillName } = useSkills();
   const removeTask = useMutation(api.tasks.remove);
@@ -135,6 +152,19 @@ function TaskCardContent({ task }: { task: Task }) {
             </p>
           )}
         </div>
+        <button
+          type="button"
+          ref={setDragHandleRef}
+          {...dragAttributes}
+          {...(dragListeners ?? {})}
+          onClick={(e) => e.stopPropagation()}
+          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/5 shrink-0 mt-0.5 cursor-grab active:cursor-grabbing"
+          style={{ color: 'var(--mc-text-muted)' }}
+          title="Drag task"
+          aria-label="Drag task"
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
         <button
           onClick={handleDelete}
           className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 shrink-0 mt-0.5"
