@@ -6,10 +6,12 @@ import { Button } from '@/components/ui/button';
 export default function SignInPage() {
   const handleSignIn = async (provider: 'google' | 'github') => {
     const supabase = createClient();
+    const baseUrl =
+      process.env.NEXT_PUBLIC_APP_URL || window.location.origin;
     await supabase.auth.signInWithOAuth({
       provider,
       options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=/documents`,
+        redirectTo: `${baseUrl}/auth/callback?next=/documents`,
       },
     });
   };

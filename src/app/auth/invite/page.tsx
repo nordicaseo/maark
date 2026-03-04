@@ -36,10 +36,12 @@ function InviteContent() {
 
   const handleSignIn = async (provider: 'google' | 'github') => {
     const supabase = createClient();
+    const baseUrl =
+      process.env.NEXT_PUBLIC_APP_URL || window.location.origin;
     await supabase.auth.signInWithOAuth({
       provider,
       options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=/documents&invite_token=${token}`,
+        redirectTo: `${baseUrl}/auth/callback?next=/documents&invite_token=${token}`,
       },
     });
   };

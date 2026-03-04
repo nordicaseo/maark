@@ -126,18 +126,26 @@ export async function GET(request: Request) {
         }
       }
 
+      const configured = process.env.NEXT_PUBLIC_APP_URL;
       const forwardedHost = request.headers.get('x-forwarded-host');
       const isLocalEnv = process.env.NODE_ENV === 'development';
-      if (isLocalEnv) {
-        return NextResponse.redirect(`${origin}${next}`);
+
+      let redirectBase: string;
+      if (configured) {
+        redirectBase = configured;
+      } else if (isLocalEnv) {
+        redirectBase = origin;
       } else if (forwardedHost) {
-        return NextResponse.redirect(`https://${forwardedHost}${next}`);
+        redirectBase = `https://${forwardedHost}`;
       } else {
-        return NextResponse.redirect(`${origin}${next}`);
+        redirectBase = origin;
       }
+
+      return NextResponse.redirect(`${redirectBase}${next}`);
     }
   }
 
   // Auth error — redirect to sign-in
-  return NextResponse.redirect(`${origin}/auth/signin?error=auth_callback_failed`);
+  const errorBase = process.env.NEXT_PUBLIC_APP_URL || origin;
+  return NextResponse.redirect(`${errorBase}/auth/signin?error=auth_callback_failed`);
 }
