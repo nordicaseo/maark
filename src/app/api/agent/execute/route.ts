@@ -6,6 +6,7 @@ import { getProviderForAction } from '@/lib/ai';
 import { randomBytes } from 'crypto';
 import { dbNow } from '@/db/utils';
 import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
+import { logAlertEvent } from '@/lib/observability';
 
 /**
  * POST /api/agent/execute
@@ -258,6 +259,13 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
+    await logAlertEvent({
+      source: 'agent',
+      eventType: 'execute_failed',
+      severity: 'error',
+      message: 'Agent execution failed.',
+      metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
+    });
     console.error('Agent execution error:', error);
     return NextResponse.json(
       { error: 'Agent execution failed' },

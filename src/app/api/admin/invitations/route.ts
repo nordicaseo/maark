@@ -5,6 +5,7 @@ import { desc, eq } from 'drizzle-orm';
 import { requireRole } from '@/lib/auth';
 import { ASSIGNABLE_ROLES } from '@/lib/permissions';
 import { randomUUID } from 'crypto';
+import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 
 export async function GET() {
   await ensureDb();
@@ -68,10 +69,18 @@ export async function POST(req: NextRequest) {
       })
       .returning();
 
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'admin.invitation.create',
+      resourceType: 'invitation',
+      resourceId: invitation.id,
+      severity: 'warning',
+      metadata: { role: invitation.role, email: invitation.email },
+    });
+
     // Build the invite URL
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : 'http://localhost:3000';
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
     const inviteUrl = `${baseUrl}/auth/invite?token=${token}`;
 
     return NextResponse.json({
@@ -83,6 +92,13 @@ export async function POST(req: NextRequest) {
       expiresAt: invitation.expiresAt,
     });
   } catch (error) {
+    await logAlertEvent({
+      source: 'admin',
+      eventType: 'invitation_create_failed',
+      severity: 'error',
+      message: 'Failed to create invitation.',
+      metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
+    });
     console.error('Error creating invitation:', error);
     return NextResponse.json(
       { error: 'Failed to create invitation' },

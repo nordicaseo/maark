@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { db, ensureDb } from '@/db/index';
-import { documents, projectMembers, projects, skills } from '@/db/schema';
+import { documents, keywords, pages, projectMembers, projects, skills } from '@/db/schema';
 import type { AppUser } from '@/lib/auth';
 import { hasRole } from '@/lib/permissions';
 import { ACTIVE_PROJECT_COOKIE_KEY, parseProjectId } from '@/lib/project-context';
@@ -100,6 +100,40 @@ export async function userCanAccessSkill(
   }
 
   return userCanAccessProject(user, skill.projectId);
+}
+
+export async function userCanAccessKeyword(
+  user: AppUser,
+  keywordId: number
+): Promise<boolean> {
+  await ensureDb();
+  if (isAdminUser(user)) return true;
+
+  const [keyword] = await db
+    .select({ projectId: keywords.projectId })
+    .from(keywords)
+    .where(eq(keywords.id, keywordId))
+    .limit(1);
+
+  if (!keyword) return false;
+  return userCanAccessProject(user, keyword.projectId);
+}
+
+export async function userCanAccessPage(
+  user: AppUser,
+  pageId: number
+): Promise<boolean> {
+  await ensureDb();
+  if (isAdminUser(user)) return true;
+
+  const [page] = await db
+    .select({ projectId: pages.projectId })
+    .from(pages)
+    .where(eq(pages.id, pageId))
+    .limit(1);
+
+  if (!page) return false;
+  return userCanAccessProject(user, page.projectId);
 }
 
 export function getRequestedProjectId(req: NextRequest): number | null {

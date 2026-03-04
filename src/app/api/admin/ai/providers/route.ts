@@ -3,6 +3,7 @@ import { db, ensureDb } from '@/db/index';
 import { aiProviders } from '@/db/schema';
 import { desc } from 'drizzle-orm';
 import { requireRole } from '@/lib/auth';
+import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 
 function maskApiKey(key: string): string {
   if (!key || key.length <= 8) return '********';
@@ -60,11 +61,27 @@ export async function POST(req: NextRequest) {
       })
       .returning();
 
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'admin.ai.provider_create',
+      resourceType: 'ai_provider',
+      resourceId: provider.id,
+      severity: 'warning',
+      metadata: { name: provider.name, isActive: provider.isActive },
+    });
+
     return NextResponse.json({
       ...provider,
       apiKey: maskApiKey(provider.apiKey),
     });
   } catch (error) {
+    await logAlertEvent({
+      source: 'admin',
+      eventType: 'ai_provider_create_failed',
+      severity: 'error',
+      message: 'Failed to create AI provider.',
+      metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
+    });
     console.error('Error creating provider:', error);
     return NextResponse.json(
       { error: 'Failed to create provider' },

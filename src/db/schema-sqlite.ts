@@ -162,3 +162,100 @@ export const invitations = sqliteTable('invitations', {
   acceptedAt: text('accepted_at'),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
 });
+
+// ── Keywords ───────────────────────────────────────────────────────
+
+export const keywords = sqliteTable('keywords', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  keyword: text('keyword').notNull(),
+  intent: text('intent').notNull().default('informational'),
+  status: text('status').notNull().default('new'),
+  priority: text('priority').notNull().default('medium'),
+  ownerId: text('owner_id').references(() => users.id, { onDelete: 'set null' }),
+  volume: integer('volume'),
+  difficulty: integer('difficulty'),
+  targetUrl: text('target_url'),
+  notes: text('notes'),
+  lastTaskId: text('last_task_id'),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('keywords_project_keyword_unique').on(table.projectId, table.keyword),
+]);
+
+// ── Pages & Crawls ────────────────────────────────────────────────
+
+export const pages = sqliteTable('pages', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  url: text('url').notNull(),
+  title: text('title'),
+  canonicalUrl: text('canonical_url'),
+  httpStatus: integer('http_status'),
+  isIndexable: integer('is_indexable').default(1),
+  isVerified: integer('is_verified').default(0),
+  responseTimeMs: integer('response_time_ms'),
+  contentHash: text('content_hash'),
+  lastCrawledAt: text('last_crawled_at'),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('pages_project_url_unique').on(table.projectId, table.url),
+]);
+
+export const pageSnapshots = sqliteTable('page_snapshots', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  pageId: integer('page_id').notNull().references(() => pages.id, { onDelete: 'cascade' }),
+  httpStatus: integer('http_status'),
+  canonicalUrl: text('canonical_url'),
+  metaRobots: text('meta_robots'),
+  isIndexable: integer('is_indexable').default(1),
+  isVerified: integer('is_verified').default(0),
+  responseTimeMs: integer('response_time_ms'),
+  seoScore: real('seo_score'),
+  issuesCount: integer('issues_count').default(0),
+  snapshotData: text('snapshot_data', { mode: 'json' }),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const pageIssues = sqliteTable('page_issues', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  pageId: integer('page_id').notNull().references(() => pages.id, { onDelete: 'cascade' }),
+  snapshotId: integer('snapshot_id').references(() => pageSnapshots.id, { onDelete: 'set null' }),
+  issueType: text('issue_type').notNull(),
+  severity: text('severity').notNull().default('medium'),
+  message: text('message').notNull(),
+  isOpen: integer('is_open').default(1),
+  metadata: text('metadata', { mode: 'json' }),
+  firstSeenAt: text('first_seen_at').notNull().$defaultFn(() => new Date().toISOString()),
+  lastSeenAt: text('last_seen_at').notNull().$defaultFn(() => new Date().toISOString()),
+  resolvedAt: text('resolved_at'),
+});
+
+// ── Observability ─────────────────────────────────────────────────
+
+export const auditLogs = sqliteTable('audit_logs', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+  action: text('action').notNull(),
+  resourceType: text('resource_type').notNull(),
+  resourceId: text('resource_id'),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'set null' }),
+  severity: text('severity').notNull().default('info'),
+  metadata: text('metadata', { mode: 'json' }),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const alertEvents = sqliteTable('alert_events', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  source: text('source').notNull(),
+  eventType: text('event_type').notNull(),
+  severity: text('severity').notNull().default('warning'),
+  message: text('message').notNull(),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'set null' }),
+  resourceId: text('resource_id'),
+  metadata: text('metadata', { mode: 'json' }),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  resolvedAt: text('resolved_at'),
+});

@@ -7,6 +7,7 @@ import { PerplexityProvider } from '@/lib/ai/providers/perplexity';
 import { dbNow } from '@/db/utils';
 import { contentToHtml } from '@/lib/tiptap/to-html';
 import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
+import { logAlertEvent } from '@/lib/observability';
 
 /**
  * POST /api/agent/process-feedback
@@ -241,6 +242,13 @@ Revise the article to address all comments. Output the COMPLETE article in the s
       contentQualityScore,
     });
   } catch (error) {
+    await logAlertEvent({
+      source: 'agent',
+      eventType: 'process_feedback_failed',
+      severity: 'error',
+      message: 'Agent feedback processing failed.',
+      metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
+    });
     console.error('Agent feedback processing error:', error);
     return NextResponse.json(
       { error: 'Feedback processing failed' },

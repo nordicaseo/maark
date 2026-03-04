@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, FileText, Trash2, Settings, Eye, Kanban } from 'lucide-react';
+import { Plus, FileText, Trash2, Settings, Eye, Kanban, Search, Globe } from 'lucide-react';
 import Link from 'next/link';
 import { CreateDialog } from './create-dialog';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
@@ -185,6 +185,20 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
         >
           <Eye className="h-4 w-4" />
           Review
+        </Link>
+        <Link
+          href="/keywords"
+          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+        >
+          <Search className="h-4 w-4" />
+          Keywords
+        </Link>
+        <Link
+          href="/pages"
+          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+        >
+          <Globe className="h-4 w-4" />
+          Pages
         </Link>
         {user?.role === 'owner' && (
           <Link

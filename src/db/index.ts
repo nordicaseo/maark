@@ -217,6 +217,106 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
   `);
+
+  // ── Keywords ──
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS keywords (
+      id SERIAL PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      keyword VARCHAR(500) NOT NULL,
+      intent VARCHAR(50) NOT NULL DEFAULT 'informational',
+      status VARCHAR(50) NOT NULL DEFAULT 'new',
+      priority VARCHAR(30) NOT NULL DEFAULT 'medium',
+      owner_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      volume INTEGER,
+      difficulty INTEGER,
+      target_url TEXT,
+      notes TEXT,
+      last_task_id TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS keywords_project_keyword_unique
+      ON keywords(project_id, keyword);
+  `);
+
+  // ── Pages & Crawl snapshots/issues ──
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS pages (
+      id SERIAL PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      title TEXT,
+      canonical_url TEXT,
+      http_status INTEGER,
+      is_indexable INTEGER DEFAULT 1,
+      is_verified INTEGER DEFAULT 0,
+      response_time_ms INTEGER,
+      content_hash TEXT,
+      last_crawled_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS pages_project_url_unique
+      ON pages(project_id, url);
+
+    CREATE TABLE IF NOT EXISTS page_snapshots (
+      id SERIAL PRIMARY KEY,
+      page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      http_status INTEGER,
+      canonical_url TEXT,
+      meta_robots TEXT,
+      is_indexable INTEGER DEFAULT 1,
+      is_verified INTEGER DEFAULT 0,
+      response_time_ms INTEGER,
+      seo_score REAL,
+      issues_count INTEGER DEFAULT 0,
+      snapshot_data JSONB,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS page_issues (
+      id SERIAL PRIMARY KEY,
+      page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      snapshot_id INTEGER REFERENCES page_snapshots(id) ON DELETE SET NULL,
+      issue_type VARCHAR(120) NOT NULL,
+      severity VARCHAR(20) NOT NULL DEFAULT 'medium',
+      message TEXT NOT NULL,
+      is_open INTEGER DEFAULT 1,
+      metadata JSONB,
+      first_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      resolved_at TIMESTAMP
+    );
+  `);
+
+  // ── Observability tables ──
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id SERIAL PRIMARY KEY,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      action VARCHAR(120) NOT NULL,
+      resource_type VARCHAR(60) NOT NULL,
+      resource_id TEXT,
+      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+      severity VARCHAR(20) NOT NULL DEFAULT 'info',
+      metadata JSONB,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS alert_events (
+      id SERIAL PRIMARY KEY,
+      source VARCHAR(80) NOT NULL,
+      event_type VARCHAR(120) NOT NULL,
+      severity VARCHAR(20) NOT NULL DEFAULT 'warning',
+      message TEXT NOT NULL,
+      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+      resource_id TEXT,
+      metadata JSONB,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      resolved_at TIMESTAMP
+    );
+  `);
 }
 
 function addColumnSafe(
@@ -438,6 +538,104 @@ function createDb() {
       expires_at TEXT NOT NULL,
       accepted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  // ── Keywords ──
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS keywords (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      keyword TEXT NOT NULL,
+      intent TEXT NOT NULL DEFAULT 'informational',
+      status TEXT NOT NULL DEFAULT 'new',
+      priority TEXT NOT NULL DEFAULT 'medium',
+      owner_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      volume INTEGER,
+      difficulty INTEGER,
+      target_url TEXT,
+      notes TEXT,
+      last_task_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS keywords_project_keyword_unique ON keywords(project_id, keyword);
+  `);
+
+  // ── Pages & Crawl snapshots/issues ──
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS pages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      title TEXT,
+      canonical_url TEXT,
+      http_status INTEGER,
+      is_indexable INTEGER DEFAULT 1,
+      is_verified INTEGER DEFAULT 0,
+      response_time_ms INTEGER,
+      content_hash TEXT,
+      last_crawled_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS pages_project_url_unique ON pages(project_id, url);
+
+    CREATE TABLE IF NOT EXISTS page_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      http_status INTEGER,
+      canonical_url TEXT,
+      meta_robots TEXT,
+      is_indexable INTEGER DEFAULT 1,
+      is_verified INTEGER DEFAULT 0,
+      response_time_ms INTEGER,
+      seo_score REAL,
+      issues_count INTEGER DEFAULT 0,
+      snapshot_data TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS page_issues (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      snapshot_id INTEGER REFERENCES page_snapshots(id) ON DELETE SET NULL,
+      issue_type TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'medium',
+      message TEXT NOT NULL,
+      is_open INTEGER DEFAULT 1,
+      metadata TEXT,
+      first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+      resolved_at TEXT
+    );
+  `);
+
+  // ── Observability tables ──
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      action TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT,
+      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+      severity TEXT NOT NULL DEFAULT 'info',
+      metadata TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS alert_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'warning',
+      message TEXT NOT NULL,
+      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+      resource_id TEXT,
+      metadata TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      resolved_at TEXT
     );
   `);
 

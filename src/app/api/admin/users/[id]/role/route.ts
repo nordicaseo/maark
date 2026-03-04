@@ -4,6 +4,7 @@ import { users } from '@/db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { requireRole } from '@/lib/auth';
 import { ASSIGNABLE_ROLES } from '@/lib/permissions';
+import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 
 export async function PATCH(
   req: NextRequest,
@@ -77,11 +78,28 @@ export async function PATCH(
       .where(eq(users.id, targetUserId))
       .returning();
 
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'admin.user.role_update',
+      resourceType: 'user',
+      resourceId: updated.id,
+      severity: 'warning',
+      metadata: { from: targetUser.role, to: updated.role },
+    });
+
     return NextResponse.json({
       id: updated.id,
       role: updated.role,
     });
   } catch (error) {
+    await logAlertEvent({
+      source: 'admin',
+      eventType: 'user_role_update_failed',
+      severity: 'error',
+      message: 'Failed to update user role.',
+      resourceId: targetUserId,
+      metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
+    });
     console.error('Error updating user role:', error);
     return NextResponse.json(
       { error: 'Failed to update role' },

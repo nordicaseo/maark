@@ -4,6 +4,7 @@ import { dbNow } from '@/db/utils';
 import { aiModelConfig, aiProviders } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { requireRole } from '@/lib/auth';
+import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 
 export async function GET() {
   await ensureDb();
@@ -92,8 +93,24 @@ export async function PUT(req: NextRequest) {
         .returning();
     }
 
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'admin.ai.config_upsert',
+      resourceType: 'ai_model_config',
+      resourceId: result.id,
+      severity: 'warning',
+      metadata: { action, providerId, model },
+    });
+
     return NextResponse.json(result);
   } catch (error) {
+    await logAlertEvent({
+      source: 'admin',
+      eventType: 'ai_config_upsert_failed',
+      severity: 'error',
+      message: 'Failed to save AI model configuration.',
+      metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
+    });
     console.error('Error upserting AI config:', error);
     return NextResponse.json(
       { error: 'Failed to save config' },

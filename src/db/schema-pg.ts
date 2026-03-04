@@ -182,3 +182,100 @@ export const invitations = pgTable('invitations', {
   acceptedAt: timestamp('accepted_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
+
+// ── Keywords ───────────────────────────────────────────────────────
+
+export const keywords = pgTable('keywords', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  keyword: varchar('keyword', { length: 500 }).notNull(),
+  intent: varchar('intent', { length: 50 }).notNull().default('informational'),
+  status: varchar('status', { length: 50 }).notNull().default('new'),
+  priority: varchar('priority', { length: 30 }).notNull().default('medium'),
+  ownerId: text('owner_id').references(() => users.id, { onDelete: 'set null' }),
+  volume: integer('volume'),
+  difficulty: integer('difficulty'),
+  targetUrl: text('target_url'),
+  notes: text('notes'),
+  lastTaskId: text('last_task_id'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('keywords_project_keyword_unique').on(table.projectId, table.keyword),
+]);
+
+// ── Pages & Crawls ────────────────────────────────────────────────
+
+export const pages = pgTable('pages', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  url: text('url').notNull(),
+  title: text('title'),
+  canonicalUrl: text('canonical_url'),
+  httpStatus: integer('http_status'),
+  isIndexable: integer('is_indexable').default(1),
+  isVerified: integer('is_verified').default(0),
+  responseTimeMs: integer('response_time_ms'),
+  contentHash: text('content_hash'),
+  lastCrawledAt: timestamp('last_crawled_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('pages_project_url_unique').on(table.projectId, table.url),
+]);
+
+export const pageSnapshots = pgTable('page_snapshots', {
+  id: serial('id').primaryKey(),
+  pageId: integer('page_id').notNull().references(() => pages.id, { onDelete: 'cascade' }),
+  httpStatus: integer('http_status'),
+  canonicalUrl: text('canonical_url'),
+  metaRobots: text('meta_robots'),
+  isIndexable: integer('is_indexable').default(1),
+  isVerified: integer('is_verified').default(0),
+  responseTimeMs: integer('response_time_ms'),
+  seoScore: real('seo_score'),
+  issuesCount: integer('issues_count').default(0),
+  snapshotData: jsonb('snapshot_data'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const pageIssues = pgTable('page_issues', {
+  id: serial('id').primaryKey(),
+  pageId: integer('page_id').notNull().references(() => pages.id, { onDelete: 'cascade' }),
+  snapshotId: integer('snapshot_id').references(() => pageSnapshots.id, { onDelete: 'set null' }),
+  issueType: varchar('issue_type', { length: 120 }).notNull(),
+  severity: varchar('severity', { length: 20 }).notNull().default('medium'),
+  message: text('message').notNull(),
+  isOpen: integer('is_open').default(1),
+  metadata: jsonb('metadata'),
+  firstSeenAt: timestamp('first_seen_at').defaultNow().notNull(),
+  lastSeenAt: timestamp('last_seen_at').defaultNow().notNull(),
+  resolvedAt: timestamp('resolved_at'),
+});
+
+// ── Observability ─────────────────────────────────────────────────
+
+export const auditLogs = pgTable('audit_logs', {
+  id: serial('id').primaryKey(),
+  userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+  action: varchar('action', { length: 120 }).notNull(),
+  resourceType: varchar('resource_type', { length: 60 }).notNull(),
+  resourceId: text('resource_id'),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'set null' }),
+  severity: varchar('severity', { length: 20 }).notNull().default('info'),
+  metadata: jsonb('metadata'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const alertEvents = pgTable('alert_events', {
+  id: serial('id').primaryKey(),
+  source: varchar('source', { length: 80 }).notNull(),
+  eventType: varchar('event_type', { length: 120 }).notNull(),
+  severity: varchar('severity', { length: 20 }).notNull().default('warning'),
+  message: text('message').notNull(),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'set null' }),
+  resourceId: text('resource_id'),
+  metadata: jsonb('metadata'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  resolvedAt: timestamp('resolved_at'),
+});

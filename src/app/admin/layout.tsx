@@ -15,6 +15,9 @@ import {
   LogOut,
   Eye,
   Kanban,
+  Search,
+  Globe,
+  Radar,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -23,6 +26,9 @@ const NAV_ITEMS = [
   { href: '/admin/skills', label: 'Skills', icon: Sparkles },
   { href: '/admin/ai', label: 'AI Models', icon: Cpu },
   { href: '/admin/users', label: 'Users', icon: Users },
+  { href: '/admin/observability', label: 'Observability', icon: Radar },
+  { href: '/keywords', label: 'Keywords', icon: Search },
+  { href: '/pages', label: 'Pages', icon: Globe },
   { href: '/mission-control', label: 'Mission Control', icon: Kanban },
   { href: '/review', label: 'Review', icon: Eye },
 ];
