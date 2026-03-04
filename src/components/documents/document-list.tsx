@@ -17,8 +17,8 @@ import Link from 'next/link';
 import { CreateDialog } from './create-dialog';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { useAuth } from '@/components/auth/auth-provider';
-import type { Document, DocumentStatus, ContentFormat } from '@/types/document';
-import { STATUS_LABELS, CONTENT_FORMAT_LABELS } from '@/types/document';
+import type { Document, DocumentStatus } from '@/types/document';
+import { STATUS_LABELS } from '@/types/document';
 
 interface DocumentListProps {
   documents: Document[];
@@ -127,42 +127,39 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
               tabIndex={0}
               onClick={() => router.push(`/documents/${doc.id}`)}
               onKeyDown={(e) => { if (e.key === 'Enter') router.push(`/documents/${doc.id}`); }}
-              className={`w-full text-left rounded-md p-2 transition-colors hover:bg-accent cursor-pointer ${
+              className={`w-full text-left rounded-md p-2 transition-colors hover:bg-accent cursor-pointer overflow-hidden ${
                 activeId === doc.id ? 'bg-accent' : ''
               }`}
             >
-              {/* Row 1: icon + title + status + delete */}
-              <div className="flex items-center gap-1.5">
-                <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <p className="text-sm font-medium truncate flex-1 min-w-0">{doc.title}</p>
-                <Badge
-                  variant="secondary"
-                  className={`text-[9px] px-1 py-0 shrink-0 ${statusColors[doc.status]}`}
-                >
-                  {STATUS_LABELS[doc.status]}
-                </Badge>
-                <div
-                  role="button"
-                  tabIndex={0}
+              <div className="flex items-start gap-1.5 min-w-0">
+                <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium leading-5 break-words">{doc.title}</p>
+                  <div className="mt-1 flex items-center gap-2 flex-wrap text-[9px] text-muted-foreground">
+                    <Badge
+                      variant="secondary"
+                      className={`text-[9px] px-1 py-0 h-4 shrink-0 ${statusColors[doc.status]}`}
+                    >
+                      {STATUS_LABELS[doc.status]}
+                    </Badge>
+                    <span>{doc.wordCount || 0}w</span>
+                    <span>{timeAgo(doc.updatedAt)}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                    <ScoreBar label="AI" score={doc.aiDetectionScore} max={5} invert />
+                    <ScoreBar label="SEO" score={doc.semanticScore} max={100} />
+                    <ScoreBar label="Q" score={doc.contentQualityScore} max={100} />
+                  </div>
+                </div>
+                <button
+                  type="button"
                   onClick={(e) => handleDelete(doc.id, e)}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleDelete(doc.id, e); }}
-                  className="opacity-50 hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 text-muted-foreground cursor-pointer shrink-0"
+                  className="opacity-50 hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 text-muted-foreground cursor-pointer shrink-0 mt-0.5"
                   title="Delete document"
                 >
                   <Trash2 className="h-3 w-3" />
-                </div>
-              </div>
-              {/* Row 2: word count + time + score bars */}
-              <div className="mt-1 ml-5 text-[9px] text-muted-foreground">
-                <div className="flex items-center gap-2">
-                  <span>{doc.wordCount || 0}w</span>
-                  <span>{timeAgo(doc.updatedAt)}</span>
-                </div>
-                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                  <ScoreBar label="AI" score={doc.aiDetectionScore} max={5} invert />
-                  <ScoreBar label="SEO" score={doc.semanticScore} max={100} />
-                  <ScoreBar label="Q" score={doc.contentQualityScore} max={100} />
-                </div>
+                </button>
               </div>
             </div>
           ))}
