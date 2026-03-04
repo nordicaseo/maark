@@ -4,6 +4,7 @@ import { documentComments, documents } from '@/db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { getAuthUser } from '@/lib/auth';
 import { randomBytes } from 'crypto';
+import { userCanAccessDocument } from '@/lib/access';
 
 /**
  * GET /api/documents/:id/comments
@@ -22,6 +23,9 @@ export async function GET(
   const documentId = parseInt(id);
   if (isNaN(documentId)) {
     return NextResponse.json({ error: 'Invalid document ID' }, { status: 400 });
+  }
+  if (!(await userCanAccessDocument(user, documentId))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   await ensureDb();
@@ -58,6 +62,9 @@ export async function POST(
   const documentId = parseInt(id);
   if (isNaN(documentId)) {
     return NextResponse.json({ error: 'Invalid document ID' }, { status: 400 });
+  }
+  if (!(await userCanAccessDocument(user, documentId))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   const body = await req.json();
@@ -130,6 +137,9 @@ export async function PATCH(
   const documentId = parseInt(id);
   if (isNaN(documentId)) {
     return NextResponse.json({ error: 'Invalid document ID' }, { status: 400 });
+  }
+  if (!(await userCanAccessDocument(user, documentId))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   const body = await req.json();

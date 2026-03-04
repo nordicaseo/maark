@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db/index';
 import { aiProviders } from '@/db/schema';
 import { desc } from 'drizzle-orm';
+import { requireRole } from '@/lib/auth';
 
 function maskApiKey(key: string): string {
   if (!key || key.length <= 8) return '********';
@@ -10,6 +11,8 @@ function maskApiKey(key: string): string {
 
 export async function GET() {
   await ensureDb();
+  const auth = await requireRole('admin');
+  if (auth.error) return auth.error;
   try {
     const rows = await db.select().from(aiProviders).orderBy(desc(aiProviders.createdAt));
     const masked = rows.map((r: any) => ({
@@ -25,6 +28,8 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   await ensureDb();
+  const auth = await requireRole('admin');
+  if (auth.error) return auth.error;
   try {
     const body = await req.json();
     const { name, displayName, apiKey, isActive } = body;

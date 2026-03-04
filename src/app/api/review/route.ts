@@ -40,8 +40,8 @@ export async function GET(req: NextRequest) {
           contentQualityScore: documents.contentQualityScore,
           previewToken: documents.previewToken,
           updatedAt: documents.updatedAt,
-          commentCount: sql<number>`(SELECT COUNT(*) FROM document_comments WHERE document_comments.document_id = ${documents.id} AND document_comments.is_resolved = 0)`.as('comment_count'),
-          totalComments: sql<number>`(SELECT COUNT(*) FROM document_comments WHERE document_comments.document_id = ${documents.id})`.as('total_comments'),
+          commentCount: sql<number>`(SELECT CAST(COUNT(*) AS INTEGER) FROM document_comments WHERE document_comments.document_id = ${documents.id} AND document_comments.is_resolved = 0)`.as('comment_count'),
+          totalComments: sql<number>`(SELECT CAST(COUNT(*) AS INTEGER) FROM document_comments WHERE document_comments.document_id = ${documents.id})`.as('total_comments'),
         })
         .from(documents)
         .leftJoin(users, eq(documents.authorId, users.id))
@@ -81,8 +81,8 @@ export async function GET(req: NextRequest) {
           contentQualityScore: documents.contentQualityScore,
           previewToken: documents.previewToken,
           updatedAt: documents.updatedAt,
-          commentCount: sql<number>`(SELECT COUNT(*) FROM document_comments WHERE document_comments.document_id = ${documents.id} AND document_comments.is_resolved = 0)`.as('comment_count'),
-          totalComments: sql<number>`(SELECT COUNT(*) FROM document_comments WHERE document_comments.document_id = ${documents.id})`.as('total_comments'),
+          commentCount: sql<number>`(SELECT CAST(COUNT(*) AS INTEGER) FROM document_comments WHERE document_comments.document_id = ${documents.id} AND document_comments.is_resolved = 0)`.as('comment_count'),
+          totalComments: sql<number>`(SELECT CAST(COUNT(*) AS INTEGER) FROM document_comments WHERE document_comments.document_id = ${documents.id})`.as('total_comments'),
         })
         .from(documents)
         .leftJoin(users, eq(documents.authorId, users.id))

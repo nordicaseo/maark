@@ -3,19 +3,32 @@ import { db, ensureDb } from '@/db/index';
 import { skillParts, skills } from '@/db/schema';
 import { eq, asc } from 'drizzle-orm';
 import { dbNow } from '@/db/utils';
+import { getAuthUser, requireRole } from '@/lib/auth';
+import { userCanAccessSkill } from '@/lib/access';
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
+  const user = await getAuthUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   const { id } = await params;
+  const skillId = parseInt(id, 10);
+  if (Number.isNaN(skillId)) {
+    return NextResponse.json({ error: 'Invalid skill id' }, { status: 400 });
+  }
+  if (!(await userCanAccessSkill(user, skillId))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     const parts = await db
       .select()
       .from(skillParts)
-      .where(eq(skillParts.skillId, parseInt(id, 10)))
+      .where(eq(skillParts.skillId, skillId))
       .orderBy(asc(skillParts.sortOrder));
 
     return NextResponse.json(parts);
@@ -30,8 +43,16 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
   const { id } = await params;
   const skillId = parseInt(id, 10);
+  if (Number.isNaN(skillId)) {
+    return NextResponse.json({ error: 'Invalid skill id' }, { status: 400 });
+  }
+  if (!(await userCanAccessSkill(auth.user, skillId, { write: true }))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     const body = await req.json();
@@ -66,8 +87,16 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
+  const auth = await requireRole('editor');
+  if (auth.error) return auth.error;
   const { id } = await params;
   const skillId = parseInt(id, 10);
+  if (Number.isNaN(skillId)) {
+    return NextResponse.json({ error: 'Invalid skill id' }, { status: 400 });
+  }
+  if (!(await userCanAccessSkill(auth.user, skillId, { write: true }))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     const { parts } = await req.json() as { parts: Array<{ id: number; label?: string; content?: string; sortOrder?: number; partType?: string }> };

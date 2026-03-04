@@ -3,9 +3,12 @@ import { db, ensureDb } from '@/db/index';
 import { dbNow } from '@/db/utils';
 import { aiModelConfig, aiProviders } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { requireRole } from '@/lib/auth';
 
 export async function GET() {
   await ensureDb();
+  const auth = await requireRole('admin');
+  if (auth.error) return auth.error;
   try {
     const configs = await db.select().from(aiModelConfig);
     const providers = await db.select().from(aiProviders);
@@ -30,6 +33,8 @@ export async function GET() {
 
 export async function PUT(req: NextRequest) {
   await ensureDb();
+  const auth = await requireRole('admin');
+  if (auth.error) return auth.error;
   try {
     const body = await req.json();
     const { action, providerId, model, maxTokens, temperature } = body;

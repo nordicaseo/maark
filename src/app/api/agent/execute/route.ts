@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import { getProviderForAction } from '@/lib/ai';
 import { randomBytes } from 'crypto';
 import { dbNow } from '@/db/utils';
+import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
 
 /**
  * POST /api/agent/execute
@@ -173,13 +174,14 @@ export async function POST(req: NextRequest) {
     }
 
     // ─── Step 4: Save content to document ───────────────────────────
-    const plainText = stripHtml(generatedContent);
+    const normalizedHtml = normalizeGeneratedHtml(generatedContent);
+    const plainText = stripHtml(normalizedHtml);
     const wordCount = plainText.split(/\s+/).filter(Boolean).length;
 
     await db
       .update(documents)
       .set({
-        content: generatedContent,
+        content: normalizedHtml,
         plainText,
         wordCount,
         status: 'draft',

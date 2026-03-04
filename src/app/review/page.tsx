@@ -19,6 +19,7 @@ import {
 import Link from 'next/link';
 import { STATUS_LABELS, CONTENT_FORMAT_LABELS } from '@/types/document';
 import type { DocumentStatus, ContentFormat } from '@/types/document';
+import { useActiveProject } from '@/hooks/use-active-project';
 
 interface ReviewDocument {
   id: number;
@@ -77,7 +78,7 @@ export default function ReviewPage() {
   const router = useRouter();
   const [docs, setDocs] = useState<ReviewDocument[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeProjectId, setActiveProjectId] = useState<number | null>(null);
+  const { activeProjectId, setActiveProjectId } = useActiveProject();
   const [statusFilter, setStatusFilter] = useState<string>('all');
 
   const fetchDocs = useCallback(async () => {

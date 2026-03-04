@@ -6,7 +6,7 @@ async function initPostgres(sql: any) {
   // ── Enums ──
   await sql.query(`
     DO $$ BEGIN
-      CREATE TYPE document_status AS ENUM ('draft','in_progress','review','published');
+      CREATE TYPE document_status AS ENUM ('draft','in_progress','review','accepted','published','publish','live');
     EXCEPTION WHEN duplicate_object THEN NULL;
     END $$;
   `);
@@ -98,6 +98,7 @@ async function initPostgres(sql: any) {
 
   // ── Migrate: Add publish + live status values ──
   await sql.query(`
+    DO $$ BEGIN ALTER TYPE document_status ADD VALUE IF NOT EXISTS 'accepted'; EXCEPTION WHEN others THEN NULL; END $$;
     DO $$ BEGIN ALTER TYPE document_status ADD VALUE IF NOT EXISTS 'publish'; EXCEPTION WHEN others THEN NULL; END $$;
     DO $$ BEGIN ALTER TYPE document_status ADD VALUE IF NOT EXISTS 'live'; EXCEPTION WHEN others THEN NULL; END $$;
   `);

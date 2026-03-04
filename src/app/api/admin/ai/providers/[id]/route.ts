@@ -3,6 +3,7 @@ import { db, ensureDb } from '@/db/index';
 import { dbNow } from '@/db/utils';
 import { aiProviders } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { requireRole } from '@/lib/auth';
 
 function maskApiKey(key: string): string {
   if (!key || key.length <= 8) return '********';
@@ -14,6 +15,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
+  const auth = await requireRole('admin');
+  if (auth.error) return auth.error;
   const { id } = await params;
   try {
     const body = await req.json();
@@ -52,6 +55,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
+  const auth = await requireRole('admin');
+  if (auth.error) return auth.error;
   const { id } = await params;
   try {
     await db.delete(aiProviders).where(eq(aiProviders.id, parseInt(id, 10)));

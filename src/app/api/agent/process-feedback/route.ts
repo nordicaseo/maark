@@ -5,6 +5,8 @@ import { eq, and } from 'drizzle-orm';
 import { getProviderForAction } from '@/lib/ai';
 import { PerplexityProvider } from '@/lib/ai/providers/perplexity';
 import { dbNow } from '@/db/utils';
+import { contentToHtml } from '@/lib/tiptap/to-html';
+import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
 
 /**
  * POST /api/agent/process-feedback
@@ -129,9 +131,10 @@ Instructions:
 - Do NOT include any meta-commentary, explanations, or markdown fences
 ${researchContext ? `\nResearch data to incorporate where relevant:\n${researchContext}\n` : ''}`;
 
+    const sourceHtml = contentToHtml(doc.content, doc.plainText);
     const userMessage = `Here is the article in HTML format — preserve this exact structure:
 
-${doc.content || doc.plainText || '(No content available)'}
+${sourceHtml || '(No content available)'}
 
 ---
 
@@ -168,13 +171,14 @@ Revise the article to address all comments. Output the COMPLETE article in the s
     }
 
     // ─── Step 5: Save revised content ───────────────────────────────
-    const plainText = stripHtml(revisedContent);
+    const normalizedHtml = normalizeGeneratedHtml(revisedContent);
+    const plainText = stripHtml(normalizedHtml);
     const wordCount = plainText.split(/\s+/).filter(Boolean).length;
 
     await db
       .update(documents)
       .set({
-        content: revisedContent,
+        content: normalizedHtml,
         plainText,
         wordCount,
         updatedAt: dbNow(),

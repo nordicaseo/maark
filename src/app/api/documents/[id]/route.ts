@@ -10,19 +10,31 @@ import {
   SYNC_SOURCE_KEY,
   SYNC_SOURCE_CONVEX,
 } from '@/lib/sync/document-task-sync';
-import { requireRole } from '@/lib/auth';
+import { getAuthUser, requireRole } from '@/lib/auth';
+import { userCanAccessDocument, userCanAccessProject } from '@/lib/access';
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
+  const user = await getAuthUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   const { id } = await params;
+  const documentId = parseInt(id, 10);
+  if (Number.isNaN(documentId)) {
+    return NextResponse.json({ error: 'Invalid document id' }, { status: 400 });
+  }
+  if (!(await userCanAccessDocument(user, documentId))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
   try {
     const [doc] = await db
       .select()
       .from(documents)
-      .where(eq(documents.id, parseInt(id, 10)));
+      .where(eq(documents.id, documentId));
 
     if (!doc) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -39,7 +51,18 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
+  const user = await getAuthUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   const { id } = await params;
+  const documentId = parseInt(id, 10);
+  if (Number.isNaN(documentId)) {
+    return NextResponse.json({ error: 'Invalid document id' }, { status: 400 });
+  }
+  if (!(await userCanAccessDocument(user, documentId))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
   try {
     const body = await req.json();
 
@@ -60,10 +83,17 @@ export async function PATCH(
       updateData.projectId = body.projectId ? parseInt(body.projectId, 10) : null;
     if (body.authorId !== undefined) updateData.authorId = body.authorId || null;
 
+    if (
+      body.projectId !== undefined &&
+      !(await userCanAccessProject(user, updateData.projectId))
+    ) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const [doc] = await db
       .update(documents)
       .set(updateData)
-      .where(eq(documents.id, parseInt(id, 10)))
+      .where(eq(documents.id, documentId))
       .returning();
 
     // ── Sync status change to linked Convex task(s) ──────────────────
@@ -74,9 +104,9 @@ export async function PATCH(
       try {
         const convex = getConvexClient();
         if (convex) {
-          const linkedTasks = await convex.query(api.tasks.getByDocument, {
-            documentId: parseInt(id, 10),
-          });
+            const linkedTasks = await convex.query(api.tasks.getByDocument, {
+              documentId,
+            });
           const targetTaskStatus = documentStatusToTaskStatus(body.status);
 
           for (const task of linkedTasks) {
@@ -110,8 +140,15 @@ export async function DELETE(
   if (auth.error) return auth.error;
 
   const { id } = await params;
+  const documentId = parseInt(id, 10);
+  if (Number.isNaN(documentId)) {
+    return NextResponse.json({ error: 'Invalid document id' }, { status: 400 });
+  }
+  if (!(await userCanAccessDocument(auth.user, documentId))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
   try {
-    await db.delete(documents).where(eq(documents.id, parseInt(id, 10)));
+    await db.delete(documents).where(eq(documents.id, documentId));
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json({ error: 'Failed to delete' }, { status: 500 });

@@ -12,6 +12,7 @@ import {
   Search,
 } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
+import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
 
 interface Comment {
   id: number;
@@ -203,7 +204,8 @@ export function CommentsPanel({ documentId, editor, onContentReplaced, refreshKe
 
       // Apply revised content to editor
       if (result.trim()) {
-        editor.chain().focus().clearContent().insertContent(result).run();
+        const normalized = normalizeGeneratedHtml(result);
+        editor.chain().focus().clearContent().insertContent(normalized).run();
 
         // Mark processed comments as resolved
         const idsToResolve = commentIdsToProcess || unresolvedComments.map((c) => c.id);

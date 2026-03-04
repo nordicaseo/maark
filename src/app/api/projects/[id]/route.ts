@@ -3,20 +3,29 @@ import { db, ensureDb } from '@/db/index';
 import { projects, projectMembers, skills, documents } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { dbNow } from '@/db/utils';
-import { requireRole } from '@/lib/auth';
+import { getAuthUser, requireRole } from '@/lib/auth';
+import { userCanAccessProject } from '@/lib/access';
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
+  const user = await getAuthUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   const { id } = await params;
+  const projectId = parseInt(id, 10);
+  if (!(await userCanAccessProject(user, projectId))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     const [project] = await db
       .select()
       .from(projects)
-      .where(eq(projects.id, parseInt(id, 10)));
+      .where(eq(projects.id, projectId));
 
     if (!project) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -34,7 +43,13 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
+  const auth = await requireRole('admin');
+  if (auth.error) return auth.error;
   const { id } = await params;
+  const projectId = parseInt(id, 10);
+  if (!(await userCanAccessProject(auth.user, projectId))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     const body = await req.json();
@@ -49,7 +64,7 @@ export async function PATCH(
     const [project] = await db
       .update(projects)
       .set(updateData)
-      .where(eq(projects.id, parseInt(id, 10)))
+      .where(eq(projects.id, projectId))
       .returning();
 
     if (!project) {
@@ -74,6 +89,9 @@ export async function DELETE(
 
   const { id } = await params;
   const projectId = parseInt(id, 10);
+  if (!(await userCanAccessProject(auth.user, projectId))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     // Cascade: delete project_members and skills, set null on documents

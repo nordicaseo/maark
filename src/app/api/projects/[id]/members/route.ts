@@ -2,14 +2,26 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db/index';
 import { projectMembers, users } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
+import { getAuthUser, requireRole } from '@/lib/auth';
+import { userCanAccessProject } from '@/lib/access';
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
+  const user = await getAuthUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   const { id } = await params;
   const projectId = parseInt(id, 10);
+  if (Number.isNaN(projectId)) {
+    return NextResponse.json({ error: 'Invalid project id' }, { status: 400 });
+  }
+  if (!(await userCanAccessProject(user, projectId))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     const members = await db
@@ -39,8 +51,16 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
+  const auth = await requireRole('admin');
+  if (auth.error) return auth.error;
   const { id } = await params;
   const projectId = parseInt(id, 10);
+  if (Number.isNaN(projectId)) {
+    return NextResponse.json({ error: 'Invalid project id' }, { status: 400 });
+  }
+  if (!(await userCanAccessProject(auth.user, projectId))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     const body = await req.json();
@@ -74,8 +94,16 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
+  const auth = await requireRole('admin');
+  if (auth.error) return auth.error;
   const { id } = await params;
   const projectId = parseInt(id, 10);
+  if (Number.isNaN(projectId)) {
+    return NextResponse.json({ error: 'Invalid project id' }, { status: 400 });
+  }
+  if (!(await userCanAccessProject(auth.user, projectId))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     const body = await req.json();

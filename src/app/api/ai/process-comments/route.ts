@@ -5,6 +5,8 @@ import { eq, and } from 'drizzle-orm';
 import { getAuthUser } from '@/lib/auth';
 import { getProviderForAction } from '@/lib/ai';
 import { PerplexityProvider } from '@/lib/ai/providers/perplexity';
+import { contentToHtml } from '@/lib/tiptap/to-html';
+import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
 
 /**
  * POST /api/ai/process-comments
@@ -120,7 +122,7 @@ ${researchContext ? `\nResearch data to incorporate where relevant:\n${researchC
 
     const userMessage = `Here is the article to revise:
 
-${doc.plainText || '(No text content available)'}
+${contentToHtml(doc.content, doc.plainText) || '(No text content available)'}
 
 ---
 
@@ -138,7 +140,16 @@ Please revise the article to address all comments. Output the complete revised a
       temperature,
     });
 
-    return new Response(stream, {
+    const reader = (stream as ReadableStream).getReader();
+    const decoder = new TextDecoder();
+    let revisedContent = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      revisedContent += decoder.decode(value, { stream: true });
+    }
+
+    return new Response(normalizeGeneratedHtml(revisedContent), {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' },
     });
   } catch (error) {

@@ -10,6 +10,7 @@ import { TeamMembersProvider } from '@/components/mission-control/team-members-p
 import { SkillsProvider } from '@/components/mission-control/skills-provider';
 import { ArrowLeft, Loader2, Bot, AlertTriangle, Activity } from 'lucide-react';
 import Link from 'next/link';
+import { useActiveProject } from '@/hooks/use-active-project';
 import './mission-control-theme.css';
 
 // Lazy-load all Convex-dependent components so their modules are only
@@ -56,7 +57,7 @@ export default function MissionControlPage() {
   const { user, isLoading } = useAuth();
   const convexAvailable = useConvexAvailable();
   const router = useRouter();
-  const [projectId, setProjectId] = useState<number | null>(null);
+  const { activeProjectId: projectId, setActiveProjectId: setProjectId } = useActiveProject();
   const [showNewTask, setShowNewTask] = useState(false);
   const [showAgents, setShowAgents] = useState(true);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);

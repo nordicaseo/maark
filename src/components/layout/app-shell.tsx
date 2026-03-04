@@ -12,6 +12,7 @@ import type { AiDetectionResult, ContentQualityResult, SemanticResult } from '@/
 import type { SerpData } from '@/types/serp';
 import { InlineCommentForm } from '@/components/editor/inline-comment-form';
 import { cleanHtmlForExport } from '@/lib/utils/html-export';
+import { useActiveProject } from '@/hooks/use-active-project';
 
 interface AppShellProps {
   documentId?: number;
@@ -29,16 +30,11 @@ export function AppShell({ documentId }: AppShellProps) {
   const [semanticResult, setSemanticResult] = useState<SemanticResult | null>(null);
   const [serpData, setSerpData] = useState<SerpData | null>(null);
   const [plainText, setPlainText] = useState('');
+  const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
   const editorRef = useRef<Editor | null>(null);
 
   // Project state
-  const [activeProjectId, setActiveProjectId] = useState<number | null>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('maark_activeProjectId');
-      return stored ? parseInt(stored, 10) : null;
-    }
-    return null;
-  });
+  const { activeProjectId, setActiveProjectId } = useActiveProject();
 
   // Copy as HTML feedback state
   const [htmlCopied, setHtmlCopied] = useState(false);
@@ -57,14 +53,7 @@ export function AppShell({ documentId }: AppShellProps) {
 
   const handleProjectChange = useCallback((projectId: number | null) => {
     setActiveProjectId(projectId);
-    if (typeof window !== 'undefined') {
-      if (projectId !== null) {
-        localStorage.setItem('maark_activeProjectId', projectId.toString());
-      } else {
-        localStorage.removeItem('maark_activeProjectId');
-      }
-    }
-  }, []);
+  }, [setActiveProjectId]);
 
   const handleInsertAiText = useCallback((text: string) => {
     const editor = editorRef.current;
@@ -448,7 +437,7 @@ ${editorHtml}
       {/* Left Sidebar */}
       <div
         className={`border-r border-border bg-card transition-all duration-200 flex flex-col shrink-0 ${
-          leftOpen ? 'w-72' : 'w-0'
+          leftOpen ? 'w-80' : 'w-0'
         } overflow-hidden`}
       >
         <DocumentList
@@ -483,7 +472,10 @@ ${editorHtml}
               <TiptapEditor
                 document={document}
                 onSave={handleSave}
-                onEditorReady={(editor) => { editorRef.current = editor; }}
+                onEditorReady={(editor) => {
+                  editorRef.current = editor;
+                  setEditorInstance(editor);
+                }}
                 isAiWriting={isAiWriting}
                 onAddComment={setPendingComment}
               />
@@ -500,13 +492,13 @@ ${editorHtml}
       </div>
 
       {/* Inline Comment Form */}
-      {pendingComment && document && editorRef.current && (
+      {pendingComment && document && editorInstance && (
         <InlineCommentForm
           documentId={document.id}
           quotedText={pendingComment.quotedText}
           selectionFrom={pendingComment.selectionFrom}
           selectionTo={pendingComment.selectionTo}
-          editor={editorRef.current}
+          editor={editorInstance}
           onClose={() => setPendingComment(null)}
           onCommentCreated={() => {
             setPendingComment(null);
@@ -535,7 +527,7 @@ ${editorHtml}
           onLiveGenerate={handleLiveGenerate}
           onCancelGeneration={handleCancelGeneration}
           activeProjectId={activeProjectId}
-          editor={editorRef.current}
+          editor={editorInstance}
           commentsRefreshKey={commentsRefreshKey}
         />
       </div>

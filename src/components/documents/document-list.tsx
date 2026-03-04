@@ -153,10 +153,12 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
                 </div>
               </div>
               {/* Row 2: word count + time + score bars */}
-              <div className="flex items-center gap-2 mt-1 ml-5 text-[9px] text-muted-foreground">
-                <span>{doc.wordCount || 0}w</span>
-                <span>{timeAgo(doc.updatedAt)}</span>
-                <div className="flex items-center gap-1.5 ml-auto">
+              <div className="mt-1 ml-5 text-[9px] text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <span>{doc.wordCount || 0}w</span>
+                  <span>{timeAgo(doc.updatedAt)}</span>
+                </div>
+                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                   <ScoreBar label="AI" score={doc.aiDetectionScore} max={5} invert />
                   <ScoreBar label="SEO" score={doc.semanticScore} max={100} />
                   <ScoreBar label="Q" score={doc.contentQualityScore} max={100} />
