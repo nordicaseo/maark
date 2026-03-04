@@ -112,19 +112,26 @@ export async function POST(req: NextRequest) {
 
     const systemPrompt = `You are an expert editor revising an article based on reviewer feedback.
 
+Critical formatting rules:
+- The article is provided in HTML format. You MUST preserve the exact HTML structure
+- Do NOT add extra whitespace, blank lines, or <br> tags between sections
+- Do NOT add extra <p>&nbsp;</p> or empty paragraphs between headings and content
+- Keep the same heading hierarchy (h1, h2, h3) without adding spacing elements
+- Only modify the specific text or sections that the comments reference
+- Leave all other content EXACTLY as-is, including formatting, tags, and attributes
+
 Instructions:
 - Apply each comment's requested change to the article
-- For inline comments referencing specific text, modify that specific section
-- For general comments, apply changes where appropriate
+- For inline comments referencing specific text, modify ONLY that specific section
+- For general comments, apply changes minimally where appropriate
 - Maintain the article's overall tone, style, and structure
-- Preserve all existing formatting (headings, lists, tables, etc.)
-- Output the COMPLETE revised article in clean HTML format
-- Do NOT include any meta-commentary about the changes
+- Output the COMPLETE revised article as clean HTML — same structure as input
+- Do NOT include any meta-commentary, explanations, or markdown fences
 ${researchContext ? `\nResearch data to incorporate where relevant:\n${researchContext}\n` : ''}`;
 
-    const userMessage = `Here is the article to revise:
+    const userMessage = `Here is the article in HTML format — preserve this exact structure:
 
-${doc.plainText || doc.content || '(No content available)'}
+${doc.content || doc.plainText || '(No content available)'}
 
 ---
 
@@ -132,7 +139,7 @@ Here are the reviewer comments to address:
 
 ${commentInstructions}
 
-Please revise the article to address all comments. Output the complete revised article in HTML format.`;
+Revise the article to address all comments. Output the COMPLETE article in the same HTML format as above. Do not add extra spacing or empty paragraphs.`;
 
     const stream = provider.stream({
       model,
