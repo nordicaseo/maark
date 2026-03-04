@@ -35,6 +35,7 @@ const COLUMNS = [
   { id: 'PENDING', label: 'Assigned', color: 'var(--mc-pending)' },
   { id: 'IN_PROGRESS', label: 'Working', color: 'var(--mc-progress)' },
   { id: 'IN_REVIEW', label: 'Review', color: 'var(--mc-review)' },
+  { id: 'ACCEPTED', label: 'Accepted', color: 'var(--mc-accepted)' },
   { id: 'COMPLETED', label: 'Done', color: 'var(--mc-complete)' },
 ];
 

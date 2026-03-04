@@ -36,6 +36,7 @@ interface AnalysisSidebarProps {
   onCancelGeneration: () => void;
   activeProjectId?: number | null;
   editor?: Editor | null;
+  commentsRefreshKey?: number;
 }
 
 interface SidebarContentProps {
@@ -55,6 +56,7 @@ interface SidebarContentProps {
   onCancelGeneration: () => void;
   activeProjectId?: number | null;
   editor?: Editor | null;
+  commentsRefreshKey?: number;
 }
 
 function SidebarContent({
@@ -74,6 +76,7 @@ function SidebarContent({
   onCancelGeneration,
   activeProjectId,
   editor,
+  commentsRefreshKey,
 }: SidebarContentProps) {
   return (
     <Tabs defaultValue="write" className="flex flex-col h-full">
@@ -102,6 +105,7 @@ function SidebarContent({
           <CommentsPanel
             documentId={document.id}
             editor={editor || null}
+            refreshKey={commentsRefreshKey}
           />
         </TabsContent>
 
@@ -145,6 +149,7 @@ export function AnalysisSidebar({
   onCancelGeneration,
   activeProjectId,
   editor,
+  commentsRefreshKey,
 }: AnalysisSidebarProps) {
   const [reportOpen, setReportOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -189,6 +194,7 @@ export function AnalysisSidebar({
         onCancelGeneration={onCancelGeneration}
         activeProjectId={activeProjectId}
         editor={editor}
+        commentsRefreshKey={commentsRefreshKey}
       />
 
       {/* Expanded Dialog */}
@@ -227,6 +233,7 @@ export function AnalysisSidebar({
               onCancelGeneration={onCancelGeneration}
               activeProjectId={activeProjectId}
               editor={editor}
+              commentsRefreshKey={commentsRefreshKey}
             />
           </div>
         </DialogContent>

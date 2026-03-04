@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
@@ -24,6 +24,9 @@ import {
   MessageSquare,
   ArrowRight,
   User,
+  ChevronDown,
+  ChevronUp,
+  Send,
 } from 'lucide-react';
 
 type Task = Doc<'tasks'>;
@@ -33,6 +36,7 @@ const STATUS_LABELS: Record<string, string> = {
   PENDING: 'Assigned',
   IN_PROGRESS: 'Working',
   IN_REVIEW: 'Review',
+  ACCEPTED: 'Accepted',
   COMPLETED: 'Done',
 };
 
@@ -56,10 +60,56 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
   const updateStatus = useMutation(api.tasks.updateStatus);
   const updateAgentStatus = useMutation(api.agents.updateStatus);
 
+  const taskMessages = useQuery(
+    api.messages.list,
+    taskId ? { taskId, limit: 30 } : 'skip'
+  );
+  const sendMessage = useMutation(api.messages.send);
+
   const { members: teamMembers, getMember } = useTeamMembers();
   const [agentRunning, setAgentRunning] = useState(false);
   const [feedbackRunning, setFeedbackRunning] = useState(false);
   const [lastResult, setLastResult] = useState<any>(null);
+  const [messageText, setMessageText] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // ─── Document content preview ──────────────────────────────────
+  const [docPreview, setDocPreview] = useState<{
+    title: string;
+    plainText: string | null;
+    wordCount: number;
+    status: string;
+    contentType: string;
+  } | null>(null);
+  const [docPreviewLoading, setDocPreviewLoading] = useState(false);
+  const [previewExpanded, setPreviewExpanded] = useState(true);
+
+  useEffect(() => {
+    if (!task?.documentId) {
+      setDocPreview(null);
+      return;
+    }
+    let cancelled = false;
+    setDocPreviewLoading(true);
+    fetch(`/api/documents/${task.documentId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((doc) => {
+        if (!cancelled && doc) {
+          setDocPreview({
+            title: doc.title,
+            plainText: doc.plainText,
+            wordCount: doc.wordCount || 0,
+            status: doc.status,
+            contentType: doc.contentType,
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setDocPreviewLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [task?.documentId, task?.updatedAt]);
 
   // Sync a task status change to the linked Drizzle document (fire-and-forget)
   const syncStatusToDrizzle = useCallback(
@@ -210,7 +260,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
   const isProcessing = agentRunning || feedbackRunning;
 
   return (
-    <div className="fixed inset-y-0 right-0 w-96 bg-white shadow-xl border-l z-50 flex flex-col"
+    <div className="fixed inset-y-0 right-0 w-[640px] max-w-full bg-white shadow-xl border-l z-50 flex flex-col"
          style={{ borderColor: 'var(--mc-border)' }}>
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b"
@@ -346,6 +396,67 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
           </div>
         )}
 
+        {/* Document Content Preview */}
+        {task.documentId && (
+          <div>
+            <button
+              onClick={() => setPreviewExpanded(!previewExpanded)}
+              className="flex items-center justify-between w-full mb-2"
+            >
+              <h3 className="mc-header-mono text-xs">Content Preview</h3>
+              {previewExpanded ? (
+                <ChevronUp className="h-3.5 w-3.5" style={{ color: 'var(--mc-text-tertiary)' }} />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" style={{ color: 'var(--mc-text-tertiary)' }} />
+              )}
+            </button>
+            {previewExpanded && (
+              <div
+                className="rounded-md border overflow-hidden"
+                style={{ borderColor: 'var(--mc-border)' }}
+              >
+                {docPreviewLoading ? (
+                  <div className="flex items-center justify-center h-32">
+                    <Loader2 className="h-4 w-4 animate-spin" style={{ color: 'var(--mc-text-tertiary)' }} />
+                  </div>
+                ) : docPreview?.plainText ? (
+                  <>
+                    <div
+                      className="flex items-center justify-between px-3 py-2 border-b text-xs"
+                      style={{
+                        background: 'var(--mc-surface-alt)',
+                        borderColor: 'var(--mc-border)',
+                        color: 'var(--mc-text-secondary)',
+                      }}
+                    >
+                      <span className="font-medium truncate" style={{ color: 'var(--mc-text-primary)' }}>
+                        {docPreview.title}
+                      </span>
+                      <span className="shrink-0 ml-2">
+                        {docPreview.wordCount.toLocaleString()} words
+                      </span>
+                    </div>
+                    <div
+                      className="px-3 py-2 text-xs leading-relaxed overflow-y-auto max-h-80 whitespace-pre-wrap"
+                      style={{ color: 'var(--mc-text-secondary)' }}
+                    >
+                      {docPreview.plainText.length > 3000
+                        ? docPreview.plainText.slice(0, 3000) + '\n\n… (truncated)'
+                        : docPreview.plainText}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex items-center justify-center h-20">
+                    <p className="text-xs" style={{ color: 'var(--mc-text-muted)' }}>
+                      No content yet
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Agent Actions */}
         <div className="space-y-2">
           <h3 className="mc-header-mono text-xs">Agent Actions</h3>
@@ -467,7 +578,7 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
           <h3 className="mc-header-mono text-xs mb-2">Status Flow</h3>
           <div className="flex items-center gap-1 text-[10px] flex-wrap"
                style={{ color: 'var(--mc-text-tertiary)' }}>
-            {['BACKLOG', 'PENDING', 'IN_PROGRESS', 'IN_REVIEW', 'COMPLETED'].map((s, i) => (
+            {['BACKLOG', 'PENDING', 'IN_PROGRESS', 'IN_REVIEW', 'ACCEPTED', 'COMPLETED'].map((s, i) => (
               <span key={s} className="flex items-center gap-1">
                 <span
                   className="px-1.5 py-0.5 rounded"
@@ -479,11 +590,97 @@ export function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
                 >
                   {STATUS_LABELS[s]}
                 </span>
-                {i < 4 && <ArrowRight className="h-3 w-3" />}
+                {i < 5 && <ArrowRight className="h-3 w-3" />}
               </span>
             ))}
           </div>
         </div>
+
+        {/* Task Messages */}
+        <div className="pt-2 border-t" style={{ borderColor: 'var(--mc-border)' }}>
+          <h3 className="mc-header-mono text-xs mb-2">Messages</h3>
+          <div className="space-y-2 max-h-48 overflow-y-auto mb-2">
+            {taskMessages && taskMessages.length > 0 ? (
+              [...taskMessages].reverse().map((msg) => (
+                <div
+                  key={msg._id}
+                  className="rounded-md p-2 text-xs"
+                  style={{
+                    background:
+                      msg.authorType === 'agent'
+                        ? 'rgba(76, 143, 232, 0.06)'
+                        : 'var(--mc-overlay)',
+                  }}
+                >
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    {msg.authorType === 'agent' ? (
+                      <Bot className="h-3 w-3" style={{ color: 'var(--mc-progress)' }} />
+                    ) : (
+                      <User className="h-3 w-3" style={{ color: 'var(--mc-text-tertiary)' }} />
+                    )}
+                    <span className="font-medium" style={{ color: 'var(--mc-text-primary)' }}>
+                      {msg.authorName}
+                    </span>
+                    <span style={{ color: 'var(--mc-text-muted)' }}>
+                      {new Date(msg.createdAt).toLocaleTimeString(undefined, {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                  </div>
+                  <p style={{ color: 'var(--mc-text-secondary)' }}>{msg.content}</p>
+                </div>
+              ))
+            ) : (
+              <p className="text-xs" style={{ color: 'var(--mc-text-muted)' }}>
+                No messages yet
+              </p>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+      </div>
+
+      {/* Message Input — pinned to bottom */}
+      <div className="p-3 border-t" style={{ borderColor: 'var(--mc-border)' }}>
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const text = messageText.trim();
+            if (!text || !taskId) return;
+            setMessageText('');
+            await sendMessage({
+              taskId,
+              projectId: task.projectId ?? undefined,
+              authorType: 'user',
+              authorId: 'current-user',
+              authorName: 'You',
+              content: text,
+            });
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+          }}
+          className="flex items-center gap-2"
+        >
+          <input
+            type="text"
+            value={messageText}
+            onChange={(e) => setMessageText(e.target.value)}
+            placeholder="Type a message…"
+            className="flex-1 text-xs py-1.5 px-3 rounded-md border bg-white"
+            style={{ borderColor: 'var(--mc-border)', color: 'var(--mc-text-primary)' }}
+          />
+          <button
+            type="submit"
+            disabled={!messageText.trim()}
+            className="p-1.5 rounded-md transition-colors"
+            style={{
+              background: messageText.trim() ? 'var(--mc-accent)' : 'var(--mc-overlay)',
+              color: messageText.trim() ? 'white' : 'var(--mc-text-muted)',
+            }}
+          >
+            <Send className="h-3.5 w-3.5" />
+          </button>
+        </form>
       </div>
     </div>
   );

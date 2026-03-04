@@ -42,6 +42,8 @@ interface TopBarProps {
   onAnalyze: () => void;
   onUpdate: (updates: Partial<Document>) => void;
   onExport: (format: 'html' | 'markdown' | 'text') => void;
+  onCopyHtml?: () => void;
+  htmlCopied?: boolean;
   leftOpen: boolean;
   rightOpen: boolean;
   onToggleLeft: () => void;
@@ -56,6 +58,8 @@ export function TopBar({
   onAnalyze,
   onUpdate,
   onExport,
+  onCopyHtml,
+  htmlCopied,
   leftOpen,
   rightOpen,
   onToggleLeft,
@@ -252,6 +256,14 @@ export function TopBar({
               <DropdownMenuItem onClick={() => onExport('text')}>
                 <FileText className="h-4 w-4 mr-2" />
                 Plain Text
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onCopyHtml?.()}>
+                {htmlCopied ? (
+                  <Check className="h-4 w-4 mr-2 text-green-500" />
+                ) : (
+                  <Copy className="h-4 w-4 mr-2" />
+                )}
+                {htmlCopied ? 'Copied!' : 'Copy as HTML'}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

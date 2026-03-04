@@ -18,6 +18,7 @@ export const documentStatusEnum = pgEnum('document_status', [
   'draft',
   'in_progress',
   'review',
+  'accepted',
   'published',
   'publish',
   'live',

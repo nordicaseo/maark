@@ -17,6 +17,7 @@ import { TableRow } from '@tiptap/extension-table-row';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
 import Image from '@tiptap/extension-image';
+import { MessageSquare } from 'lucide-react';
 import { CommentMark } from '@/lib/tiptap/comment-mark';
 import { EditorToolbar } from './editor-toolbar';
 import { ImageGeneratorDialog } from './image-generator-dialog';
@@ -27,9 +28,10 @@ interface TiptapEditorProps {
   onSave: (content: any, plainText: string, wordCount: number) => void;
   onEditorReady?: (editor: Editor) => void;
   isAiWriting?: boolean;
+  onAddComment?: (data: { quotedText: string; selectionFrom: number; selectionTo: number }) => void;
 }
 
-export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting }: TiptapEditorProps) {
+export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting, onAddComment }: TiptapEditorProps) {
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
   const docIdRef = useRef(document.id);
   const [imageDialogOpen, setImageDialogOpen] = useState(false);
@@ -197,6 +199,21 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting }: T
           >
             {'<>'}
           </button>
+          {onAddComment && (
+            <button
+              onClick={() => {
+                const { from, to } = editor.state.selection;
+                const quotedText = editor.state.doc.textBetween(from, to, ' ');
+                if (quotedText.trim()) {
+                  onAddComment({ quotedText, selectionFrom: from, selectionTo: to });
+                }
+              }}
+              className="px-3 py-1.5 text-xs hover:bg-accent"
+              title="Add comment"
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+            </button>
+          )}
         </BubbleMenu>
       )}
 

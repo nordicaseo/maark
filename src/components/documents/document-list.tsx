@@ -33,6 +33,7 @@ const statusColors: Record<DocumentStatus, string> = {
   in_progress: 'bg-blue-500/20 text-blue-400',
   review: 'bg-yellow-500/20 text-yellow-400',
   publish: 'bg-purple-500/20 text-purple-400',
+  accepted: 'bg-emerald-500/20 text-emerald-400',
   live: 'bg-green-500/20 text-green-400',
 };
 

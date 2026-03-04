@@ -9,9 +9,11 @@ import {
   Eye,
   Bot,
   Tag,
+  Sparkles,
 } from 'lucide-react';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import { useTeamMembers } from './team-members-provider';
+import { useSkills } from './skills-provider';
 
 type Task = Doc<'tasks'>;
 
@@ -70,7 +72,9 @@ export function SortableTaskCard({
 
 function TaskCardContent({ task }: { task: Task }) {
   const { getMember } = useTeamMembers();
+  const { getSkillName } = useSkills();
   const assignee = task.assigneeId ? getMember(task.assigneeId) : undefined;
+  const skillName = task.skillId ? getSkillName(task.skillId) : undefined;
 
   return (
     <div className="space-y-2">
@@ -101,6 +105,16 @@ function TaskCardContent({ task }: { task: Task }) {
           {task.tags.length > 3 && (
             <span className="mc-tag">+{task.tags.length - 3}</span>
           )}
+        </div>
+      )}
+
+      {/* Skill tag */}
+      {skillName && (
+        <div className="flex flex-wrap gap-1">
+          <span className="mc-tag">
+            <Sparkles className="h-2.5 w-2.5 mr-0.5" />
+            {skillName}
+          </span>
         </div>
       )}
 

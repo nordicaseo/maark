@@ -10,7 +10,7 @@ export default defineSchema({
     type: v.string(), // "content", "review", "research", "edit"
 
     // Status & Priority
-    status: v.string(), // "BACKLOG", "PENDING", "IN_PROGRESS", "IN_REVIEW", "COMPLETED"
+    status: v.string(), // "BACKLOG", "PENDING", "IN_PROGRESS", "IN_REVIEW", "ACCEPTED", "COMPLETED"
     priority: v.string(), // "LOW", "MEDIUM", "HIGH", "URGENT"
     position: v.optional(v.number()), // for kanban ordering
 
@@ -61,4 +61,34 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_status", ["status"]),
+
+  // ── Activities ────────────────────────────────────────────────────
+  activities: defineTable({
+    type: v.string(),       // "task_created", "status_changed", "agent_executed", "comment_added", "task_assigned", "message"
+    taskId: v.optional(v.id("tasks")),
+    agentId: v.optional(v.id("agents")),
+    userId: v.optional(v.string()),     // Drizzle user ID
+    userName: v.optional(v.string()),   // Denormalized for display
+    description: v.string(),
+    metadata: v.optional(v.any()),
+    projectId: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_task", ["taskId"])
+    .index("by_created", ["createdAt"]),
+
+  // ── Messages ──────────────────────────────────────────────────────
+  messages: defineTable({
+    taskId: v.optional(v.id("tasks")),
+    projectId: v.optional(v.number()),
+    authorType: v.string(),               // "user" or "agent"
+    authorId: v.string(),                 // Drizzle user ID or Convex agent ID string
+    authorName: v.string(),
+    content: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_task", ["taskId"])
+    .index("by_project", ["projectId"])
+    .index("by_created", ["createdAt"]),
 });

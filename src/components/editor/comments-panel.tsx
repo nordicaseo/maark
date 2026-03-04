@@ -30,6 +30,7 @@ interface CommentsPanelProps {
   documentId: number | null;
   editor: Editor | null;
   onContentReplaced?: () => void;
+  refreshKey?: number;
 }
 
 function timeAgo(dateStr: string): string {
@@ -43,7 +44,7 @@ function timeAgo(dateStr: string): string {
   return `${days}d ago`;
 }
 
-export function CommentsPanel({ documentId, editor, onContentReplaced }: CommentsPanelProps) {
+export function CommentsPanel({ documentId, editor, onContentReplaced, refreshKey }: CommentsPanelProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -69,6 +70,41 @@ export function CommentsPanel({ documentId, editor, onContentReplaced }: Comment
   useEffect(() => {
     fetchComments();
   }, [fetchComments]);
+
+  // Re-fetch when refreshKey changes (e.g. after a new inline comment is created)
+  useEffect(() => {
+    if (refreshKey && refreshKey > 0) {
+      fetchComments();
+    }
+  }, [refreshKey, fetchComments]);
+
+  // Apply comment highlights to the editor for unresolved inline comments
+  useEffect(() => {
+    if (!editor || !comments.length) return;
+
+    const inlineUnresolved = comments.filter(
+      (c: Comment) => c.selectionFrom != null && c.selectionTo != null && !c.isResolved
+    );
+
+    const timer = setTimeout(() => {
+      for (const c of inlineUnresolved) {
+        try {
+          const docSize = editor.state.doc.content.size;
+          const from = c.selectionFrom!;
+          const to = c.selectionTo!;
+          if (from >= 0 && to <= docSize && from < to) {
+            editor.chain().setTextSelection({ from, to }).setCommentMark(String(c.id)).run();
+          }
+        } catch {
+          // Position may not match after edits
+        }
+      }
+      // Reset selection
+      editor.commands.setTextSelection(0);
+    }, 200);
+
+    return () => clearTimeout(timer);
+  }, [editor, comments]);
 
   const unresolvedComments = comments.filter((c) => !c.isResolved);
   const resolvedComments = comments.filter((c) => !!c.isResolved);

@@ -52,11 +52,21 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    return await ctx.db.insert("tasks", {
+    const id = await ctx.db.insert("tasks", {
       ...args,
       createdAt: now,
       updatedAt: now,
     });
+
+    await ctx.db.insert("activities", {
+      type: "task_created",
+      taskId: id,
+      description: `Task "${args.title}" created`,
+      projectId: args.projectId,
+      createdAt: Date.now(),
+    });
+
+    return id;
   },
 });
 
@@ -99,6 +109,8 @@ export const updateStatus = mutation({
     status: v.string(),
   },
   handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.id);
+
     const updates: Record<string, any> = {
       status: args.status,
       updatedAt: Date.now(),
@@ -110,6 +122,15 @@ export const updateStatus = mutation({
       updates.completedAt = Date.now();
     }
     await ctx.db.patch(args.id, updates);
+
+    await ctx.db.insert("activities", {
+      type: "status_changed",
+      taskId: args.id,
+      description: `Status changed from ${task?.status || "unknown"} to ${args.status}`,
+      projectId: task?.projectId,
+      metadata: { from: task?.status, to: args.status },
+      createdAt: Date.now(),
+    });
   },
 });
 

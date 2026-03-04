@@ -7,7 +7,8 @@ import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { TeamMembersProvider } from '@/components/mission-control/team-members-provider';
-import { ArrowLeft, Loader2, Bot, AlertTriangle } from 'lucide-react';
+import { SkillsProvider } from '@/components/mission-control/skills-provider';
+import { ArrowLeft, Loader2, Bot, AlertTriangle, Activity } from 'lucide-react';
 import Link from 'next/link';
 import './mission-control-theme.css';
 
@@ -28,6 +29,10 @@ const NewTaskDialog = dynamic(
 );
 const TaskDetailPanel = dynamic(
   () => import('@/components/mission-control/task-detail-panel').then((m) => m.TaskDetailPanel),
+  { ssr: false }
+);
+const ActivitySidebar = dynamic(
+  () => import('@/components/mission-control/activity-sidebar').then((m) => m.ActivitySidebar),
   { ssr: false }
 );
 
@@ -55,6 +60,7 @@ export default function MissionControlPage() {
   const [showNewTask, setShowNewTask] = useState(false);
   const [showAgents, setShowAgents] = useState(true);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [showActivity, setShowActivity] = useState(true);
 
   if (isLoading) {
     return (
@@ -137,6 +143,7 @@ export default function MissionControlPage() {
 
   return (
     <TeamMembersProvider>
+      <SkillsProvider>
       <div className="mc-wrapper">
         {/* Header */}
         <header
@@ -174,6 +181,13 @@ export default function MissionControlPage() {
                 <Bot className="h-3.5 w-3.5" />
                 Agents
               </button>
+              <button
+                onClick={() => setShowActivity(!showActivity)}
+                className="mc-btn-secondary flex items-center gap-1.5"
+              >
+                <Activity className="h-3.5 w-3.5" />
+                Activity
+              </button>
               <button onClick={() => setShowNewTask(true)} className="mc-btn-primary">
                 + New Task
               </button>
@@ -201,12 +215,23 @@ export default function MissionControlPage() {
               onTaskClick={(taskId: any) => setSelectedTaskId(taskId)}
             />
           </main>
+
+          {/* Activity sidebar — right */}
+          {showActivity && (
+            <aside
+              className="w-80 shrink-0 border-l overflow-y-auto"
+              style={{ borderColor: 'var(--mc-border)', background: 'var(--mc-surface-alt)' }}
+            >
+              <ActivitySidebar projectId={projectId} />
+            </aside>
+          )}
         </div>
 
         <NewTaskDialog open={showNewTask} onOpenChange={setShowNewTask} projectId={projectId} />
 
         <TaskDetailPanel taskId={selectedTaskId as any} onClose={() => setSelectedTaskId(null)} />
       </div>
+      </SkillsProvider>
     </TeamMembersProvider>
   );
 }

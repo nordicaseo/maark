@@ -27,6 +27,11 @@ interface Project {
   name: string;
 }
 
+interface Skill {
+  id: number;
+  name: string;
+}
+
 interface NewTaskDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -42,6 +47,8 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
   const [priority, setPriority] = useState('MEDIUM');
   const [selectedProjectId, setSelectedProjectId] = useState<string>(projectId?.toString() || 'none');
   const [projects, setProjects] = useState<Project[]>([]);
+  const [skillsList, setSkillsList] = useState<Skill[]>([]);
+  const [selectedSkillId, setSelectedSkillId] = useState<string>('auto');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -55,6 +62,18 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
       setSelectedProjectId(projectId.toString());
     }
   }, [projectId]);
+
+  // Fetch skills when project changes or dialog opens
+  useEffect(() => {
+    if (!open) return;
+    const pid = selectedProjectId !== 'none' ? selectedProjectId : undefined;
+    const url = pid ? `/api/skills?projectId=${pid}` : '/api/skills';
+    fetch(url)
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setSkillsList)
+      .catch(() => setSkillsList([]));
+    setSelectedSkillId('auto');
+  }, [open, selectedProjectId]);
 
   const handleCreate = async () => {
     if (!title.trim()) return;
@@ -88,6 +107,11 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
         }
       }
 
+      const parsedSkillId =
+        selectedSkillId && selectedSkillId !== 'auto'
+          ? parseInt(selectedSkillId)
+          : undefined;
+
       await createTask({
         title: title.trim(),
         description: description.trim() || undefined,
@@ -95,12 +119,14 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
         status: 'BACKLOG',
         priority,
         projectId: parsedProjectId,
+        skillId: parsedSkillId,
         documentId,
       });
       setTitle('');
       setDescription('');
       setType('content');
       setPriority('MEDIUM');
+      setSelectedSkillId('auto');
       onOpenChange(false);
     } catch (err) {
       console.error('Failed to create task:', err);
@@ -176,6 +202,22 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
                 {projects.map((p) => (
                   <SelectItem key={p.id} value={p.id.toString()}>
                     {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-1.5 block">Skill</label>
+            <Select value={selectedSkillId} onValueChange={setSelectedSkillId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select skill..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Auto-detect</SelectItem>
+                {skillsList.map((s) => (
+                  <SelectItem key={s.id} value={s.id.toString()}>
+                    {s.name}
                   </SelectItem>
                 ))}
               </SelectContent>

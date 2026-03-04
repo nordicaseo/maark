@@ -1,4 +1,4 @@
-export type DocumentStatus = 'draft' | 'in_progress' | 'review' | 'publish' | 'live';
+export type DocumentStatus = 'draft' | 'in_progress' | 'review' | 'accepted' | 'publish' | 'live';
 
 export type ContentFormat =
   | 'blog_post'
@@ -48,6 +48,7 @@ export const STATUS_LABELS: Record<DocumentStatus, string> = {
   draft: 'Draft',
   in_progress: 'In Progress',
   review: 'Review',
+  accepted: 'Accepted',
   publish: 'Publish',
   live: 'Live',
 };

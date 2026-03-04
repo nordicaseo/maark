@@ -15,6 +15,7 @@ import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
 import Image from '@tiptap/extension-image';
 import { CommentMark } from '@/lib/tiptap/comment-mark';
+import { CheckCircle2 } from 'lucide-react';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -53,6 +54,7 @@ const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
   in_progress: 'In Progress',
   review: 'Review',
+  accepted: 'Accepted',
   publish: 'Publish',
   live: 'Live',
 };
@@ -78,6 +80,10 @@ export default function PreviewPage() {
   const [showInlineForm, setShowInlineForm] = useState(false);
   const [activeCommentId, setActiveCommentId] = useState<number | null>(null);
   const [showResolved, setShowResolved] = useState(false);
+
+  // Accept state
+  const [accepting, setAccepting] = useState(false);
+  const [accepted, setAccepted] = useState(false);
 
   const editorWrapperRef = useRef<HTMLDivElement>(null);
   const inlineFormRef = useRef<HTMLDivElement>(null);
@@ -140,6 +146,9 @@ export default function PreviewPage() {
         }
         const data = await res.json();
         setDoc(data);
+        if (data.status === 'accepted' || data.status === 'publish' || data.status === 'live') {
+          setAccepted(true);
+        }
         if (editor && data.content) {
           editor.commands.setContent(data.content);
         }
@@ -381,6 +390,25 @@ export default function PreviewPage() {
     return () => wrapper.removeEventListener('click', handleClick);
   }, []);
 
+  /* ── Accept action ────────────────────────────────────────────── */
+
+  const handleAccept = async () => {
+    setAccepting(true);
+    try {
+      const res = await fetch(`/api/preview/${token}/accept`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        setAccepted(true);
+        setDoc((prev) => (prev ? { ...prev, status: 'accepted' } : prev));
+      }
+    } catch {
+      // ignore
+    } finally {
+      setAccepting(false);
+    }
+  };
+
   /* ── Derived data ──────────────────────────────────────────────── */
 
   const inlineComments = comments.filter(
@@ -464,6 +492,31 @@ export default function PreviewPage() {
           </p>
         </div>
       </header>
+
+      {/* Accept banner */}
+      <div className={`border-b ${accepted ? 'bg-green-50 border-green-200' : 'bg-emerald-50 border-emerald-200'}`}>
+        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+          {accepted ? (
+            <div className="flex items-center gap-2 text-green-700">
+              <CheckCircle2 className="w-5 h-5" />
+              <span className="text-sm font-medium">Content accepted</span>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm text-emerald-800">
+                Ready to approve this content? Click accept to confirm.
+              </p>
+              <button
+                onClick={handleAccept}
+                disabled={accepting}
+                className="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
+              >
+                {accepting ? 'Accepting...' : 'Accept Content'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
 
       {/* Two-column layout */}
       <div className="max-w-7xl mx-auto flex">

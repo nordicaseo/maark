@@ -54,6 +54,33 @@ export async function POST(req: NextRequest) {
 
     await ensureDb();
 
+    // ─── Auto-resolve skillId if not provided ─────────────────────
+    let resolvedSkillId = skillId;
+    if (!resolvedSkillId) {
+      if (projectId) {
+        // Try first skill for this project
+        const [projectSkill] = await db
+          .select({ id: skills.id })
+          .from(skills)
+          .where(eq(skills.projectId, projectId))
+          .limit(1);
+        if (projectSkill) {
+          resolvedSkillId = projectSkill.id;
+        }
+      }
+      if (!resolvedSkillId) {
+        // Fallback to first global skill
+        const [globalSkill] = await db
+          .select({ id: skills.id })
+          .from(skills)
+          .where(eq(skills.isGlobal, 1))
+          .limit(1);
+        if (globalSkill) {
+          resolvedSkillId = globalSkill.id;
+        }
+      }
+    }
+
     // ─── Step 1: Load or create document ────────────────────────────
     let docId = existingDocId;
     let doc;
@@ -85,13 +112,13 @@ export async function POST(req: NextRequest) {
       docId = newDoc.id;
     }
 
-    // ─── Step 2: Load Skill (if provided) ───────────────────────────
+    // ─── Step 2: Load Skill (if provided or auto-resolved) ──────────
     let skillContent = '';
-    if (skillId) {
+    if (resolvedSkillId) {
       const [skill] = await db
         .select()
         .from(skills)
-        .where(eq(skills.id, skillId))
+        .where(eq(skills.id, resolvedSkillId))
         .limit(1);
 
       if (skill) {
@@ -99,7 +126,7 @@ export async function POST(req: NextRequest) {
         const parts = await db
           .select()
           .from(skillParts)
-          .where(eq(skillParts.skillId, skillId));
+          .where(eq(skillParts.skillId, resolvedSkillId));
 
         if (parts.length > 0) {
           skillContent = parts

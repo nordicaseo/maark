@@ -10,6 +10,8 @@ import type { Editor } from '@tiptap/react';
 import type { Document } from '@/types/document';
 import type { AiDetectionResult, ContentQualityResult, SemanticResult } from '@/types/analysis';
 import type { SerpData } from '@/types/serp';
+import { InlineCommentForm } from '@/components/editor/inline-comment-form';
+import { cleanHtmlForExport } from '@/lib/utils/html-export';
 
 interface AppShellProps {
   documentId?: number;
@@ -38,9 +40,20 @@ export function AppShell({ documentId }: AppShellProps) {
     return null;
   });
 
+  // Copy as HTML feedback state
+  const [htmlCopied, setHtmlCopied] = useState(false);
+
   // Live AI writing state
   const [isAiWriting, setIsAiWriting] = useState(false);
   const aiAbortRef = useRef<AbortController | null>(null);
+
+  // Inline comment state
+  const [pendingComment, setPendingComment] = useState<{
+    quotedText: string;
+    selectionFrom: number;
+    selectionTo: number;
+  } | null>(null);
+  const [commentsRefreshKey, setCommentsRefreshKey] = useState(0);
 
   const handleProjectChange = useCallback((projectId: number | null) => {
     setActiveProjectId(projectId);
@@ -299,6 +312,20 @@ ${editorHtml}
     URL.revokeObjectURL(url);
   }, [document, plainText]);
 
+  const handleCopyHtml = useCallback(async () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const rawHtml = editor.getHTML();
+    const cleaned = cleanHtmlForExport(rawHtml);
+    try {
+      await navigator.clipboard.writeText(cleaned);
+      setHtmlCopied(true);
+      setTimeout(() => setHtmlCopied(false), 2000);
+    } catch {
+      // Fallback: ignore clipboard errors silently
+    }
+  }, []);
+
   const fetchDocument = useCallback(async (id: number) => {
     try {
       const res = await fetch(`/api/documents/${id}`);
@@ -442,6 +469,8 @@ ${editorHtml}
           onAnalyze={handleAnalyze}
           onUpdate={handleUpdateDocument}
           onExport={handleExport}
+          onCopyHtml={handleCopyHtml}
+          htmlCopied={htmlCopied}
           leftOpen={leftOpen}
           rightOpen={rightOpen}
           onToggleLeft={() => setLeftOpen(!leftOpen)}
@@ -456,6 +485,7 @@ ${editorHtml}
                 onSave={handleSave}
                 onEditorReady={(editor) => { editorRef.current = editor; }}
                 isAiWriting={isAiWriting}
+                onAddComment={setPendingComment}
               />
             </div>
           ) : (
@@ -468,6 +498,22 @@ ${editorHtml}
           )}
         </div>
       </div>
+
+      {/* Inline Comment Form */}
+      {pendingComment && document && editorRef.current && (
+        <InlineCommentForm
+          documentId={document.id}
+          quotedText={pendingComment.quotedText}
+          selectionFrom={pendingComment.selectionFrom}
+          selectionTo={pendingComment.selectionTo}
+          editor={editorRef.current}
+          onClose={() => setPendingComment(null)}
+          onCommentCreated={() => {
+            setPendingComment(null);
+            setCommentsRefreshKey((k) => k + 1);
+          }}
+        />
+      )}
 
       {/* Right Sidebar */}
       <div
@@ -490,6 +536,7 @@ ${editorHtml}
           onCancelGeneration={handleCancelGeneration}
           activeProjectId={activeProjectId}
           editor={editorRef.current}
+          commentsRefreshKey={commentsRefreshKey}
         />
       </div>
     </div>
