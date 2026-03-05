@@ -74,7 +74,8 @@ export async function POST(req: NextRequest) {
     const role = typeof body.role === 'string' ? body.role : 'writer';
     const projectIds = sanitizeProjectIds(body.projectIds);
     const projectRoleRaw =
-      typeof body.projectRole === 'string' ? body.projectRole : role;
+      typeof body.projectRole === 'string' ? body.projectRole : 'writer';
+    const targetIsRootRole = isRootRole(role);
 
     // Validate role
     if (!ASSIGNABLE_ROLES.includes(role)) {
@@ -83,7 +84,12 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (!PROJECT_ASSIGNABLE_ROLES.includes(projectRoleRaw as (typeof PROJECT_ASSIGNABLE_ROLES)[number])) {
+    if (
+      !targetIsRootRole &&
+      !PROJECT_ASSIGNABLE_ROLES.includes(
+        projectRoleRaw as (typeof PROJECT_ASSIGNABLE_ROLES)[number]
+      )
+    ) {
       return NextResponse.json(
         { error: `Invalid projectRole. Must be one of: ${PROJECT_ASSIGNABLE_ROLES.join(', ')}` },
         { status: 400 }
@@ -91,7 +97,6 @@ export async function POST(req: NextRequest) {
     }
 
     const inviterIsOwner = auth.user.role === 'owner';
-    const targetIsRootRole = isRootRole(role);
 
     if (targetIsRootRole && !inviterIsOwner) {
       return NextResponse.json(
@@ -128,7 +133,7 @@ export async function POST(req: NextRequest) {
         projectRole: targetIsRootRole ? null : projectRoleRaw,
         token,
         invitedById: auth.user.id,
-        expiresAt: expiresAt.toISOString(),
+        expiresAt,
       })
       .returning();
 
@@ -207,16 +212,17 @@ export async function POST(req: NextRequest) {
       deliveryError,
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
     await logAlertEvent({
       source: 'admin',
       eventType: 'invitation_create_failed',
       severity: 'error',
       message: 'Failed to create invitation.',
-      metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
+      metadata: { error: message },
     });
     console.error('Error creating invitation:', error);
     return NextResponse.json(
-      { error: 'Failed to create invitation' },
+      { error: 'Failed to create invitation', detail: message },
       { status: 500 }
     );
   }
