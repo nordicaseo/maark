@@ -274,10 +274,10 @@ export function CommentsPanel({ documentId, editor, onContentReplaced, refreshKe
 
         {/* AI Processing buttons */}
         {unresolvedComments.length > 0 && (
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <Button
               size="sm"
-              className="h-7 text-xs flex-1 gap-1"
+              className="h-8 text-xs w-full sm:flex-1 gap-1"
               onClick={() => handleProcessWithAI(false)}
               disabled={processing}
             >
@@ -291,7 +291,7 @@ export function CommentsPanel({ documentId, editor, onContentReplaced, refreshKe
             <Button
               size="sm"
               variant="outline"
-              className="h-7 text-xs gap-1"
+              className="h-8 text-xs w-full sm:w-auto gap-1"
               onClick={() => handleProcessWithAI(true)}
               disabled={processing}
               title="Process with AI + Perplexity research"

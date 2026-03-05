@@ -203,13 +203,13 @@ function SidebarContent({
 
   return (
     <Tabs defaultValue="write" className="flex flex-col h-full">
-      <TabsList className={`mx-3 mt-3 grid grid-cols-6 shrink-0 ${expanded ? 'mx-4 mt-4' : ''}`}>
-        <TabsTrigger value="write" className="text-xs">Write</TabsTrigger>
-        <TabsTrigger value="comments" className="text-xs">Comments</TabsTrigger>
-        <TabsTrigger value="workflow" className="text-xs">Workflow</TabsTrigger>
-        <TabsTrigger value="ai" className="text-xs">AI</TabsTrigger>
-        <TabsTrigger value="seo" className="text-xs">SEO</TabsTrigger>
-        <TabsTrigger value="quality" className="text-xs">Quality</TabsTrigger>
+      <TabsList className={`mx-3 mt-3 w-full grid grid-cols-3 sm:grid-cols-6 gap-1 h-auto shrink-0 ${expanded ? 'mx-4 mt-4' : ''}`}>
+        <TabsTrigger value="write" className="text-[11px] min-h-8 px-2">Write</TabsTrigger>
+        <TabsTrigger value="comments" className="text-[11px] min-h-8 px-2">Comments</TabsTrigger>
+        <TabsTrigger value="workflow" className="text-[11px] min-h-8 px-2">Workflow</TabsTrigger>
+        <TabsTrigger value="ai" className="text-[11px] min-h-8 px-2">AI</TabsTrigger>
+        <TabsTrigger value="seo" className="text-[11px] min-h-8 px-2">SEO</TabsTrigger>
+        <TabsTrigger value="quality" className="text-[11px] min-h-8 px-2">Quality</TabsTrigger>
       </TabsList>
 
       <div className="flex-1 overflow-y-auto min-h-0">
