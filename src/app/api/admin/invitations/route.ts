@@ -7,6 +7,7 @@ import { ASSIGNABLE_ROLES, PROJECT_ASSIGNABLE_ROLES } from '@/lib/permissions';
 import { randomUUID } from 'crypto';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import { userCanMutateProject } from '@/lib/access';
+import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 
 function sanitizeProjectIds(raw: unknown): number[] {
   if (!Array.isArray(raw)) return [];
@@ -23,6 +24,8 @@ function sanitizeProjectIds(raw: unknown): number[] {
 function isRootRole(role: string): boolean {
   return role === 'owner' || role === 'super_admin';
 }
+
+type InvitationDeliveryStatus = 'sent' | 'failed' | 'fallback_only';
 
 export async function GET() {
   await ensureDb();
@@ -64,7 +67,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { email } = body;
+    const email =
+      typeof body.email === 'string' && body.email.trim().length > 0
+        ? body.email.trim().toLowerCase()
+        : null;
     const role = typeof body.role === 'string' ? body.role : 'writer';
     const projectIds = sanitizeProjectIds(body.projectIds);
     const projectRoleRaw =
@@ -116,7 +122,7 @@ export async function POST(req: NextRequest) {
     const [invitation] = await db
       .insert(invitations)
       .values({
-        email: email || null,
+        email,
         role,
         projectIds: projectIds.length > 0 ? projectIds : null,
         projectRole: targetIsRootRole ? null : projectRoleRaw,
@@ -144,6 +150,49 @@ export async function POST(req: NextRequest) {
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL
       || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
     const inviteUrl = `${baseUrl}/auth/invite?token=${token}`;
+    let deliveryStatus: InvitationDeliveryStatus = 'fallback_only';
+    let deliveryError: string | null = null;
+
+    if (email) {
+      const supabaseAdmin = getSupabaseAdminClient();
+      if (!supabaseAdmin) {
+        deliveryStatus = 'fallback_only';
+        deliveryError = 'Supabase service role is not configured.';
+      } else {
+        const redirectTo = `${baseUrl}/auth/callback?next=/documents&invite_token=${token}`;
+        const { error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+          redirectTo,
+        });
+
+        if (inviteError) {
+          deliveryStatus = 'failed';
+          deliveryError = inviteError.message;
+          await logAlertEvent({
+            source: 'admin',
+            eventType: 'invitation_email_send_failed',
+            severity: 'warning',
+            message: 'Invitation email delivery failed via Supabase.',
+            resourceId: String(invitation.id),
+            metadata: { email, error: inviteError.message },
+          });
+        } else {
+          deliveryStatus = 'sent';
+        }
+      }
+    }
+
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'admin.invitation.delivery_status',
+      resourceType: 'invitation',
+      resourceId: invitation.id,
+      severity: deliveryStatus === 'failed' ? 'warning' : 'info',
+      metadata: {
+        email,
+        status: deliveryStatus,
+        error: deliveryError,
+      },
+    });
 
     return NextResponse.json({
       id: invitation.id,
@@ -154,6 +203,8 @@ export async function POST(req: NextRequest) {
       projectRole: invitation.projectRole,
       email: invitation.email,
       expiresAt: invitation.expiresAt,
+      deliveryStatus,
+      deliveryError,
     });
   } catch (error) {
     await logAlertEvent({

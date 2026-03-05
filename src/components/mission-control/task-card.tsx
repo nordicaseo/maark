@@ -51,10 +51,14 @@ export function SortableTaskCard({
   task,
   readOnly = false,
   onClick,
+  projectLabel,
+  showProjectBadge = false,
 }: {
   task: Task;
   readOnly?: boolean;
   onClick?: () => void;
+  projectLabel?: string;
+  showProjectBadge?: boolean;
 }) {
   const {
     attributes,
@@ -81,6 +85,8 @@ export function SortableTaskCard({
       <TaskCardContent
         task={task}
         readOnly={readOnly}
+        projectLabel={projectLabel}
+        showProjectBadge={showProjectBadge}
         dragAttributes={attributes}
         dragListeners={listeners}
         setDragHandleRef={setActivatorNodeRef}
@@ -92,12 +98,16 @@ export function SortableTaskCard({
 function TaskCardContent({
   task,
   readOnly,
+  projectLabel,
+  showProjectBadge,
   dragAttributes,
   dragListeners,
   setDragHandleRef,
 }: {
   task: Task;
   readOnly: boolean;
+  projectLabel?: string;
+  showProjectBadge: boolean;
   dragAttributes: DragAttributes;
   dragListeners: DragListeners | undefined;
   setDragHandleRef: (element: HTMLElement | null) => void;
@@ -225,6 +235,11 @@ function TaskCardContent({
       {/* Tags */}
       {task.tags && task.tags.length > 0 && (
         <div className="flex flex-wrap gap-1">
+          {showProjectBadge && projectLabel && (
+            <span className="mc-tag border" style={{ borderColor: 'var(--mc-border)' }}>
+              {projectLabel}
+            </span>
+          )}
           {task.tags.slice(0, 3).map((tag) => (
             <span key={tag} className="mc-tag">
               <Tag className="h-2.5 w-2.5 mr-0.5" />
@@ -234,6 +249,14 @@ function TaskCardContent({
           {task.tags.length > 3 && (
             <span className="mc-tag">+{task.tags.length - 3}</span>
           )}
+        </div>
+      )}
+
+      {(!task.tags || task.tags.length === 0) && showProjectBadge && projectLabel && (
+        <div className="flex flex-wrap gap-1">
+          <span className="mc-tag border" style={{ borderColor: 'var(--mc-border)' }}>
+            {projectLabel}
+          </span>
         </div>
       )}
 

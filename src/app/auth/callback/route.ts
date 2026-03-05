@@ -5,6 +5,7 @@ import { users, documents, projects, projectMembers, skills, invitations } from 
 import { eq, sql, and, isNull } from 'drizzle-orm';
 import { dbNow } from '@/db/utils';
 import { logAuditEvent } from '@/lib/observability';
+import { ACTIVE_PROJECT_COOKIE_KEY } from '@/lib/project-context';
 
 type InvitationRecord = typeof invitations.$inferSelect;
 
@@ -285,7 +286,14 @@ export async function GET(request: Request) {
         redirectBase = origin;
       }
 
-      return NextResponse.redirect(`${redirectBase}${next}`);
+      const response = NextResponse.redirect(`${redirectBase}${next}`);
+      // Force org scope on fresh login and override any stale local project selection.
+      response.cookies.set(ACTIVE_PROJECT_COOKIE_KEY, '0', {
+        path: '/',
+        maxAge: 60 * 60,
+        sameSite: 'lax',
+      });
+      return response;
     }
   }
 

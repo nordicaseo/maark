@@ -11,17 +11,11 @@ import { withProjectScope } from '@/lib/project-context';
 import {
   FolderOpen,
   Sparkles,
-  Cpu,
   Users,
   LayoutDashboard,
   ArrowLeft,
   LogOut,
-  Eye,
-  Kanban,
-  Search,
-  Globe,
-  Radar,
-  Bot,
+  ShieldCheck,
 } from 'lucide-react';
 
 const PROJECT_ADMIN_ITEMS = [
@@ -29,19 +23,6 @@ const PROJECT_ADMIN_ITEMS = [
   { href: '/admin/projects', label: 'Projects', icon: FolderOpen },
   { href: '/admin/skills', label: 'Skills', icon: Sparkles },
   { href: '/admin/users', label: 'Users', icon: Users },
-];
-
-const SYSTEM_ADMIN_ITEMS = [
-  { href: '/admin/agents', label: 'Agents', icon: Bot },
-  { href: '/admin/ai', label: 'AI Models', icon: Cpu },
-  { href: '/admin/observability', label: 'Observability', icon: Radar },
-];
-
-const OPERATIONS_ITEMS = [
-  { href: '/keywords', label: 'Keywords', icon: Search },
-  { href: '/pages', label: 'Pages', icon: Globe },
-  { href: '/mission-control', label: 'Mission Control', icon: Kanban },
-  { href: '/review', label: 'Review', icon: Eye },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -54,8 +35,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const canAccessSystemAdmin = Boolean(user && hasRole(user.role, 'super_admin'));
   const navItems = [
     ...PROJECT_ADMIN_ITEMS,
-    ...(canAccessSystemAdmin ? SYSTEM_ADMIN_ITEMS : []),
-    ...OPERATIONS_ITEMS,
+    ...(canAccessSystemAdmin
+      ? [{ href: '/super-admin', label: 'Super Admin', icon: ShieldCheck }]
+      : []),
   ];
 
   useEffect(() => {
@@ -64,13 +46,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       return;
     }
     if (
-      user &&
-      !canAccessSystemAdmin &&
-      (pathname.startsWith('/admin/agents') ||
-        pathname.startsWith('/admin/ai') ||
-        pathname.startsWith('/admin/observability'))
+      pathname.startsWith('/admin/agents') ||
+      pathname.startsWith('/admin/ai') ||
+      pathname.startsWith('/admin/observability')
     ) {
-      router.replace('/admin');
+      if (user && canAccessSystemAdmin) {
+        router.replace(pathname.replace('/admin', '/super-admin'));
+        return;
+      }
+      if (user && !canAccessSystemAdmin) {
+        router.replace('/admin');
+        return;
+      }
     }
   }, [shouldRedirect, router, activeProjectId, user, canAccessSystemAdmin, pathname]);
 
@@ -101,6 +88,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <nav className="flex-1 p-2 space-y-0.5">
           {navItems.map((item) => {
             const href = item.href.startsWith('/admin')
+              || item.href.startsWith('/super-admin')
               ? item.href
               : withProjectScope(item.href, activeProjectId);
             const isActive =

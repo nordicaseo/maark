@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/select';
 import { Copy, Check, Loader2, UserPlus, Link2 } from 'lucide-react';
 import { useAuth } from '@/components/auth/auth-provider';
+import { useActiveProject } from '@/hooks/use-active-project';
 
 interface InviteDialogProps {
   open: boolean;
@@ -30,8 +31,11 @@ interface ProjectOption {
   name: string;
 }
 
+type InvitationDeliveryStatus = 'sent' | 'failed' | 'fallback_only';
+
 export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDialogProps) {
   const { user } = useAuth();
+  const { activeProjectId } = useActiveProject();
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('writer');
   const [projectRole, setProjectRole] = useState('writer');
@@ -39,6 +43,8 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
   const [selectedProjectIds, setSelectedProjectIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [deliveryStatus, setDeliveryStatus] = useState<InvitationDeliveryStatus>('fallback_only');
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isRootInvite = role === 'owner' || role === 'super_admin';
@@ -66,6 +72,25 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
     if (!isRootInvite) return;
     setSelectedProjectIds([]);
   }, [isRootInvite]);
+
+  useEffect(() => {
+    if (!open || isRootInvite) return;
+    if (selectedProjectIds.length > 0) return;
+    if (projectOptions.length === 0) return;
+
+    const hasActiveProject =
+      activeProjectId !== null &&
+      projectOptions.some((project) => project.id === activeProjectId);
+
+    if (hasActiveProject && activeProjectId !== null) {
+      setSelectedProjectIds([activeProjectId]);
+      return;
+    }
+
+    if (projectOptions.length === 1) {
+      setSelectedProjectIds([projectOptions[0].id]);
+    }
+  }, [open, isRootInvite, selectedProjectIds.length, projectOptions, activeProjectId]);
 
   const toggleProject = (projectId: number) => {
     setSelectedProjectIds((prev) =>
@@ -102,6 +127,12 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
 
       const data = await res.json();
       setInviteUrl(data.inviteUrl);
+      setDeliveryStatus(
+        data.deliveryStatus === 'sent' || data.deliveryStatus === 'failed'
+          ? data.deliveryStatus
+          : 'fallback_only'
+      );
+      setDeliveryError(typeof data.deliveryError === 'string' ? data.deliveryError : null);
       onInviteCreated?.();
     } catch (err) {
       setError((err as Error).message);
@@ -125,6 +156,8 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
       setProjectRole('writer');
       setSelectedProjectIds([]);
       setInviteUrl(null);
+      setDeliveryStatus('fallback_only');
+      setDeliveryError(null);
       setCopied(false);
       setError(null);
     }
@@ -190,6 +223,50 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
                 </div>
                 <div className="space-y-2">
                   <Label>Projects</Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-muted-foreground">
+                      {selectedProjectIds.length} selected
+                    </p>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() =>
+                          setSelectedProjectIds(projectOptions.map((project) => project.id))
+                        }
+                        disabled={projectOptions.length === 0}
+                      >
+                        Select All
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() => setSelectedProjectIds([])}
+                        disabled={selectedProjectIds.length === 0}
+                      >
+                        Clear
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() =>
+                          activeProjectId !== null ? setSelectedProjectIds([activeProjectId]) : null
+                        }
+                        disabled={
+                          activeProjectId === null ||
+                          !projectOptions.some((project) => project.id === activeProjectId)
+                        }
+                      >
+                        Select Current
+                      </Button>
+                    </div>
+                  </div>
                   <div className="max-h-36 overflow-y-auto rounded-md border border-border">
                     {projectOptions.length === 0 ? (
                       <p className="px-3 py-2 text-xs text-muted-foreground">
@@ -225,8 +302,8 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
             <Button
               onClick={handleCreate}
               disabled={loading}
-              className="w-full"
-            >
+                className="w-full"
+              >
               {loading ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
               ) : (
@@ -237,9 +314,27 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
           </div>
         ) : (
           <div className="space-y-4 pt-2">
-            <p className="text-sm text-muted-foreground">
-              Share this link with the person you want to invite. It expires in 7 days.
-            </p>
+            <div className="space-y-1">
+              <p className="text-sm text-muted-foreground">
+                Share this link with the person you want to invite. It expires in 7 days.
+              </p>
+              {deliveryStatus === 'sent' && (
+                <p className="text-xs text-emerald-600">
+                  Invite email was sent via Supabase.
+                </p>
+              )}
+              {deliveryStatus === 'failed' && (
+                <p className="text-xs text-amber-600">
+                  Email send failed, but the link below is valid.
+                  {deliveryError ? ` (${deliveryError})` : ''}
+                </p>
+              )}
+              {deliveryStatus === 'fallback_only' && email.trim().length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Email delivery is not configured. Share the invite link manually.
+                </p>
+              )}
+            </div>
 
             <div className="flex items-center gap-2">
               <Input

@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, FileText, Globe, Loader2, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/components/auth/auth-provider';
-import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +12,7 @@ import { useActiveProject } from '@/hooks/use-active-project';
 import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
 import { withProjectScope } from '@/lib/project-context';
 import type { ManagedPage } from '@/types/page';
+import { OperationsSidebar } from '@/components/layout/operations-sidebar';
 
 function boolBadge(value: number | null | undefined, trueLabel: string, falseLabel: string) {
   const on = value === 1;
@@ -135,7 +135,13 @@ export default function PagesPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background flex">
+      <OperationsSidebar
+        activeProjectId={activeProjectId}
+        onProjectChange={setActiveProjectId}
+      />
+
+      <div className="flex-1 min-w-0">
       <header className="border-b border-border bg-card">
         <div className="max-w-6xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between gap-4">
@@ -154,9 +160,6 @@ export default function PagesPage() {
                   Crawl canonical/indexable pages and track issues over time.
                 </p>
               </div>
-            </div>
-            <div className="w-56">
-              <ProjectSwitcher activeProjectId={activeProjectId} onProjectChange={setActiveProjectId} />
             </div>
           </div>
         </div>
@@ -259,6 +262,7 @@ export default function PagesPage() {
           )}
         </section>
       </main>
+      </div>
     </div>
   );
 }

@@ -35,13 +35,25 @@ type Task = Doc<'tasks'>;
 
 interface KanbanBoardProps {
   projectId?: number | null;
+  tasksOverride?: Task[] | null;
+  projectLabelById?: Record<number, string>;
+  showProjectBadge?: boolean;
   readOnly?: boolean;
   onNewTask?: () => void;
   onTaskClick?: (taskId: Id<'tasks'>) => void;
 }
 
-export function KanbanBoard({ projectId, readOnly = false, onNewTask, onTaskClick }: KanbanBoardProps) {
-  const tasks = useQuery(api.tasks.list, projectId ? { projectId, limit: 500 } : 'skip');
+export function KanbanBoard({
+  projectId,
+  tasksOverride = null,
+  projectLabelById = {},
+  showProjectBadge = false,
+  readOnly = false,
+  onNewTask,
+  onTaskClick,
+}: KanbanBoardProps) {
+  const liveTasks = useQuery(api.tasks.list, projectId ? { projectId, limit: 500 } : 'skip');
+  const tasks = projectId ? liveTasks : tasksOverride;
 
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
@@ -130,18 +142,12 @@ export function KanbanBoard({ projectId, readOnly = false, onNewTask, onTaskClic
     setActiveTask(null);
   }, []);
 
-  if (!projectId) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <p className="mc-header-mono">Select a project to load tasks</p>
-      </div>
-    );
-  }
-
   if (!tasks) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="mc-header-mono">Loading tasks...</p>
+        <p className="mc-header-mono">
+          {projectId ? 'Loading tasks...' : 'Loading org tasks...'}
+        </p>
       </div>
     );
   }
@@ -166,6 +172,8 @@ export function KanbanBoard({ projectId, readOnly = false, onNewTask, onTaskClic
               count={columnTasks.length}
               tasks={columnTasks}
               readOnly={readOnly}
+              projectLabelById={projectLabelById}
+              showProjectBadge={showProjectBadge}
               onNewTask={col.id === 'BACKLOG' && !readOnly ? onNewTask : undefined}
               onTaskClick={onTaskClick}
             />
@@ -196,6 +204,8 @@ function KanbanColumn({
   count,
   tasks,
   readOnly,
+  projectLabelById,
+  showProjectBadge,
   onNewTask,
   onTaskClick,
 }: {
@@ -205,6 +215,8 @@ function KanbanColumn({
   count: number;
   tasks: Task[];
   readOnly: boolean;
+  projectLabelById: Record<number, string>;
+  showProjectBadge: boolean;
   onNewTask?: () => void;
   onTaskClick?: (taskId: Id<'tasks'>) => void;
 }) {
@@ -240,6 +252,10 @@ function KanbanColumn({
               key={task._id}
               task={task}
               readOnly={readOnly}
+              projectLabel={
+                task.projectId ? projectLabelById[task.projectId] : undefined
+              }
+              showProjectBadge={showProjectBadge}
               onClick={() => onTaskClick?.(task._id)}
             />
           ))}

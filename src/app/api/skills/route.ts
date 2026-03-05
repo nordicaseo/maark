@@ -9,6 +9,7 @@ import {
   isAdminUser,
   userCanAccessProject,
 } from '@/lib/access';
+import { parseProjectId } from '@/lib/project-context';
 
 export async function GET(req: NextRequest) {
   await ensureDb();
@@ -16,7 +17,12 @@ export async function GET(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const requestedProjectId = getRequestedProjectId(req);
+  const scope = req.nextUrl.searchParams.get('scope');
+  const explicitProjectId = parseProjectId(req.nextUrl.searchParams.get('projectId'));
+  const requestedProjectId =
+    scope === 'org'
+      ? explicitProjectId
+      : getRequestedProjectId(req);
 
   try {
     if (isAdminUser(user)) {

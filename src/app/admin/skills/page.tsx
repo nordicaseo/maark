@@ -52,6 +52,7 @@ export default function AdminSkillsPage() {
   const router = useRouter();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [filterProjectId, setFilterProjectId] = useState<string>('');
   const [loading, setLoading] = useState(true);
 
   // Dialog state
@@ -69,12 +70,15 @@ export default function AdminSkillsPage() {
 
   const fetchSkills = useCallback(async () => {
     try {
-      const res = await fetch('/api/skills');
+      const params = new URLSearchParams();
+      params.set('scope', 'org');
+      if (filterProjectId) params.set('projectId', filterProjectId);
+      const res = await fetch(`/api/skills?${params.toString()}`);
       if (res.ok) setSkills(await res.json());
     } catch (err) {
       console.error('Failed to fetch skills', err);
     }
-  }, []);
+  }, [filterProjectId]);
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -177,6 +181,19 @@ export default function AdminSkillsPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Select value={filterProjectId || 'all'} onValueChange={(value) => setFilterProjectId(value === 'all' ? '' : value)}>
+            <SelectTrigger className="w-52">
+              <SelectValue placeholder="All projects (Org)" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All projects (Org)</SelectItem>
+              {projects.map((project) => (
+                <SelectItem key={project.id} value={String(project.id)}>
+                  {project.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button variant="outline" onClick={() => router.push('/admin/skills/new')}>
             <Sparkles className="h-4 w-4 mr-1" /> Auto-Create
           </Button>

@@ -9,15 +9,15 @@ import {
 
 const EVENT_NAME = 'maark:active-project-change';
 
-function readCookie(name: string): string | null {
-  if (typeof document === 'undefined') return null;
+function readCookie(name: string): { present: boolean; value: string | null } {
+  if (typeof document === 'undefined') return { present: false, value: null };
   const parts = document.cookie
     .split(';')
     .map((p) => p.trim())
     .filter(Boolean);
   const found = parts.find((p) => p.startsWith(`${name}=`));
-  if (!found) return null;
-  return decodeURIComponent(found.slice(name.length + 1));
+  if (!found) return { present: false, value: null };
+  return { present: true, value: decodeURIComponent(found.slice(name.length + 1)) };
 }
 
 function writeProjectCookie(projectId: number | null) {
@@ -31,10 +31,20 @@ function writeProjectCookie(projectId: number | null) {
 
 function readInitialProjectId(initialValue: number | null): number | null {
   if (typeof window === 'undefined') return initialValue;
+  const cookieEntry = readCookie(ACTIVE_PROJECT_COOKIE_KEY);
+  if (cookieEntry && cookieEntry.present) {
+    const fromCookie = parseProjectId(cookieEntry.value);
+    // Explicit cookie reset (e.g. "0") should force org scope and clear stale localStorage.
+    if (fromCookie === null) {
+      window.localStorage.removeItem(ACTIVE_PROJECT_STORAGE_KEY);
+    }
+    return fromCookie;
+  }
+
   const fromStorage = parseProjectId(window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY));
   if (fromStorage !== null) return fromStorage;
-  const fromCookie = parseProjectId(readCookie(ACTIVE_PROJECT_COOKIE_KEY));
-  return fromCookie ?? initialValue;
+
+  return initialValue;
 }
 
 export function useActiveProject(initialValue: number | null = null) {

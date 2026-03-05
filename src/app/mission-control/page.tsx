@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { useConvexAvailable } from '@/lib/convex/provider';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { Id } from '../../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
@@ -17,6 +17,8 @@ import { useActiveProject } from '@/hooks/use-active-project';
 import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
 import { withProjectScope } from '@/lib/project-context';
 import './mission-control-theme.css';
+
+type TaskDoc = Doc<'tasks'>;
 
 // Lazy-load all Convex-dependent components so their modules are only
 // evaluated when Convex is actually configured — prevents runtime errors
@@ -58,16 +60,23 @@ function BoardSkeleton() {
   );
 }
 
-function MissionOverviewStrip({ projectId }: { projectId: number | null }) {
+function MissionOverviewStrip({
+  projectId,
+  orgTasks,
+}: {
+  projectId: number | null;
+  orgTasks: TaskDoc[];
+}) {
   const agents = useQuery(api.agents.list, { limit: 300 });
-  const tasks = useQuery(api.tasks.list, projectId ? { projectId, limit: 500 } : 'skip');
+  const projectScopedTasks = useQuery(api.tasks.list, projectId ? { projectId, limit: 500 } : 'skip');
   const now = new Date();
+  const tasks = projectId ? (projectScopedTasks || []) : orgTasks;
 
   const activeAgents = (agents || []).filter(
     (agent) => agent.status === 'ONLINE' || agent.status === 'WORKING'
   ).length;
-  const queuedTasks = (tasks || []).filter((task) => task.status !== 'COMPLETED').length;
-  const workingTasks = (tasks || []).filter((task) => task.status === 'IN_PROGRESS').length;
+  const queuedTasks = tasks.filter((task) => task.status !== 'COMPLETED').length;
+  const workingTasks = tasks.filter((task) => task.status === 'IN_PROGRESS').length;
 
   return (
     <div
@@ -120,6 +129,10 @@ export default function MissionControlPage() {
   const [showAgents, setShowAgents] = useState(true);
   const [selectedTaskId, setSelectedTaskId] = useState<Id<'tasks'> | null>(null);
   const [showActivity, setShowActivity] = useState(true);
+  const [orgTasks, setOrgTasks] = useState<TaskDoc[]>([]);
+  const [orgProjects, setOrgProjects] = useState<Array<{ id: number; name: string }>>([]);
+  const [orgLoading, setOrgLoading] = useState(false);
+  const [orgProjectFilter, setOrgProjectFilter] = useState<number | null>(null);
   const isClientRole = user?.role === 'client';
 
   useEffect(() => {
@@ -127,6 +140,58 @@ export default function MissionControlPage() {
       router.replace('/auth/signin');
     }
   }, [isLoading, user, router]);
+
+  useEffect(() => {
+    if (projectId !== null) {
+      setOrgProjectFilter(null);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!user || projectId !== null) return;
+
+    let cancelled = false;
+    const fetchOrgTasks = async () => {
+      setOrgLoading(true);
+      try {
+        const res = await fetch('/api/mission-control/tasks');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setOrgTasks(Array.isArray(data.tasks) ? data.tasks : []);
+        setOrgProjects(Array.isArray(data.projects) ? data.projects : []);
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Failed to fetch org mission control tasks:', error);
+        }
+      } finally {
+        if (!cancelled) {
+          setOrgLoading(false);
+        }
+      }
+    };
+
+    void fetchOrgTasks();
+    const interval = window.setInterval(() => {
+      void fetchOrgTasks();
+    }, 12000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [projectId, user]);
+
+  const orgProjectLabelById = useMemo(() => {
+    const entries = orgProjects.map((project) => [project.id, project.name] as const);
+    return Object.fromEntries(entries);
+  }, [orgProjects]);
+
+  const filteredOrgTasks = useMemo(() => {
+    if (projectId !== null) return [];
+    if (orgProjectFilter === null) return orgTasks;
+    return orgTasks.filter((task) => task.projectId === orgProjectFilter);
+  }, [projectId, orgProjectFilter, orgTasks]);
 
   if (isLoading) {
     return (
@@ -238,7 +303,10 @@ export default function MissionControlPage() {
               </div>
             </div>
 
-            <MissionOverviewStrip projectId={projectId} />
+            <MissionOverviewStrip
+              projectId={projectId}
+              orgTasks={projectId === null ? filteredOrgTasks : []}
+            />
 
             <div className="flex items-center gap-3">
               <div className="w-48">
@@ -312,17 +380,48 @@ export default function MissionControlPage() {
               </div>
             </div>
             {!projectId && (
-              <div className="mb-4 rounded-md border px-3 py-2 text-xs"
-                style={{ borderColor: 'var(--mc-border)', color: 'var(--mc-text-secondary)' }}>
-                Select a project in the header to load Mission Control tasks and agents.
+              <div className="mb-4 space-y-2">
+                <div
+                  className="rounded-md border px-3 py-2 text-xs"
+                  style={{ borderColor: 'var(--mc-border)', color: 'var(--mc-text-secondary)' }}
+                >
+                  Org view: showing combined tasks across accessible projects.
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setOrgProjectFilter(null)}
+                    className={`mc-tag border ${orgProjectFilter === null ? 'font-semibold' : ''}`}
+                    style={{ borderColor: 'var(--mc-border)' }}
+                  >
+                    All Projects
+                  </button>
+                  {orgProjects.map((project) => (
+                    <button
+                      key={project.id}
+                      type="button"
+                      onClick={() => setOrgProjectFilter(project.id)}
+                      className={`mc-tag border ${orgProjectFilter === project.id ? 'font-semibold' : ''}`}
+                      style={{ borderColor: 'var(--mc-border)' }}
+                    >
+                      {project.name}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
             <KanbanBoard
               projectId={projectId}
+              tasksOverride={projectId === null ? filteredOrgTasks : null}
+              projectLabelById={orgProjectLabelById}
+              showProjectBadge={projectId === null}
               readOnly={isClientRole}
               onNewTask={() => setShowNewTask(true)}
               onTaskClick={setSelectedTaskId}
             />
+            {!projectId && orgLoading && (
+              <div className="mt-3 text-xs mc-header-mono">Refreshing org task stream...</div>
+            )}
           </main>
 
           {/* Activity sidebar — right */}

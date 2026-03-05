@@ -33,11 +33,14 @@ export function SkillsProvider({
   const [skills, setSkills] = useState<Skill[]>([]);
 
   useEffect(() => {
-    if (!projectId) return;
-
     const params = new URLSearchParams();
-    params.set('projectId', String(projectId));
-    const url = `/api/skills?${params.toString()}`;
+    if (projectId) {
+      params.set('projectId', String(projectId));
+    } else {
+      params.set('scope', 'org');
+    }
+    const query = params.toString();
+    const url = query ? `/api/skills?${query}` : '/api/skills';
     fetch(url)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setSkills(data))
@@ -49,9 +52,8 @@ export function SkillsProvider({
     [skills]
   );
 
-  const scopedSkills = projectId ? skills : [];
   return (
-    <SkillsContext.Provider value={{ skills: scopedSkills, getSkillName, loading: false }}>
+    <SkillsContext.Provider value={{ skills, getSkillName, loading: false }}>
       {children}
     </SkillsContext.Provider>
   );

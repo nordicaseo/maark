@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Loader2, Plus, Sparkles, Target } from 'lucide-react';
 import { useAuth } from '@/components/auth/auth-provider';
-import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,6 +20,7 @@ import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
 import { withProjectScope } from '@/lib/project-context';
 import type { Keyword, KeywordIntent, KeywordPriority, KeywordStatus } from '@/types/keyword';
 import { KEYWORD_INTENT_LABELS, KEYWORD_STATUS_LABELS } from '@/types/keyword';
+import { OperationsSidebar } from '@/components/layout/operations-sidebar';
 
 const STATUS_OPTIONS: KeywordStatus[] = [
   'new',
@@ -155,7 +155,13 @@ export default function KeywordsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background flex">
+      <OperationsSidebar
+        activeProjectId={activeProjectId}
+        onProjectChange={setActiveProjectId}
+      />
+
+      <div className="flex-1 min-w-0">
       <header className="border-b border-border bg-card">
         <div className="max-w-6xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between gap-4">
@@ -174,9 +180,6 @@ export default function KeywordsPage() {
                   Track keywords and create Mission Control content tasks directly.
                 </p>
               </div>
-            </div>
-            <div className="w-56">
-              <ProjectSwitcher activeProjectId={activeProjectId} onProjectChange={setActiveProjectId} />
             </div>
           </div>
         </div>
@@ -300,6 +303,7 @@ export default function KeywordsPage() {
           )}
         </section>
       </main>
+      </div>
     </div>
   );
 }
