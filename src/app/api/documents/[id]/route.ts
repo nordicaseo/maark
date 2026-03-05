@@ -159,8 +159,38 @@ export async function DELETE(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
   try {
+    const [existingDoc] = await db
+      .select({ id: documents.id, projectId: documents.projectId })
+      .from(documents)
+      .where(eq(documents.id, documentId));
+
+    if (!existingDoc) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
+    const convex = getConvexClient();
+    if (!convex) {
+      return NextResponse.json(
+        { error: 'Task sync unavailable. Document delete blocked to prevent editor/mission-control drift.' },
+        { status: 503 }
+      );
+    }
+
+    // Delete all linked Convex tasks first. If this fails, do not delete SQL document.
+    const linkedTasks = await convex.query(api.tasks.getByDocument, {
+      documentId,
+      projectId: existingDoc.projectId ?? undefined,
+    });
+
+    for (const task of linkedTasks) {
+      await convex.mutation(api.tasks.remove, {
+        id: task._id,
+        expectedProjectId: task.projectId ?? existingDoc.projectId ?? undefined,
+      });
+    }
+
     await db.delete(documents).where(eq(documents.id, documentId));
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, removedTaskCount: linkedTasks.length });
   } catch {
     return NextResponse.json({ error: 'Failed to delete' }, { status: 500 });
   }

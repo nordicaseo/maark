@@ -20,7 +20,12 @@ import type { Doc } from '../../../convex/_generated/dataModel';
 import { useTeamMembers } from './team-members-provider';
 import { useSkills } from './skills-provider';
 import { withProjectScope } from '@/lib/project-context';
-import { TOPIC_STAGE_LABELS } from '@/lib/content-workflow-taxonomy';
+import {
+  TOPIC_STAGE_LABELS,
+  resolveWorkflowRuntimeState,
+  WORKFLOW_RUNTIME_STATE_LABELS,
+  WORKFLOW_RUNTIME_STATE_STYLES,
+} from '@/lib/content-workflow-taxonomy';
 
 type Task = Doc<'tasks'>;
 type DragAttributes = ReturnType<typeof useSortable>['attributes'];
@@ -106,6 +111,15 @@ function TaskCardContent({
   const workflowLastEvent = task.workflowLastEventText;
   const workflowBlocked = isTopicWorkflow && task.workflowStageStatus === 'blocked';
   const workflowQueued = isTopicWorkflow && task.workflowStageStatus === 'queued';
+  const workflowRuntimeState = resolveWorkflowRuntimeState({
+    workflowTemplateKey: task.workflowTemplateKey,
+    workflowCurrentStageKey: task.workflowCurrentStageKey,
+    workflowStageStatus: task.workflowStageStatus,
+    status: task.status,
+  });
+  const workflowRuntimeStyle = workflowRuntimeState
+    ? WORKFLOW_RUNTIME_STATE_STYLES[workflowRuntimeState]
+    : null;
   const researchReady =
     isTopicWorkflow &&
     !workflowBlocked &&
@@ -130,11 +144,17 @@ function TaskCardContent({
           {isTopicWorkflow && (
             <div className="flex items-center gap-1.5 mb-1 flex-wrap">
               <span className="mc-tag">{workflowStageLabel}</span>
-              {workflowBlocked && (
-                <span className="mc-tag text-red-500 border-red-300/60">Blocked</span>
-              )}
-              {workflowQueued && (
-                <span className="mc-tag text-amber-600 border-amber-300/60">Queued</span>
+              {workflowRuntimeState && workflowRuntimeStyle && (
+                <span
+                  className="mc-tag border"
+                  style={{
+                    background: workflowRuntimeStyle.background,
+                    color: workflowRuntimeStyle.color,
+                    borderColor: workflowRuntimeStyle.borderColor,
+                  }}
+                >
+                  {WORKFLOW_RUNTIME_STATE_LABELS[workflowRuntimeState]}
+                </span>
               )}
               {researchReady && (
                 <span className="mc-tag text-green-400">Research Ready</span>

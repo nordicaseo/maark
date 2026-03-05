@@ -34,6 +34,9 @@ import {
   TOPIC_STAGE_LABELS,
   TOPIC_STAGE_NEXT,
   TOPIC_STAGE_OWNERS,
+  resolveWorkflowRuntimeState,
+  WORKFLOW_RUNTIME_STATE_LABELS,
+  WORKFLOW_RUNTIME_STATE_STYLES,
   type TopicStageKey,
 } from '@/lib/content-workflow-taxonomy';
 import {
@@ -290,6 +293,15 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
   const assignedAgent = agents?.find((a) => a._id === task.assignedAgentId);
   const onlineAgents = agents?.filter((a) => a.status === 'ONLINE') ?? [];
   const priority = PRIORITY_LABELS[task.priority] || PRIORITY_LABELS.MEDIUM;
+  const workflowRuntimeState = resolveWorkflowRuntimeState({
+    workflowTemplateKey: task.workflowTemplateKey,
+    workflowCurrentStageKey: task.workflowCurrentStageKey,
+    workflowStageStatus: task.workflowStageStatus,
+    status: task.status,
+  });
+  const workflowRuntimeStyle = workflowRuntimeState
+    ? WORKFLOW_RUNTIME_STATE_STYLES[workflowRuntimeState]
+    : null;
 
   const handleAdvanceWorkflowStage = async (
     toStage: TopicStageKey,
@@ -576,6 +588,18 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                 style={{ background: 'var(--mc-overlay)', color: 'var(--mc-text-secondary)' }}>
             {TASK_STATUS_LABELS[task.status as keyof typeof TASK_STATUS_LABELS] || task.status}
           </span>
+          {workflowRuntimeState && workflowRuntimeStyle && (
+            <span
+              className="text-xs px-2 py-0.5 rounded-full border"
+              style={{
+                background: workflowRuntimeStyle.background,
+                color: workflowRuntimeStyle.color,
+                borderColor: workflowRuntimeStyle.borderColor,
+              }}
+            >
+              {WORKFLOW_RUNTIME_STATE_LABELS[workflowRuntimeState]}
+            </span>
+          )}
         </div>
         <button
           onClick={onClose}
@@ -666,6 +690,11 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
             <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
               Stage owner: {TOPIC_STAGE_OWNERS[workflowStage]}
             </p>
+            {workflowRuntimeState && (
+              <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
+                Runtime status: {WORKFLOW_RUNTIME_STATE_LABELS[workflowRuntimeState]}
+              </p>
+            )}
             {task.workflowLastEventText && (
               <p className="text-xs rounded-md px-2 py-1.5" style={{ background: 'var(--mc-overlay)', color: 'var(--mc-text-secondary)' }}>
                 {task.workflowLastEventText}

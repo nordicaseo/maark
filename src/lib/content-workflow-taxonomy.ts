@@ -90,6 +90,62 @@ export const TOPIC_STAGE_OWNER_CHAINS: Record<TopicStageKey, string[]> = {
   complete: [],
 };
 
+export const WORKFLOW_RUNTIME_STATE_ORDER = [
+  'active',
+  'working',
+  'needs_input',
+  'queued',
+  'blocked',
+  'complete',
+] as const;
+
+export type WorkflowRuntimeState = (typeof WORKFLOW_RUNTIME_STATE_ORDER)[number];
+
+export const WORKFLOW_RUNTIME_STATE_LABELS: Record<WorkflowRuntimeState, string> = {
+  active: 'Active',
+  working: 'Working',
+  needs_input: 'Needs Input',
+  queued: 'Queued',
+  blocked: 'Blocked',
+  complete: 'Complete',
+};
+
+export const WORKFLOW_RUNTIME_STATE_STYLES: Record<
+  WorkflowRuntimeState,
+  { background: string; color: string; borderColor: string }
+> = {
+  active: { background: '#ecfdf5', color: '#047857', borderColor: '#a7f3d0' },
+  working: { background: '#eff6ff', color: '#1d4ed8', borderColor: '#bfdbfe' },
+  needs_input: { background: '#fff7ed', color: '#c2410c', borderColor: '#fed7aa' },
+  queued: { background: '#fefce8', color: '#a16207', borderColor: '#fde68a' },
+  blocked: { background: '#fef2f2', color: '#b91c1c', borderColor: '#fecaca' },
+  complete: { background: '#ecfdf5', color: '#065f46', borderColor: '#bbf7d0' },
+};
+
+export function resolveWorkflowRuntimeState(task: {
+  workflowTemplateKey?: string;
+  workflowCurrentStageKey?: string;
+  workflowStageStatus?: string;
+  status?: string;
+}): WorkflowRuntimeState | null {
+  if (task.workflowTemplateKey !== 'topic_production_v1') return null;
+
+  const stageStatus = (task.workflowStageStatus || '').toLowerCase();
+  const stage = task.workflowCurrentStageKey || 'research';
+  const taskStatus = task.status || 'BACKLOG';
+
+  if (stage === 'complete' || stageStatus === 'complete' || taskStatus === 'COMPLETED') {
+    return 'complete';
+  }
+  if (stageStatus === 'blocked') return 'blocked';
+  if (stageStatus === 'queued') return 'queued';
+  if (stage === 'outline_review' || stage === 'prewrite_context' || stage === 'final_review') {
+    return 'needs_input';
+  }
+  if (taskStatus === 'IN_PROGRESS' || stageStatus === 'in_progress') return 'working';
+  return 'active';
+}
+
 export const PAGE_TYPE_OPTIONS = [
   { value: 'product', label: 'Product' },
   { value: 'collection', label: 'Collection' },
