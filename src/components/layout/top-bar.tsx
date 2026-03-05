@@ -93,7 +93,7 @@ export function TopBar({
   };
 
   return (
-    <div className="h-14 border-b border-border flex items-center gap-3 px-4 shrink-0">
+    <div className="h-14 border-b border-border bg-card/90 backdrop-blur-sm flex items-center gap-3 px-4 shrink-0">
       <Button
         variant="ghost"
         size="icon"

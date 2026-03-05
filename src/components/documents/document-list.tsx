@@ -30,12 +30,12 @@ interface DocumentListProps {
 }
 
 const statusColors: Record<DocumentStatus, string> = {
-  draft: 'bg-zinc-500/20 text-zinc-400',
-  in_progress: 'bg-blue-500/20 text-blue-400',
-  review: 'bg-yellow-500/20 text-yellow-400',
-  publish: 'bg-purple-500/20 text-purple-400',
-  accepted: 'bg-emerald-500/20 text-emerald-400',
-  live: 'bg-green-500/20 text-green-400',
+  draft: 'bg-stone-200 text-stone-700',
+  in_progress: 'bg-emerald-100 text-emerald-700',
+  review: 'bg-amber-100 text-amber-800',
+  publish: 'bg-orange-100 text-orange-800',
+  accepted: 'bg-teal-100 text-teal-700',
+  live: 'bg-green-100 text-green-700',
 };
 
 function timeAgo(dateStr: string): string {

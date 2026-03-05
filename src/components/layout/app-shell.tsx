@@ -443,10 +443,10 @@ ${editorHtml}
   );
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
+    <div className="flex h-screen overflow-hidden bg-[linear-gradient(180deg,#f7f4ee_0%,#f2ece2_100%)]">
       {/* Left Sidebar */}
       <div
-        className={`border-r border-border bg-card transition-all duration-200 flex flex-col shrink-0 ${
+        className={`border-r border-border bg-card/95 backdrop-blur-sm transition-all duration-200 flex flex-col shrink-0 ${
           leftOpen ? 'w-[22rem] lg:w-[24rem] 2xl:w-[26rem]' : 'w-0'
         } overflow-hidden`}
       >
@@ -519,7 +519,7 @@ ${editorHtml}
 
       {/* Right Sidebar */}
       <div
-        className={`border-l border-border bg-card transition-all duration-200 shrink-0 ${
+        className={`border-l border-border bg-card/95 backdrop-blur-sm transition-all duration-200 shrink-0 ${
           rightOpen ? 'w-[360px]' : 'w-0'
         } overflow-hidden`}
       >

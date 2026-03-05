@@ -6,6 +6,8 @@ import { useConvexAvailable } from '@/lib/convex/provider';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { Id } from '../../../convex/_generated/dataModel';
+import { useQuery } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { TeamMembersProvider } from '@/components/mission-control/team-members-provider';
 import { SkillsProvider } from '@/components/mission-control/skills-provider';
@@ -52,6 +54,58 @@ function BoardSkeleton() {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function MissionOverviewStrip({ projectId }: { projectId: number | null }) {
+  const agents = useQuery(api.agents.list, { limit: 300 });
+  const tasks = useQuery(api.tasks.list, projectId ? { projectId, limit: 500 } : 'skip');
+  const now = new Date();
+
+  const activeAgents = (agents || []).filter(
+    (agent) => agent.status === 'ONLINE' || agent.status === 'WORKING'
+  ).length;
+  const queuedTasks = (tasks || []).filter((task) => task.status !== 'COMPLETED').length;
+  const workingTasks = (tasks || []).filter((task) => task.status === 'IN_PROGRESS').length;
+
+  return (
+    <div
+      className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-xl border"
+      style={{
+        borderColor: 'var(--mc-border)',
+        background: 'color-mix(in srgb, var(--mc-surface) 88%, white 12%)',
+      }}
+    >
+      <div className="px-2">
+        <p className="text-lg font-semibold leading-none" style={{ color: 'var(--mc-text-primary)' }}>
+          {activeAgents}
+        </p>
+        <p className="mc-header-mono mt-1">Agents Active</p>
+      </div>
+      <div className="w-px h-8" style={{ background: 'var(--mc-border)' }} />
+      <div className="px-2">
+        <p className="text-lg font-semibold leading-none" style={{ color: 'var(--mc-text-primary)' }}>
+          {queuedTasks}
+        </p>
+        <p className="mc-header-mono mt-1">Tasks In Queue</p>
+      </div>
+      <div className="w-px h-8" style={{ background: 'var(--mc-border)' }} />
+      <div className="px-2">
+        <p className="text-lg font-semibold leading-none" style={{ color: 'var(--mc-text-primary)' }}>
+          {workingTasks}
+        </p>
+        <p className="mc-header-mono mt-1">Working Now</p>
+      </div>
+      <div className="w-px h-8" style={{ background: 'var(--mc-border)' }} />
+      <div className="px-2">
+        <p className="text-sm font-semibold leading-none" style={{ color: 'var(--mc-text-primary)' }}>
+          {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </p>
+        <p className="mc-header-mono mt-1">
+          {now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+        </p>
+      </div>
     </div>
   );
 }
@@ -163,7 +217,7 @@ export default function MissionControlPage() {
           className="border-b px-6 py-4"
           style={{ borderColor: 'var(--mc-border)', background: 'var(--mc-surface)' }}
         >
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <Link
                 href={withProjectScope('/documents', projectId)}
@@ -182,6 +236,8 @@ export default function MissionControlPage() {
                 <p className="mc-header-mono mt-0.5">Content pipeline &middot; Real-time</p>
               </div>
             </div>
+
+            <MissionOverviewStrip projectId={projectId} />
 
             <div className="flex items-center gap-3">
               <div className="w-48">

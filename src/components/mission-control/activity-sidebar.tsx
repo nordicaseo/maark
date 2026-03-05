@@ -59,7 +59,7 @@ function activityColor(type: string): string {
     case 'status_changed':
       return 'var(--mc-review, #e6a756)';
     case 'agent_executed':
-      return 'var(--mc-working, #7c6fe0)';
+      return 'var(--mc-progress)';
     case 'task_assigned':
       return 'var(--mc-pending, #4a9eda)';
     case 'message':

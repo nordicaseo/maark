@@ -49,37 +49,37 @@
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.141 0.005 285.823);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.141 0.005 285.823);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.21 0.006 285.885);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.21 0.006 285.885);
+  --background: #f6f2ea;
+  --foreground: #27231d;
+  --card: #fcfbf8;
+  --card-foreground: #27231d;
+  --popover: #fffdfa;
+  --popover-foreground: #27231d;
+  --primary: #c67332;
+  --primary-foreground: #fff9f1;
+  --secondary: #efe8dc;
+  --secondary-foreground: #4f4538;
+  --muted: #f3ede2;
+  --muted-foreground: #756a5a;
+  --accent: #f2eadf;
+  --accent-foreground: #3f372d;
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.705 0.015 286.067);
+  --border: #ddd3c4;
+  --input: #d8ccbb;
+  --ring: #cf8042;
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.141 0.005 285.823);
-  --sidebar-primary: oklch(0.21 0.006 285.885);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.967 0.001 286.375);
-  --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
-  --sidebar-border: oklch(0.92 0.004 286.32);
-  --sidebar-ring: oklch(0.705 0.015 286.067);
+  --sidebar: #f8f4ec;
+  --sidebar-foreground: #27231d;
+  --sidebar-primary: #c67332;
+  --sidebar-primary-foreground: #fff9f1;
+  --sidebar-accent: #f1e8dc;
+  --sidebar-accent-foreground: #40372d;
+  --sidebar-border: #ddd3c4;
+  --sidebar-ring: #cf8042;
 }
 
 .dark {
@@ -180,16 +180,17 @@
 }
 
 .tiptap blockquote {
-  border-left: 3px solid oklch(0.552 0.016 285.938);
+  border-left: 3px solid #d09a63;
   padding-left: 1rem;
   margin-left: 0;
   margin-bottom: 0.75rem;
-  color: oklch(0.705 0.015 286.067);
+  color: #7f7260;
   font-style: italic;
 }
 
 .tiptap code {
-  background: oklch(0.274 0.006 286.033);
+  background: #f1e7da;
+  color: #5b452d;
   border-radius: 0.25rem;
   padding: 0.15rem 0.4rem;
   font-size: 0.875rem;
@@ -197,7 +198,8 @@
 }
 
 .tiptap pre {
-  background: oklch(0.18 0.005 285.823);
+  background: #fbf4ea;
+  border: 1px solid #e3d3be;
   border-radius: 0.5rem;
   padding: 1rem;
   margin-bottom: 0.75rem;
@@ -210,12 +212,12 @@
 }
 
 .tiptap hr {
-  border-color: oklch(1 0 0 / 10%);
+  border-color: #ddd3c4;
   margin: 1.5rem 0;
 }
 
 .tiptap a {
-  color: oklch(0.488 0.243 264.376);
+  color: #b9692b;
   text-decoration: underline;
   cursor: pointer;
 }
@@ -247,7 +249,7 @@
 
 .tiptap ul[data-type="taskList"] li input[type="checkbox"] {
   margin-top: 0.35rem;
-  accent-color: oklch(0.488 0.243 264.376);
+  accent-color: #b9692b;
 }
 
 /* Tables */
@@ -257,12 +259,12 @@
   margin-bottom: 1rem;
   overflow: hidden;
   border-radius: 0.375rem;
-  border: 1px solid oklch(1 0 0 / 10%);
+  border: 1px solid #ddd3c4;
 }
 
 .tiptap table td,
 .tiptap table th {
-  border: 1px solid oklch(1 0 0 / 10%);
+  border: 1px solid #ddd3c4;
   padding: 0.5rem 0.75rem;
   vertical-align: top;
   position: relative;
@@ -272,7 +274,7 @@
 .tiptap table th {
   font-weight: 600;
   text-align: left;
-  background: oklch(0.274 0.006 286.033);
+  background: #f3ecdf;
 }
 
 .tiptap table td {
@@ -280,11 +282,11 @@
 }
 
 .tiptap table tr:nth-child(even) td {
-  background: oklch(1 0 0 / 2%);
+  background: #faf7f1;
 }
 
 .tiptap table .selectedCell {
-  background: oklch(0.488 0.243 264.376 / 15%);
+  background: rgba(185, 105, 43, 0.15);
 }
 
 .tiptap table .column-resize-handle {
@@ -293,7 +295,7 @@
   top: 0;
   bottom: 0;
   width: 4px;
-  background: oklch(0.488 0.243 264.376);
+  background: #b9692b;
   cursor: col-resize;
   z-index: 10;
 }
