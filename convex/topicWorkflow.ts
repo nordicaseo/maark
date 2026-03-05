@@ -62,7 +62,7 @@ const stageOwnerChains: Record<TopicStageKey, string[]> = {
 };
 
 const roleAliases: Record<string, string[]> = {
-  researcher: ["researcher", "seo", "editor", "writer"],
+  researcher: ["researcher", "seo", "editor"],
   outliner: ["outliner", "editor", "writer", "content"],
   writer: ["writer"],
   "seo-reviewer": ["seo-reviewer", "seo", "editor"],
