@@ -11,14 +11,39 @@ import {
   userCanAccessProject,
 } from '@/lib/access';
 import { getConvexClient } from '@/lib/convex/server';
+import { TASK_STATUS_ORDER, type TaskStatus } from '@/lib/content-workflow-taxonomy';
 
-const PER_PROJECT_LIMIT = 400;
-const TOTAL_LIMIT = 1400;
+const DEFAULT_LIMIT = 300;
+const MAX_LIMIT = 700;
+const MIN_LIMIT = 40;
+const MAX_PER_PROJECT_LIMIT = 220;
 type ProjectRow = { id: number; name: string };
 type TaskLike = {
+  status?: string;
+  projectId?: number | null;
   workflowLastEventAt?: number | null;
   updatedAt?: number | null;
 };
+
+function parsePositiveInt(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function parseStatusFilter(raw: string | null): Set<TaskStatus> {
+  if (!raw) return new Set<TaskStatus>();
+  const valid = new Set<TaskStatus>(TASK_STATUS_ORDER);
+  const parsed = raw
+    .split(',')
+    .map((item) => item.trim().toUpperCase())
+    .filter((item): item is TaskStatus => valid.has(item as TaskStatus));
+  return new Set(parsed);
+}
 
 export async function GET(req: NextRequest) {
   await ensureDb();
@@ -35,7 +60,12 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const requestedProjectId = getRequestedProjectId(req);
+  const queryProjectId = parsePositiveInt(req.nextUrl.searchParams.get('projectId'));
+  const requestedProjectId = queryProjectId ?? getRequestedProjectId(req);
+  const requestedLimit = parsePositiveInt(req.nextUrl.searchParams.get('limit')) ?? DEFAULT_LIMIT;
+  const limit = clamp(requestedLimit, MIN_LIMIT, MAX_LIMIT);
+  const cursorTs = parsePositiveInt(req.nextUrl.searchParams.get('cursor'));
+  const statusFilter = parseStatusFilter(req.nextUrl.searchParams.get('status'));
   let projectIds: number[] = [];
 
   if (requestedProjectId !== null) {
@@ -63,21 +93,35 @@ export async function GET(req: NextRequest) {
     projectIds.map((projectId) =>
       convex.query(api.tasks.list, {
         projectId,
-        limit: PER_PROJECT_LIMIT,
+        limit: Math.min(MAX_PER_PROJECT_LIMIT, limit),
       })
     )
   );
 
   const tasks = (taskChunks
     .flat()
+    .filter((task: TaskLike) => {
+      const eventAt = task.workflowLastEventAt || task.updatedAt || 0;
+      if (cursorTs && eventAt >= cursorTs) return false;
+      if (statusFilter.size > 0 && task.status) {
+        return statusFilter.has(task.status as TaskStatus);
+      }
+      return true;
+    })
     .sort(
       (a: TaskLike, b: TaskLike) =>
         (b.workflowLastEventAt || b.updatedAt || 0) - (a.workflowLastEventAt || a.updatedAt || 0)
     )
-    .slice(0, TOTAL_LIMIT));
+    .slice(0, limit));
+
+  const nextCursor =
+    tasks.length === limit
+      ? String(tasks[tasks.length - 1].workflowLastEventAt || tasks[tasks.length - 1].updatedAt || 0)
+      : null;
 
   return NextResponse.json({
     tasks,
     projects: projectRows,
+    nextCursor,
   });
 }

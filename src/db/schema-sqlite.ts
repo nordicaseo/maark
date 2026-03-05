@@ -197,6 +197,8 @@ export const invitations = sqliteTable('invitations', {
   invitedById: text('invited_by_id').references(() => users.id, { onDelete: 'set null' }),
   expiresAt: text('expires_at').notNull(),
   acceptedAt: text('accepted_at'),
+  revokedAt: text('revoked_at'),
+  lastSentAt: text('last_sent_at'),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
 });
 

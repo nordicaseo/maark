@@ -7,7 +7,11 @@ import { ASSIGNABLE_ROLES, PROJECT_ASSIGNABLE_ROLES } from '@/lib/permissions';
 import { randomUUID } from 'crypto';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import { userCanMutateProject } from '@/lib/access';
-import { getSupabaseAdminClient } from '@/lib/supabase/admin';
+import {
+  buildInvitationUrls,
+  resolveInvitationStatus,
+  sendInvitationEmail,
+} from '@/lib/invitations';
 
 function sanitizeProjectIds(raw: unknown): number[] {
   if (!Array.isArray(raw)) return [];
@@ -23,41 +27,6 @@ function sanitizeProjectIds(raw: unknown): number[] {
 
 function isRootRole(role: string): boolean {
   return role === 'owner' || role === 'super_admin';
-}
-
-type InvitationDeliveryStatus = 'sent' | 'failed' | 'fallback_only';
-
-function trimTrailingSlash(url: string): string {
-  return url.replace(/\/+$/, '');
-}
-
-function resolveAppBaseUrl(req: NextRequest): string {
-  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  if (configured) return trimTrailingSlash(configured);
-
-  const forwardedHost = req.headers.get('x-forwarded-host');
-  if (forwardedHost) {
-    const proto = req.headers.get('x-forwarded-proto') || 'https';
-    return trimTrailingSlash(`${proto}://${forwardedHost}`);
-  }
-
-  const host = req.headers.get('host');
-  if (host) {
-    const proto = host.includes('localhost') ? 'http' : 'https';
-    return trimTrailingSlash(`${proto}://${host}`);
-  }
-
-  const productionHost = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
-  if (productionHost) {
-    return trimTrailingSlash(`https://${productionHost}`);
-  }
-
-  const deploymentHost = process.env.VERCEL_URL?.trim();
-  if (deploymentHost) {
-    return trimTrailingSlash(`https://${deploymentHost}`);
-  }
-
-  return 'http://localhost:3000';
 }
 
 export async function GET() {
@@ -79,13 +48,20 @@ export async function GET() {
         inviterName: users.name,
         expiresAt: invitations.expiresAt,
         acceptedAt: invitations.acceptedAt,
+        revokedAt: invitations.revokedAt,
+        lastSentAt: invitations.lastSentAt,
         createdAt: invitations.createdAt,
       })
       .from(invitations)
       .leftJoin(users, eq(invitations.invitedById, users.id))
       .orderBy(desc(invitations.createdAt));
 
-    return NextResponse.json(rows);
+    return NextResponse.json(
+      rows.map((invitation: (typeof rows)[number]) => ({
+        ...invitation,
+        status: resolveInvitationStatus(invitation),
+      }))
+    );
   } catch (error) {
     console.error('Error fetching invitations:', error);
     return NextResponse.json([], { status: 200 });
@@ -184,38 +160,29 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Build the invite URL
-    const baseUrl = resolveAppBaseUrl(req);
-    const inviteUrl = `${baseUrl}/auth/invite?token=${token}`;
-    let deliveryStatus: InvitationDeliveryStatus = 'fallback_only';
-    let deliveryError: string | null = null;
+    const { inviteUrl, redirectTo } = buildInvitationUrls(req, token);
+    const { deliveryStatus, deliveryError, lastSentAt } =
+      await sendInvitationEmail({
+        email: invitation.email,
+        redirectTo,
+      });
 
-    if (email) {
-      const supabaseAdmin = getSupabaseAdminClient();
-      if (!supabaseAdmin) {
-        deliveryStatus = 'fallback_only';
-        deliveryError = 'Supabase service role is not configured.';
-      } else {
-        const redirectTo = `${baseUrl}/auth/callback?next=/documents&invite_token=${token}`;
-        const { error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-          redirectTo,
-        });
+    if (deliveryStatus === 'failed') {
+      await logAlertEvent({
+        source: 'admin',
+        eventType: 'invitation_email_send_failed',
+        severity: 'warning',
+        message: 'Invitation email delivery failed via Supabase.',
+        resourceId: String(invitation.id),
+        metadata: { email: invitation.email, error: deliveryError },
+      });
+    }
 
-        if (inviteError) {
-          deliveryStatus = 'failed';
-          deliveryError = inviteError.message;
-          await logAlertEvent({
-            source: 'admin',
-            eventType: 'invitation_email_send_failed',
-            severity: 'warning',
-            message: 'Invitation email delivery failed via Supabase.',
-            resourceId: String(invitation.id),
-            metadata: { email, error: inviteError.message },
-          });
-        } else {
-          deliveryStatus = 'sent';
-        }
-      }
+    if (lastSentAt) {
+      await db
+        .update(invitations)
+        .set({ lastSentAt })
+        .where(eq(invitations.id, invitation.id));
     }
 
     await logAuditEvent({
@@ -240,6 +207,10 @@ export async function POST(req: NextRequest) {
       projectRole: invitation.projectRole,
       email: invitation.email,
       expiresAt: invitation.expiresAt,
+      acceptedAt: invitation.acceptedAt,
+      revokedAt: invitation.revokedAt,
+      lastSentAt: lastSentAt || invitation.lastSentAt || null,
+      status: resolveInvitationStatus(invitation),
       deliveryStatus,
       deliveryError,
     });

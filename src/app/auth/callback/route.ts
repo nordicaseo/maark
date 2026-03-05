@@ -6,6 +6,7 @@ import { eq, sql, and, isNull } from 'drizzle-orm';
 import { dbNow } from '@/db/utils';
 import { logAuditEvent } from '@/lib/observability';
 import { ACTIVE_PROJECT_COOKIE_KEY } from '@/lib/project-context';
+import { isInvitationExpired } from '@/lib/invitations';
 
 type InvitationRecord = typeof invitations.$inferSelect;
 
@@ -64,11 +65,12 @@ async function findPendingInvitation(args: {
       .where(
         and(
           eq(invitations.token, args.inviteToken),
-          isNull(invitations.acceptedAt)
+          isNull(invitations.acceptedAt),
+          isNull(invitations.revokedAt)
         )
       )
       .limit(1);
-    if (inv) return inv;
+    if (inv && !isInvitationExpired(inv.expiresAt)) return inv;
   }
 
   if (args.email) {
@@ -78,11 +80,12 @@ async function findPendingInvitation(args: {
       .where(
         and(
           eq(invitations.email, args.email),
-          isNull(invitations.acceptedAt)
+          isNull(invitations.acceptedAt),
+          isNull(invitations.revokedAt)
         )
       )
       .limit(1);
-    if (inv) return inv;
+    if (inv && !isInvitationExpired(inv.expiresAt)) return inv;
   }
 
   return null;

@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { InviteDialog } from '@/components/admin/invite-dialog';
-import { Users, Clock, UserPlus, Mail, Trash2, Link2, ShieldCheck } from 'lucide-react';
+import { Users, Clock, UserPlus, Mail, Trash2, Link2, ShieldCheck, RotateCcw, RefreshCw, Loader2 } from 'lucide-react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { hasRole } from '@/lib/permissions';
 
@@ -46,6 +46,9 @@ interface Invitation {
   inviterName: string | null;
   expiresAt: string;
   acceptedAt: string | null;
+  revokedAt?: string | null;
+  lastSentAt?: string | null;
+  status?: 'pending' | 'accepted' | 'expired' | 'revoked';
   createdAt: string;
 }
 
@@ -71,6 +74,7 @@ export default function AdminUsersPage() {
   const [accessSaving, setAccessSaving] = useState(false);
   const [accessUser, setAccessUser] = useState<User | null>(null);
   const [accessRows, setAccessRows] = useState<ProjectAccessRow[]>([]);
+  const [inviteActionId, setInviteActionId] = useState<number | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -120,16 +124,50 @@ export default function AdminUsersPage() {
   };
 
   const handleRevokeInvite = async (inviteId: number) => {
+    setInviteActionId(inviteId);
     try {
       const res = await fetch(`/api/admin/invitations/${inviteId}`, {
         method: 'DELETE',
       });
 
       if (res.ok) {
-        setInvitations((prev) => prev.filter((i) => i.id !== inviteId));
+        await fetchData();
       }
     } catch (err) {
       console.error('Failed to revoke invitation', err);
+    } finally {
+      setInviteActionId(null);
+    }
+  };
+
+  const handleInvitationAction = async (
+    inviteId: number,
+    action: 'resend' | 'regenerate'
+  ) => {
+    setInviteActionId(inviteId);
+    try {
+      const res = await fetch(`/api/admin/invitations/${inviteId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Failed to ${action} invitation`);
+      }
+
+      const data = await res.json();
+      await fetchData();
+
+      if (data.inviteUrl) {
+        await navigator.clipboard.writeText(String(data.inviteUrl));
+      }
+    } catch (err) {
+      console.error(`Failed to ${action} invitation`, err);
+      alert((err as Error).message || `Failed to ${action} invitation`);
+    } finally {
+      setInviteActionId(null);
     }
   };
 
@@ -237,8 +275,29 @@ export default function AdminUsersPage() {
     }
   }
 
-  const pendingInvitations = invitations.filter((i) => !i.acceptedAt);
+  const invitationRows = invitations;
   const canEditRoles = Boolean(user && hasRole(user.role, 'super_admin'));
+
+  function inviteStatus(invitation: Invitation): 'pending' | 'accepted' | 'expired' | 'revoked' {
+    if (invitation.status) return invitation.status;
+    if (invitation.revokedAt) return 'revoked';
+    if (invitation.acceptedAt) return 'accepted';
+    if (new Date(invitation.expiresAt).getTime() < Date.now()) return 'expired';
+    return 'pending';
+  }
+
+  function inviteStatusBadgeVariant(status: ReturnType<typeof inviteStatus>) {
+    switch (status) {
+      case 'accepted':
+        return 'default' as const;
+      case 'revoked':
+        return 'outline' as const;
+      case 'expired':
+        return 'secondary' as const;
+      default:
+        return 'secondary' as const;
+    }
+  }
 
   /* ── Render ─────────────────────────────────────────────────────── */
 
@@ -353,14 +412,20 @@ export default function AdminUsersPage() {
       )}
 
       {/* Pending Invitations */}
-      {pendingInvitations.length > 0 && (
+      {invitationRows.length > 0 && (
         <div className="mt-8">
           <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
             <Link2 className="h-5 w-5" />
-            Pending Invitations
+            Invitations
           </h2>
           <div className="border border-border rounded-lg divide-y divide-border">
-            {pendingInvitations.map((inv) => (
+            {invitationRows.map((inv) => {
+              const status = inviteStatus(inv);
+              const isBusy = inviteActionId === inv.id;
+              const canResend = status === 'pending';
+              const canRegenerate = status === 'expired' || status === 'revoked';
+              const canRevoke = status === 'pending' || status === 'expired';
+              return (
               <div
                 key={inv.id}
                 className="flex items-center justify-between px-4 py-3"
@@ -377,6 +442,9 @@ export default function AdminUsersPage() {
                       <Badge variant={getRoleBadgeVariant(inv.role)} className="text-xs capitalize">
                         {inv.role}
                       </Badge>
+                      <Badge variant={inviteStatusBadgeVariant(status)} className="text-xs capitalize">
+                        {status}
+                      </Badge>
                     </div>
                     <span className="text-xs text-muted-foreground">
                       Invited {new Date(inv.createdAt).toLocaleDateString()} &middot; Expires{' '}
@@ -384,21 +452,54 @@ export default function AdminUsersPage() {
                       {Array.isArray(inv.projectIds) && inv.projectIds.length > 0
                         ? ` · ${inv.projectIds.length} project${inv.projectIds.length === 1 ? '' : 's'} (${inv.projectRole || 'writer'})`
                         : ''}
+                      {inv.lastSentAt
+                        ? ` · Last sent ${new Date(inv.lastSentAt).toLocaleString()}`
+                        : ''}
                     </span>
                   </div>
                 </div>
 
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                  onClick={() => handleRevokeInvite(inv.id)}
-                  title="Revoke invitation"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <div className="flex items-center gap-1">
+                  {canResend && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground"
+                      onClick={() => void handleInvitationAction(inv.id, 'resend')}
+                      title="Resend invitation"
+                      disabled={isBusy}
+                    >
+                      {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    </Button>
+                  )}
+                  {canRegenerate && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground"
+                      onClick={() => void handleInvitationAction(inv.id, 'regenerate')}
+                      title="Regenerate invitation"
+                      disabled={isBusy}
+                    >
+                      {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                    </Button>
+                  )}
+                  {canRevoke && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                      onClick={() => void handleRevokeInvite(inv.id)}
+                      title="Revoke invitation"
+                      disabled={isBusy}
+                    >
+                      {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    </Button>
+                  )}
+                </div>
               </div>
-            ))}
+            );
+            })}
           </div>
         </div>
       )}

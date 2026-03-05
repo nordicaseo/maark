@@ -133,6 +133,7 @@ export default function MissionControlPage() {
   const [orgProjects, setOrgProjects] = useState<Array<{ id: number; name: string }>>([]);
   const [orgLoading, setOrgLoading] = useState(false);
   const [orgProjectFilter, setOrgProjectFilter] = useState<number | null>(null);
+  const [orgNextCursor, setOrgNextCursor] = useState<string | null>(null);
   const isClientRole = user?.role === 'client';
 
   useEffect(() => {
@@ -152,14 +153,23 @@ export default function MissionControlPage() {
 
     let cancelled = false;
     const fetchOrgTasks = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return;
+      }
       setOrgLoading(true);
       try {
-        const res = await fetch('/api/mission-control/tasks');
+        const params = new URLSearchParams();
+        params.set('limit', '320');
+        if (orgProjectFilter !== null) {
+          params.set('projectId', String(orgProjectFilter));
+        }
+        const res = await fetch(`/api/mission-control/tasks?${params.toString()}`);
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled) return;
         setOrgTasks(Array.isArray(data.tasks) ? data.tasks : []);
         setOrgProjects(Array.isArray(data.projects) ? data.projects : []);
+        setOrgNextCursor(typeof data.nextCursor === 'string' ? data.nextCursor : null);
       } catch (error) {
         if (!cancelled) {
           console.error('Failed to fetch org mission control tasks:', error);
@@ -174,13 +184,52 @@ export default function MissionControlPage() {
     void fetchOrgTasks();
     const interval = window.setInterval(() => {
       void fetchOrgTasks();
-    }, 12000);
+    }, 20000);
 
     return () => {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [projectId, user]);
+  }, [projectId, user, orgProjectFilter]);
+
+  useEffect(() => {
+    if (!user || isClientRole) return;
+
+    let cancelled = false;
+    const runAutoResume = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return;
+      }
+      try {
+        const payload: Record<string, unknown> = {
+          maxResumes: 4,
+        };
+        const scopedProjectId = projectId ?? orgProjectFilter;
+        if (scopedProjectId !== null) {
+          payload.projectId = scopedProjectId;
+        }
+        await fetch('/api/topic-workflow/auto-resume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Auto-resume poll failed:', error);
+        }
+      }
+    };
+
+    void runAutoResume();
+    const interval = window.setInterval(() => {
+      void runAutoResume();
+    }, 30000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [user, isClientRole, projectId, orgProjectFilter]);
 
   const orgProjectLabelById = useMemo(() => {
     const entries = orgProjects.map((project) => [project.id, project.name] as const);
@@ -189,9 +238,8 @@ export default function MissionControlPage() {
 
   const filteredOrgTasks = useMemo(() => {
     if (projectId !== null) return [];
-    if (orgProjectFilter === null) return orgTasks;
-    return orgTasks.filter((task) => task.projectId === orgProjectFilter);
-  }, [projectId, orgProjectFilter, orgTasks]);
+    return orgTasks;
+  }, [projectId, orgTasks]);
 
   if (isLoading) {
     return (
@@ -420,7 +468,9 @@ export default function MissionControlPage() {
               onTaskClick={setSelectedTaskId}
             />
             {!projectId && orgLoading && (
-              <div className="mt-3 text-xs mc-header-mono">Refreshing org task stream...</div>
+              <div className="mt-3 text-xs mc-header-mono">
+                Refreshing org task stream{orgNextCursor ? ' (paged)' : ''}...
+              </div>
             )}
           </main>
 

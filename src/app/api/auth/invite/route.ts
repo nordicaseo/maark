@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
 import { invitations, users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { isInvitationExpired, resolveInvitationStatus } from '@/lib/invitations';
 
 export async function GET(req: NextRequest) {
   const token = req.nextUrl.searchParams.get('token');
@@ -22,6 +23,7 @@ export async function GET(req: NextRequest) {
         email: invitations.email,
         expiresAt: invitations.expiresAt,
         acceptedAt: invitations.acceptedAt,
+        revokedAt: invitations.revokedAt,
         invitedById: invitations.invitedById,
         inviterName: users.name,
       })
@@ -34,13 +36,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ valid: false, error: 'Invitation not found' });
     }
 
-    if (invitation.acceptedAt) {
+    const status = resolveInvitationStatus(invitation);
+    if (status === 'accepted') {
       return NextResponse.json({ valid: false, error: 'Invitation already used' });
     }
+    if (status === 'revoked') {
+      return NextResponse.json({ valid: false, error: 'Invitation revoked' });
+    }
 
-    // Check expiry
-    const expiresAt = new Date(invitation.expiresAt);
-    if (expiresAt < new Date()) {
+    if (isInvitationExpired(invitation.expiresAt)) {
       return NextResponse.json({ valid: false, error: 'Invitation expired' });
     }
 

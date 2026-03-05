@@ -217,6 +217,8 @@ export const invitations = pgTable('invitations', {
   invitedById: text('invited_by_id').references(() => users.id, { onDelete: 'set null' }),
   expiresAt: timestamp('expires_at').notNull(),
   acceptedAt: timestamp('accepted_at'),
+  revokedAt: timestamp('revoked_at'),
+  lastSentAt: timestamp('last_sent_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
