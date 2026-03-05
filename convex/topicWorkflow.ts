@@ -750,6 +750,38 @@ export const recordStageArtifact = mutation({
   },
 });
 
+export const recordStageProgress = mutation({
+  args: {
+    taskId: v.id("tasks"),
+    stageKey: stageValidator,
+    summary: v.string(),
+    actorType: v.union(v.literal("user"), v.literal("agent"), v.literal("system")),
+    actorId: v.optional(v.string()),
+    actorName: v.optional(v.string()),
+    payload: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!isTopicTask(task)) {
+      throw new Error("Task is not a topic workflow task.");
+    }
+
+    await insertWorkflowEvent(ctx, {
+      taskId: args.taskId,
+      projectId: task.projectId,
+      stageKey: args.stageKey as TopicStageKey,
+      eventType: "stage_progress",
+      actorType: args.actorType,
+      actorId: args.actorId,
+      actorName: args.actorName,
+      summary: args.summary,
+      payload: args.payload,
+    });
+
+    return { ok: true };
+  },
+});
+
 export const listWorkflowHistory = query({
   args: {
     taskId: v.id("tasks"),

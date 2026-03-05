@@ -6,7 +6,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { AppUser } from '@/lib/auth';
 import { db, ensureDb } from '@/db';
 import { dbNow } from '@/db/utils';
-import { documents } from '@/db/schema';
+import { documents, skills, skillParts } from '@/db/schema';
 import {
   getWorkflowTaskForUser,
   type TopicStageKey,
@@ -29,6 +29,11 @@ interface StageRunResult {
     title: string;
     url?: string;
   };
+}
+
+interface SkillContext {
+  names: string[];
+  promptText: string;
 }
 
 export interface WorkflowStageRun {
@@ -122,6 +127,82 @@ function parseStringArray(value: unknown, limit = 8): string[] {
 function trimTo(input: string, maxChars: number): string {
   if (input.length <= maxChars) return input;
   return `${input.slice(0, maxChars).trimEnd()}…`;
+}
+
+async function buildSkillContext(task: Doc<'tasks'>): Promise<SkillContext> {
+  if (!task.projectId && !task.skillId) {
+    return { names: [], promptText: '' };
+  }
+
+  const selectedSkills: Array<{
+    id: number;
+    name: string;
+    content: string;
+  }> = [];
+
+  if (task.skillId) {
+    const [explicit] = await db
+      .select({
+        id: skills.id,
+        name: skills.name,
+        content: skills.content,
+      })
+      .from(skills)
+      .where(eq(skills.id, task.skillId))
+      .limit(1);
+
+    if (explicit) {
+      selectedSkills.push(explicit);
+    }
+  }
+
+  if (selectedSkills.length === 0 && task.projectId) {
+    const projectSkills = await db
+      .select({
+        id: skills.id,
+        name: skills.name,
+        content: skills.content,
+      })
+      .from(skills)
+      .where(eq(skills.projectId, task.projectId))
+      .limit(3);
+
+    selectedSkills.push(...projectSkills);
+  }
+
+  if (selectedSkills.length === 0) {
+    return { names: [], promptText: '' };
+  }
+
+  const sections: string[] = [];
+  const names: string[] = [];
+
+  for (const skill of selectedSkills) {
+    names.push(skill.name);
+    const parts: Array<{ content: string | null; sortOrder: number | null }> = await db
+      .select({
+        content: skillParts.content,
+        sortOrder: skillParts.sortOrder,
+      })
+      .from(skillParts)
+      .where(eq(skillParts.skillId, skill.id));
+
+    const orderedParts = parts
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+      .map((part) => String(part.content ?? '').trim())
+      .filter(Boolean);
+
+    const mergedContent = orderedParts.length > 0
+      ? orderedParts.join('\n\n')
+      : String(skill.content || '').trim();
+
+    if (!mergedContent) continue;
+
+    sections.push(`Skill: ${skill.name}\n${mergedContent}`);
+  }
+
+  const promptText = trimTo(sections.join('\n\n---\n\n'), 7000);
+  return { names, promptText };
 }
 
 async function getDocumentById(documentId: number) {
@@ -234,7 +315,37 @@ function resolveAutoAdvance(
   return null;
 }
 
-async function runResearchStage(task: Doc<'tasks'>, documentId: number): Promise<StageRunResult> {
+async function setAgentWorking(
+  convex: ReturnType<typeof getConvexClient>,
+  task: Doc<'tasks'>
+) {
+  if (!convex || !task.assignedAgentId) return null;
+
+  const agent = await convex.query(api.agents.get, { id: task.assignedAgentId });
+  await convex.mutation(api.agents.updateStatus, {
+    id: task.assignedAgentId,
+    status: 'WORKING',
+    currentTaskId: task._id,
+  });
+  return agent;
+}
+
+async function setAgentOnline(
+  convex: ReturnType<typeof getConvexClient>,
+  task: Doc<'tasks'>
+) {
+  if (!convex || !task.assignedAgentId) return;
+  await convex.mutation(api.agents.updateStatus, {
+    id: task.assignedAgentId,
+    status: 'ONLINE',
+  });
+}
+
+async function runResearchStage(
+  task: Doc<'tasks'>,
+  documentId: number,
+  skillContext: SkillContext
+): Promise<StageRunResult> {
   const modelOverride = await resolveStageModelOverride(task, 'research', 'research');
   const { provider, model, maxTokens, temperature } = await resolveProviderForAction(
     'research',
@@ -257,11 +368,15 @@ Target keyword: ${task.title}
 
 Produce a concise research brief for content production.`;
 
+  const fullUserPrompt = skillContext.promptText
+    ? `${user}\n\nProject skills and rules:\n${skillContext.promptText}`
+    : user;
+
   const raw = await collectStreamText(
     provider.stream({
       model,
       system,
-      messages: [{ role: 'user', content: user }],
+      messages: [{ role: 'user', content: fullUserPrompt }],
       maxTokens,
       temperature,
     })
@@ -345,7 +460,11 @@ Produce a concise research brief for content production.`;
   };
 }
 
-async function runOutlineStage(task: Doc<'tasks'>, document: Awaited<ReturnType<typeof getDocumentById>>): Promise<StageRunResult> {
+async function runOutlineStage(
+  task: Doc<'tasks'>,
+  document: Awaited<ReturnType<typeof getDocumentById>>,
+  skillContext: SkillContext
+): Promise<StageRunResult> {
   const modelOverride = await resolveStageModelOverride(task, 'outline_build', 'research');
   const { provider, model, maxTokens, temperature } = await resolveProviderForAction(
     'research',
@@ -372,11 +491,15 @@ ${researchFacts.map((fact) => `- ${fact}`).join('\n') || '- (none)'}
 
 Generate the production outline now.`;
 
+  const fullUserPrompt = skillContext.promptText
+    ? `${user}\n\nProject skills and rules:\n${skillContext.promptText}`
+    : user;
+
   const outlineRaw = await collectStreamText(
     provider.stream({
       model,
       system,
-      messages: [{ role: 'user', content: user }],
+      messages: [{ role: 'user', content: fullUserPrompt }],
       maxTokens,
       temperature,
     })
@@ -414,7 +537,11 @@ Generate the production outline now.`;
   };
 }
 
-async function runPrewriteStage(task: Doc<'tasks'>, document: Awaited<ReturnType<typeof getDocumentById>>): Promise<StageRunResult> {
+async function runPrewriteStage(
+  task: Doc<'tasks'>,
+  document: Awaited<ReturnType<typeof getDocumentById>>,
+  skillContext: SkillContext
+): Promise<StageRunResult> {
   const modelOverride = await resolveStageModelOverride(task, 'prewrite_context', 'research');
   const { provider, model, maxTokens, temperature } = await resolveProviderForAction(
     'research',
@@ -439,11 +566,15 @@ Outline excerpt: ${trimTo(outlineText, 1200)}
 
 Produce prewrite readiness and open questions.`;
 
+  const fullUserPrompt = skillContext.promptText
+    ? `${user}\n\nProject skills and rules:\n${skillContext.promptText}`
+    : user;
+
   const raw = await collectStreamText(
     provider.stream({
       model,
       system,
-      messages: [{ role: 'user', content: user }],
+      messages: [{ role: 'user', content: fullUserPrompt }],
       maxTokens,
       temperature,
     })
@@ -509,7 +640,11 @@ Produce prewrite readiness and open questions.`;
   };
 }
 
-async function runWritingStage(task: Doc<'tasks'>, document: Awaited<ReturnType<typeof getDocumentById>>): Promise<StageRunResult> {
+async function runWritingStage(
+  task: Doc<'tasks'>,
+  document: Awaited<ReturnType<typeof getDocumentById>>,
+  skillContext: SkillContext
+): Promise<StageRunResult> {
   const modelOverride = await resolveStageModelOverride(task, 'writing', 'writing');
   const { provider, model, maxTokens, temperature } = await resolveProviderForAction(
     'writing',
@@ -558,11 +693,15 @@ ${trimTo(outline, 2500)}
 
 Write the final article now.`;
 
+  const fullUserPrompt = skillContext.promptText
+    ? `${user}\n\nProject skills and rules:\n${skillContext.promptText}`
+    : user;
+
   const raw = await collectStreamText(
     provider.stream({
       model,
       system,
-      messages: [{ role: 'user', content: user }],
+      messages: [{ role: 'user', content: fullUserPrompt }],
       maxTokens,
       temperature,
     })
@@ -635,22 +774,23 @@ Write the final article now.`;
 async function runStage(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
-  stage: TopicStageKey
+  stage: TopicStageKey,
+  skillContext: SkillContext
 ): Promise<StageRunResult> {
   if (stage === 'research') {
-    return runResearchStage(task, document.id);
+    return runResearchStage(task, document.id, skillContext);
   }
 
   if (stage === 'outline_build') {
-    return runOutlineStage(task, document);
+    return runOutlineStage(task, document, skillContext);
   }
 
   if (stage === 'prewrite_context') {
-    return runPrewriteStage(task, document);
+    return runPrewriteStage(task, document, skillContext);
   }
 
   if (stage === 'writing') {
-    return runWritingStage(task, document);
+    return runWritingStage(task, document, skillContext);
   }
 
   throw new Error(`Stage ${stage} is not runnable.`);
@@ -700,13 +840,62 @@ export async function runTopicWorkflow(
     const ensured = await ensureTaskDocument(currentTask, input.user);
     currentTask = ensured.task;
     const freshDocument = await getDocumentById(ensured.document.id);
+    const skillContext = await buildSkillContext(currentTask);
+    const agent = await setAgentWorking(convex, currentTask);
 
-    const stageResult = await runStage(currentTask, freshDocument, stage);
+    const startedSummary = agent
+      ? `${agent.name} started ${stage}.`
+      : `Workflow PM started ${stage}.`;
+
+    await convex.mutation(api.topicWorkflow.recordStageProgress, {
+      taskId: currentTask._id,
+      stageKey: stage,
+      summary: startedSummary,
+      actorType: agent ? 'agent' : 'system',
+      actorId: agent ? String(currentTask.assignedAgentId) : input.user.id,
+      actorName: agent?.name || 'Workflow PM',
+      payload: {
+        status: 'started',
+        stage,
+        assignedAgentId: currentTask.assignedAgentId ?? null,
+        assignedAgentName: agent?.name ?? null,
+        skillNames: skillContext.names,
+      },
+    });
+
+    let stageResult: StageRunResult;
+    try {
+      stageResult = await runStage(currentTask, freshDocument, stage, skillContext);
+    } catch (error) {
+      const failedSummary = `Stage ${stage} failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      await convex.mutation(api.topicWorkflow.recordStageProgress, {
+        taskId: currentTask._id,
+        stageKey: stage,
+        summary: failedSummary,
+        actorType: 'system',
+        actorId: input.user.id,
+        actorName: 'Workflow PM',
+        payload: {
+          status: 'failed',
+          stage,
+        },
+      });
+      await setAgentOnline(convex, currentTask);
+      throw error;
+    }
+
+    await setAgentOnline(convex, currentTask);
+
+    const skillsSuffix =
+      skillContext.names.length > 0
+        ? ` Skills applied: ${skillContext.names.join(', ')}.`
+        : '';
+    const stageSummary = `${stageResult.summary}${skillsSuffix}`;
 
     await convex.mutation(api.topicWorkflow.recordStageArtifact, {
       taskId: currentTask._id,
       stageKey: stage,
-      summary: stageResult.summary,
+      summary: stageSummary,
       actorType: 'system',
       actorId: input.user.id,
       actorName: 'Workflow PM',
@@ -720,7 +909,7 @@ export async function runTopicWorkflow(
 
     const runRecord: WorkflowStageRun = {
       stage,
-      summary: stageResult.summary,
+      summary: stageSummary,
     };
 
     if (!autoContinue) {
@@ -742,7 +931,7 @@ export async function runTopicWorkflow(
       actorType: 'system',
       actorId: input.user.id,
       actorName: 'Workflow PM',
-      note: `${stageResult.summary} Moving to ${next.toStage}.`,
+      note: `${stageSummary} Moving to ${next.toStage}.`,
       skipOptionalOutlineReview: next.skipOptionalOutlineReview,
     });
 

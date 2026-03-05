@@ -821,6 +821,9 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                 <p className="text-xs font-medium mb-1.5" style={{ color: 'var(--mc-text-secondary)' }}>
                   Stage Outputs
                 </p>
+                <p className="text-[10px] mb-1.5" style={{ color: 'var(--mc-text-tertiary)' }}>
+                  Research/prewrite outputs are also synced to the document Workflow tab in the editor.
+                </p>
                 <div className="max-h-48 overflow-y-auto space-y-2">
                   {stageArtifacts.slice(0, 8).map((event) => {
                     const artifact = event.payload?.artifact;
