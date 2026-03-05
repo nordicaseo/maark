@@ -27,6 +27,39 @@ function isRootRole(role: string): boolean {
 
 type InvitationDeliveryStatus = 'sent' | 'failed' | 'fallback_only';
 
+function trimTrailingSlash(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
+function resolveAppBaseUrl(req: NextRequest): string {
+  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (configured) return trimTrailingSlash(configured);
+
+  const forwardedHost = req.headers.get('x-forwarded-host');
+  if (forwardedHost) {
+    const proto = req.headers.get('x-forwarded-proto') || 'https';
+    return trimTrailingSlash(`${proto}://${forwardedHost}`);
+  }
+
+  const host = req.headers.get('host');
+  if (host) {
+    const proto = host.includes('localhost') ? 'http' : 'https';
+    return trimTrailingSlash(`${proto}://${host}`);
+  }
+
+  const productionHost = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  if (productionHost) {
+    return trimTrailingSlash(`https://${productionHost}`);
+  }
+
+  const deploymentHost = process.env.VERCEL_URL?.trim();
+  if (deploymentHost) {
+    return trimTrailingSlash(`https://${deploymentHost}`);
+  }
+
+  return 'http://localhost:3000';
+}
+
 export async function GET() {
   await ensureDb();
 
@@ -152,8 +185,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Build the invite URL
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL
-      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+    const baseUrl = resolveAppBaseUrl(req);
     const inviteUrl = `${baseUrl}/auth/invite?token=${token}`;
     let deliveryStatus: InvitationDeliveryStatus = 'fallback_only';
     let deliveryError: string | null = null;
