@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto';
 import { marked } from 'marked';
-import { eq } from 'drizzle-orm';
+import { and, asc, eq, isNull, or } from 'drizzle-orm';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { AppUser } from '@/lib/auth';
@@ -24,6 +24,12 @@ interface StageRunResult {
   artifactTitle: string;
   artifactBody: string;
   artifactData?: unknown;
+  model: {
+    providerName: string;
+    model: string;
+    maxTokens: number;
+    temperature: number;
+  };
   deliverable?: {
     type: string;
     title: string;
@@ -34,6 +40,11 @@ interface StageRunResult {
 interface SkillContext {
   names: string[];
   promptText: string;
+  applied: Array<{
+    id: number;
+    name: string;
+    origin: 'task' | 'project' | 'global';
+  }>;
 }
 
 export interface WorkflowStageRun {
@@ -63,6 +74,27 @@ const RUNNABLE_STAGES = new Set<TopicStageKey>([
   'prewrite_context',
   'writing',
 ]);
+
+const STAGE_OWNER_CHAINS: Record<TopicStageKey, string[]> = {
+  research: ['researcher', 'seo', 'lead'],
+  outline_build: ['outliner', 'content', 'lead'],
+  outline_review: ['human', 'seo-reviewer'],
+  prewrite_context: ['project-manager'],
+  writing: ['writer', 'content', 'lead'],
+  final_review: ['seo-reviewer', 'seo', 'lead'],
+  complete: [],
+};
+
+const ROLE_ALIASES: Record<string, string[]> = {
+  researcher: ['researcher', 'seo', 'editor'],
+  outliner: ['outliner', 'editor', 'writer', 'content'],
+  writer: ['writer', 'content', 'editor'],
+  'seo-reviewer': ['seo-reviewer', 'seo', 'editor'],
+  'project-manager': ['project-manager', 'lead', 'editor'],
+  seo: ['seo', 'seo-reviewer', 'editor'],
+  content: ['content', 'writer', 'editor'],
+  lead: ['lead', 'project-manager', 'editor', 'seo-reviewer'],
+};
 
 function stripCodeFences(input: string): string {
   return input
@@ -129,19 +161,125 @@ function trimTo(input: string, maxChars: number): string {
   return `${input.slice(0, maxChars).trimEnd()}…`;
 }
 
-async function buildSkillContext(task: Doc<'tasks'>): Promise<SkillContext> {
-  if (!task.projectId && !task.skillId) {
-    return { names: [], promptText: '' };
+function normalizedRoleCandidates(role: string): string[] {
+  const key = role.toLowerCase();
+  const aliases = ROLE_ALIASES[key] || [key];
+  return Array.from(new Set([key, ...aliases]));
+}
+
+function isRoleAllowedForStage(stage: TopicStageKey, role: string): boolean {
+  const normalizedRole = role.toLowerCase();
+  const chain = STAGE_OWNER_CHAINS[stage] || [];
+  for (const requestedRole of chain) {
+    if (requestedRole === 'human') continue;
+    if (normalizedRoleCandidates(requestedRole).includes(normalizedRole)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function normalizeHeading(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractOutlineHeadings(markdown: string): string[] {
+  return markdown
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('## '))
+    .map((line) => line.replace(/^##\s+/, '').trim())
+    .filter(Boolean);
+}
+
+function extractDraftHeadings(html: string): string[] {
+  const headings: string[] = [];
+  const matches = html.matchAll(/<h[1-4][^>]*>([\s\S]*?)<\/h[1-4]>/gi);
+  for (const match of matches) {
+    const text = normalizeHeading(match[1] || '');
+    if (text) headings.push(text);
+  }
+  return headings;
+}
+
+function hasAbruptEnding(plainText: string): boolean {
+  const trimmed = plainText.trim();
+  if (!trimmed) return true;
+  if (/(to be continued|continue in next)/i.test(trimmed)) return true;
+  const tail = trimmed.slice(-220);
+  if (!/[.!?]["')\]]?\s*$/.test(tail)) return true;
+  if (/[,:;(\-–—]\s*$/.test(trimmed)) return true;
+  return false;
+}
+
+function evaluateDraftCompleteness(args: {
+  html: string;
+  plainText: string;
+  outlineHeadings: string[];
+}) {
+  const normalizedOutline = args.outlineHeadings.map(normalizeHeading).filter(Boolean);
+  const draftHeadings = extractDraftHeadings(args.html);
+  const missingHeadings: string[] = [];
+
+  for (const expectedHeading of normalizedOutline) {
+    const present = draftHeadings.some(
+      (actualHeading) =>
+        actualHeading.includes(expectedHeading) ||
+        expectedHeading.includes(actualHeading)
+    );
+    if (!present) {
+      missingHeadings.push(expectedHeading);
+    }
   }
 
-  const selectedSkills: Array<{
-    id: number;
-    name: string;
-    content: string;
-  }> = [];
+  const wordCount = args.plainText.split(/\s+/).filter(Boolean).length;
+  const minWords = Math.max(650, normalizedOutline.length * 140);
+  const headingCoverage =
+    normalizedOutline.length === 0
+      ? 1
+      : (normalizedOutline.length - missingHeadings.length) / normalizedOutline.length;
+
+  const reasons: string[] = [];
+  if (wordCount < minWords) {
+    reasons.push(`word count ${wordCount} is below minimum ${minWords}`);
+  }
+  if (headingCoverage < 0.75) {
+    reasons.push(
+      `heading coverage ${(headingCoverage * 100).toFixed(0)}% is below 75%`
+    );
+  }
+  if (hasAbruptEnding(args.plainText)) {
+    reasons.push('draft ending appears abrupt or incomplete');
+  }
+
+  return {
+    complete: reasons.length === 0,
+    reasons,
+    wordCount,
+    minWords,
+    headingCoverage,
+    missingHeadings,
+  };
+}
+
+async function buildSkillContext(task: Doc<'tasks'>): Promise<SkillContext> {
+  const selectedSkills = new Map<
+    number,
+    {
+      id: number;
+      name: string;
+      content: string;
+      origin: 'task' | 'project' | 'global';
+    }
+  >();
 
   if (task.skillId) {
-    const [explicit] = await db
+    const [explicitSkill] = await db
       .select({
         id: skills.id,
         name: skills.name,
@@ -151,12 +289,15 @@ async function buildSkillContext(task: Doc<'tasks'>): Promise<SkillContext> {
       .where(eq(skills.id, task.skillId))
       .limit(1);
 
-    if (explicit) {
-      selectedSkills.push(explicit);
+    if (explicitSkill) {
+      selectedSkills.set(explicitSkill.id, {
+        ...explicitSkill,
+        origin: 'task',
+      });
     }
   }
 
-  if (selectedSkills.length === 0 && task.projectId) {
+  if (task.projectId) {
     const projectSkills = await db
       .select({
         id: skills.id,
@@ -165,20 +306,59 @@ async function buildSkillContext(task: Doc<'tasks'>): Promise<SkillContext> {
       })
       .from(skills)
       .where(eq(skills.projectId, task.projectId))
-      .limit(3);
+      .orderBy(asc(skills.id))
+      .limit(10);
 
-    selectedSkills.push(...projectSkills);
+    for (const projectSkill of projectSkills) {
+      if (selectedSkills.has(projectSkill.id)) continue;
+      selectedSkills.set(projectSkill.id, {
+        ...projectSkill,
+        origin: 'project',
+      });
+    }
   }
 
-  if (selectedSkills.length === 0) {
-    return { names: [], promptText: '' };
+  const globalSkills = await db
+    .select({
+      id: skills.id,
+      name: skills.name,
+      content: skills.content,
+    })
+    .from(skills)
+    .where(
+      and(
+        eq(skills.isGlobal, 1),
+        or(isNull(skills.projectId), eq(skills.projectId, task.projectId ?? -1))
+      )
+    )
+    .orderBy(asc(skills.id))
+    .limit(10);
+
+  for (const globalSkill of globalSkills) {
+    if (selectedSkills.has(globalSkill.id)) continue;
+    selectedSkills.set(globalSkill.id, {
+      ...globalSkill,
+      origin: 'global',
+    });
+  }
+
+  const orderedSkills = Array.from(selectedSkills.values());
+  if (orderedSkills.length === 0) {
+    return { names: [], promptText: '', applied: [] };
   }
 
   const sections: string[] = [];
   const names: string[] = [];
+  const applied: SkillContext['applied'] = [];
 
-  for (const skill of selectedSkills) {
+  for (const skill of orderedSkills) {
     names.push(skill.name);
+    applied.push({
+      id: skill.id,
+      name: skill.name,
+      origin: skill.origin,
+    });
+
     const parts: Array<{ content: string | null; sortOrder: number | null }> = await db
       .select({
         content: skillParts.content,
@@ -192,17 +372,18 @@ async function buildSkillContext(task: Doc<'tasks'>): Promise<SkillContext> {
       .map((part) => String(part.content ?? '').trim())
       .filter(Boolean);
 
-    const mergedContent = orderedParts.length > 0
-      ? orderedParts.join('\n\n')
-      : String(skill.content || '').trim();
+    const mergedContent =
+      orderedParts.length > 0
+        ? orderedParts.join('\n\n')
+        : String(skill.content || '').trim();
 
     if (!mergedContent) continue;
 
-    sections.push(`Skill: ${skill.name}\n${mergedContent}`);
+    sections.push(`Skill (${skill.origin}): ${skill.name}\n${mergedContent}`);
   }
 
   const promptText = trimTo(sections.join('\n\n---\n\n'), 7000);
-  return { names, promptText };
+  return { names, promptText, applied };
 }
 
 async function getDocumentById(documentId: number) {
@@ -304,10 +485,6 @@ function resolveAutoAdvance(
     return { toStage: 'outline_review' };
   }
 
-  if (stage === 'prewrite_context') {
-    return { toStage: 'writing' };
-  }
-
   if (stage === 'writing') {
     return { toStage: 'final_review' };
   }
@@ -317,11 +494,12 @@ function resolveAutoAdvance(
 
 async function setAgentWorking(
   convex: ReturnType<typeof getConvexClient>,
-  task: Doc<'tasks'>
+  task: Doc<'tasks'>,
+  preloadedAgent?: Doc<'agents'> | null
 ) {
   if (!convex || !task.assignedAgentId) return null;
 
-  const agent = await convex.query(api.agents.get, { id: task.assignedAgentId });
+  const agent = preloadedAgent ?? (await convex.query(api.agents.get, { id: task.assignedAgentId }));
   await convex.mutation(api.agents.updateStatus, {
     id: task.assignedAgentId,
     status: 'WORKING',
@@ -347,7 +525,7 @@ async function runResearchStage(
   skillContext: SkillContext
 ): Promise<StageRunResult> {
   const modelOverride = await resolveStageModelOverride(task, 'research', 'research');
-  const { provider, model, maxTokens, temperature } = await resolveProviderForAction(
+  const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForAction(
     'research',
     modelOverride
   );
@@ -453,6 +631,12 @@ Produce a concise research brief for content production.`;
     artifactTitle: 'Research Brief',
     artifactBody: trimTo(bodyLines.join('\n'), 4000),
     artifactData: researchSnapshot,
+    model: {
+      providerName,
+      model,
+      maxTokens,
+      temperature,
+    },
     deliverable: {
       type: 'research_brief',
       title: 'Research Brief',
@@ -466,7 +650,7 @@ async function runOutlineStage(
   skillContext: SkillContext
 ): Promise<StageRunResult> {
   const modelOverride = await resolveStageModelOverride(task, 'outline_build', 'research');
-  const { provider, model, maxTokens, temperature } = await resolveProviderForAction(
+  const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForAction(
     'research',
     modelOverride
   );
@@ -507,21 +691,24 @@ Generate the production outline now.`;
 
   const outlineMarkdown = stripCodeFences(outlineRaw) || `# ${task.title}\n\n## Introduction\n- Add key context`;
   const outlineHtml = normalizeGeneratedHtml(marked.parse(outlineMarkdown, { async: false }) as string);
-  const plainText = stripHtml(outlineHtml);
-  const wordCount = plainText.split(/\s+/).filter(Boolean).length;
+  const sectionCount = (outlineMarkdown.match(/^##\s+/gm) || []).length;
+  const headingList = extractOutlineHeadings(outlineMarkdown);
+  const outlineSnapshot = {
+    markdown: outlineMarkdown,
+    html: outlineHtml,
+    headingCount: sectionCount,
+    headings: headingList,
+    generatedAt: Date.now(),
+  };
 
   await db
     .update(documents)
     .set({
-      content: outlineHtml,
-      plainText,
-      wordCount,
+      outlineSnapshot,
       status: 'in_progress',
       updatedAt: dbNow(),
     })
     .where(eq(documents.id, document.id));
-
-  const sectionCount = (outlineMarkdown.match(/^##\s+/gm) || []).length;
 
   return {
     summary: `Outline completed (${sectionCount} sections).`,
@@ -529,6 +716,14 @@ Generate the production outline now.`;
     artifactBody: trimTo(outlineMarkdown, 4000),
     artifactData: {
       sections: sectionCount,
+      headings: headingList,
+      outlineSnapshot,
+    },
+    model: {
+      providerName,
+      model,
+      maxTokens,
+      temperature,
     },
     deliverable: {
       type: 'outline',
@@ -543,12 +738,14 @@ async function runPrewriteStage(
   skillContext: SkillContext
 ): Promise<StageRunResult> {
   const modelOverride = await resolveStageModelOverride(task, 'prewrite_context', 'research');
-  const { provider, model, maxTokens, temperature } = await resolveProviderForAction(
+  const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForAction(
     'research',
     modelOverride
   );
 
-  const outlineText = stripHtml(contentToHtml(document.content, document.plainText));
+  const outlineText =
+    String(document.outlineSnapshot?.markdown || '').trim() ||
+    stripHtml(contentToHtml(document.content, document.plainText));
 
   const system = `You are a project manager agent preparing content for writing.
 Return strict JSON only with this shape:
@@ -633,6 +830,12 @@ Produce prewrite readiness and open questions.`;
       prewriteChecklist,
       agentQuestions,
     },
+    model: {
+      providerName,
+      model,
+      maxTokens,
+      temperature,
+    },
     deliverable: {
       type: 'prewrite_context',
       title: 'Prewrite Context',
@@ -646,7 +849,7 @@ async function runWritingStage(
   skillContext: SkillContext
 ): Promise<StageRunResult> {
   const modelOverride = await resolveStageModelOverride(task, 'writing', 'writing');
-  const { provider, model, maxTokens, temperature } = await resolveProviderForAction(
+  const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForAction(
     'writing',
     modelOverride
   );
@@ -664,7 +867,10 @@ async function runWritingStage(
         .filter((value): value is string => Boolean(value))
         .slice(0, 8)
     : [];
-  const outline = stripHtml(contentToHtml(document.content, document.plainText));
+  const outlineMarkdown =
+    String(document.outlineSnapshot?.markdown || '').trim() ||
+    stripHtml(contentToHtml(document.content, document.plainText));
+  const outlineHeadings = extractOutlineHeadings(outlineMarkdown);
 
   const system = `You are a senior SEO writer.
 Output clean HTML only (no markdown, no code fences).
@@ -689,7 +895,7 @@ Statistics:
 ${stats.map((s) => `- ${s}`).join('\n') || '-'}
 
 Outline to follow:
-${trimTo(outline, 2500)}
+${trimTo(outlineMarkdown, 2500)}
 
 Write the final article now.`;
 
@@ -711,9 +917,57 @@ Write the final article now.`;
     throw new Error('Writing stage returned empty content.');
   }
 
-  const normalizedHtml = normalizeGeneratedHtml(raw);
-  const plainText = stripHtml(normalizedHtml);
-  const wordCount = plainText.split(/\s+/).filter(Boolean).length;
+  let normalizedHtml = normalizeGeneratedHtml(raw);
+  let plainText = stripHtml(normalizedHtml);
+  let completion = evaluateDraftCompleteness({
+    html: normalizedHtml,
+    plainText,
+    outlineHeadings,
+  });
+
+  let continuationAttempts = 0;
+  while (!completion.complete && continuationAttempts < 2) {
+    continuationAttempts += 1;
+    const continuationPrompt = `The draft appears incomplete.
+Known issues: ${completion.reasons.join('; ') || 'Missing completion checks'}.
+Missing headings: ${completion.missingHeadings.slice(0, 6).join(', ') || 'none'}.
+
+Current draft HTML:
+${trimTo(normalizedHtml, 9000)}
+
+Continue the article from where it stopped and finish all remaining sections.
+Return HTML only for the continuation content, no preface and no duplicate opening sections.`;
+
+    const continuationRaw = await collectStreamText(
+      provider.stream({
+        model,
+        system,
+        messages: [{ role: 'user', content: continuationPrompt }],
+        maxTokens,
+        temperature,
+      })
+    );
+
+    if (!continuationRaw.trim()) {
+      break;
+    }
+
+    normalizedHtml = normalizeGeneratedHtml(`${normalizedHtml}\n${continuationRaw}`);
+    plainText = stripHtml(normalizedHtml);
+    completion = evaluateDraftCompleteness({
+      html: normalizedHtml,
+      plainText,
+      outlineHeadings,
+    });
+  }
+
+  if (!completion.complete) {
+    throw new Error(
+      `Writing output incomplete after ${continuationAttempts} continuation attempt(s): ${completion.reasons.join('; ')}`
+    );
+  }
+
+  const wordCount = completion.wordCount;
 
   let aiDetectionScore: number | null = null;
   let aiRiskLevel: string | null = null;
@@ -759,9 +1013,18 @@ Write the final article now.`;
     artifactBody: trimTo(plainText, 1200),
     artifactData: {
       wordCount,
+      minWordTarget: completion.minWords,
+      headingCoverage: completion.headingCoverage,
+      continuationAttempts,
       aiDetectionScore,
       contentQualityScore,
       previewToken,
+    },
+    model: {
+      providerName,
+      model,
+      maxTokens,
+      temperature,
     },
     deliverable: {
       type: 'preview_link',
@@ -837,11 +1100,81 @@ export async function runTopicWorkflow(
       break;
     }
 
+    const ensuredOwner = await convex.mutation(api.topicWorkflow.ensureStageOwner, {
+      taskId: currentTask._id,
+      stageKey: stage,
+    });
+    const refreshedTaskForOwner = await convex.query(api.tasks.get, {
+      id: currentTask._id,
+      projectId: currentTask.projectId ?? undefined,
+    });
+    if (!refreshedTaskForOwner) {
+      throw new Error('Task not found after stage owner enforcement.');
+    }
+    currentTask = refreshedTaskForOwner;
+
+    if (ensuredOwner.blocked || !currentTask.assignedAgentId) {
+      const blockedSummary =
+        `Stage ${stage} blocked: no available owner in ` +
+        `${(STAGE_OWNER_CHAINS[stage] || []).join(' -> ')}.`;
+      await convex.mutation(api.topicWorkflow.recordStageProgress, {
+        taskId: currentTask._id,
+        stageKey: stage,
+        summary: blockedSummary,
+        actorType: 'system',
+        actorId: input.user.id,
+        actorName: 'Workflow PM',
+        payload: {
+          status: 'blocked',
+          reason: 'assignment_blocked',
+          stage,
+          ownerChain: STAGE_OWNER_CHAINS[stage],
+        },
+      });
+      runs.push({ stage, summary: blockedSummary });
+      stoppedReason = blockedSummary;
+      break;
+    }
+
+    const assignedAgent = await convex.query(api.agents.get, {
+      id: currentTask.assignedAgentId,
+    });
+    if (!assignedAgent || !isRoleAllowedForStage(stage, assignedAgent.role)) {
+      const blockedSummary = `Stage ${stage} blocked: assigned role ${assignedAgent?.role || 'unknown'} is not allowed for this stage.`;
+      await convex.mutation(api.tasks.update, {
+        id: currentTask._id,
+        expectedProjectId: currentTask.projectId ?? undefined,
+        workflowStageStatus: 'blocked',
+        workflowLastEventAt: Date.now(),
+        workflowLastEventText: blockedSummary,
+      });
+      await convex.mutation(api.topicWorkflow.recordStageProgress, {
+        taskId: currentTask._id,
+        stageKey: stage,
+        summary: blockedSummary,
+        actorType: 'system',
+        actorId: input.user.id,
+        actorName: 'Workflow PM',
+        payload: {
+          status: 'blocked',
+          reason: 'owner_role_mismatch',
+          stage,
+          ownerChain: STAGE_OWNER_CHAINS[stage],
+          assignedAgentId: currentTask.assignedAgentId,
+          assignedAgentName: assignedAgent?.name ?? null,
+          assignedAgentRole: assignedAgent?.role ?? null,
+        },
+      });
+      runs.push({ stage, summary: blockedSummary });
+      stoppedReason = blockedSummary;
+      break;
+    }
+
     const ensured = await ensureTaskDocument(currentTask, input.user);
     currentTask = ensured.task;
     const freshDocument = await getDocumentById(ensured.document.id);
     const skillContext = await buildSkillContext(currentTask);
-    const agent = await setAgentWorking(convex, currentTask);
+    const agent = await setAgentWorking(convex, currentTask, assignedAgent);
 
     const startedSummary = agent
       ? `${agent.name} started ${stage}.`
@@ -859,7 +1192,10 @@ export async function runTopicWorkflow(
         stage,
         assignedAgentId: currentTask.assignedAgentId ?? null,
         assignedAgentName: agent?.name ?? null,
+        assignedAgentRole: agent?.role ?? null,
+        ownerChain: STAGE_OWNER_CHAINS[stage],
         skillNames: skillContext.names,
+        skills: skillContext.applied,
       },
     });
 
@@ -867,7 +1203,20 @@ export async function runTopicWorkflow(
     try {
       stageResult = await runStage(currentTask, freshDocument, stage, skillContext);
     } catch (error) {
-      const failedSummary = `Stage ${stage} failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const failedSummary = `Stage ${stage} failed: ${errorMessage}`;
+      const blockedBySafety =
+        stage === 'writing' &&
+        /incomplete|truncat|abrupt|minimum|coverage/i.test(errorMessage);
+      if (blockedBySafety) {
+        await convex.mutation(api.tasks.update, {
+          id: currentTask._id,
+          expectedProjectId: currentTask.projectId ?? undefined,
+          workflowStageStatus: 'blocked',
+          workflowLastEventAt: Date.now(),
+          workflowLastEventText: failedSummary,
+        });
+      }
       await convex.mutation(api.topicWorkflow.recordStageProgress, {
         taskId: currentTask._id,
         stageKey: stage,
@@ -876,11 +1225,20 @@ export async function runTopicWorkflow(
         actorId: input.user.id,
         actorName: 'Workflow PM',
         payload: {
-          status: 'failed',
+          status: blockedBySafety ? 'blocked' : 'failed',
           stage,
+          ownerChain: STAGE_OWNER_CHAINS[stage],
+          assignedAgentId: currentTask.assignedAgentId ?? null,
+          assignedAgentRole: agent?.role ?? assignedAgent?.role ?? null,
+          error: errorMessage,
         },
       });
       await setAgentOnline(convex, currentTask);
+      if (blockedBySafety) {
+        runs.push({ stage, summary: failedSummary });
+        stoppedReason = failedSummary;
+        break;
+      }
       throw error;
     }
 
@@ -905,6 +1263,17 @@ export async function runTopicWorkflow(
         data: stageResult.artifactData,
       },
       deliverable: stageResult.deliverable,
+      payload: {
+        status: 'completed',
+        stage,
+        ownerChain: STAGE_OWNER_CHAINS[stage],
+        stageRole: agent?.role ?? null,
+        assignedAgentId: currentTask.assignedAgentId ?? null,
+        assignedAgentName: agent?.name ?? null,
+        model: stageResult.model,
+        skillNames: skillContext.names,
+        skills: skillContext.applied,
+      },
     });
 
     const runRecord: WorkflowStageRun = {
@@ -921,7 +1290,11 @@ export async function runTopicWorkflow(
     const next = resolveAutoAdvance(currentTask, stage);
     if (!next) {
       runs.push(runRecord);
-      stoppedReason = `No automatic transition after ${stage}.`;
+      if (stage === 'prewrite_context') {
+        stoppedReason = 'Prewrite complete. Waiting for explicit approval to start writing.';
+      } else {
+        stoppedReason = `No automatic transition after ${stage}.`;
+      }
       break;
     }
 

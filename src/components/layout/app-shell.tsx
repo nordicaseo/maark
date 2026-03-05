@@ -536,6 +536,7 @@ ${editorHtml}
           isAiWriting={isAiWriting}
           onLiveGenerate={handleLiveGenerate}
           onCancelGeneration={handleCancelGeneration}
+          onUpdateDocument={handleUpdateDocument}
           activeProjectId={activeProjectId}
           editor={editorInstance}
           commentsRefreshKey={commentsRefreshKey}

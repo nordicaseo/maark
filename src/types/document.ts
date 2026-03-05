@@ -69,12 +69,20 @@ export interface Document {
   aiRiskLevel: string | null;
   semanticScore: number | null;
   contentQualityScore: number | null;
+  previewToken?: string | null;
   researchSnapshot?: {
     summary?: string;
     facts?: string[];
     statistics?: Array<{ stat: string; source?: string }>;
     sources?: Array<{ url: string; title?: string }>;
     analyzedAt?: number;
+  } | null;
+  outlineSnapshot?: {
+    markdown?: string;
+    html?: string;
+    headingCount?: number;
+    headings?: string[];
+    generatedAt?: number;
   } | null;
   prewriteChecklist?: {
     brandContextReady: boolean;

@@ -135,6 +135,14 @@ interface WorkflowEvent {
   actorName?: string;
   summary: string;
   payload?: {
+    meta?: {
+      stageRole?: string;
+      skillNames?: string[];
+      model?: {
+        providerName?: string;
+        model?: string;
+      };
+    };
     artifact?: {
       title: string;
       body?: string;
@@ -187,6 +195,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
     status: string;
     contentType: string;
     researchSnapshot?: SqlDocument['researchSnapshot'];
+    outlineSnapshot?: SqlDocument['outlineSnapshot'];
     prewriteChecklist?: SqlDocument['prewriteChecklist'];
     agentQuestions?: SqlDocument['agentQuestions'];
   } | null>(null);
@@ -227,6 +236,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
             status: doc.status,
             contentType: doc.contentType,
             researchSnapshot: doc.researchSnapshot,
+            outlineSnapshot: doc.outlineSnapshot,
             prewriteChecklist: doc.prewriteChecklist,
             agentQuestions: doc.agentQuestions,
           });
@@ -713,7 +723,9 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                   </button>
                 </>
               )}
-              {workflowNextStage && workflowStage !== 'complete' && (
+              {workflowNextStage &&
+                workflowStage !== 'complete' &&
+                workflowStage !== 'prewrite_context' && (
                 <button
                   onClick={() => handleAdvanceWorkflowStage(workflowNextStage as TopicStageKey)}
                   disabled={workflowBusy || workflowRunBusy}
@@ -725,6 +737,24 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                     <ArrowRight className="h-3 w-3" />
                   )}
                   Move to {STAGE_LABELS[workflowNextStage as TopicStageKey]}
+                </button>
+              )}
+              {workflowStage === 'prewrite_context' && (
+                <button
+                  onClick={() =>
+                    handleAdvanceWorkflowStage('writing', {
+                      note: 'Prewrite approved by human. Start writing stage.',
+                    })
+                  }
+                  disabled={workflowBusy || workflowRunBusy}
+                  className="mc-btn-primary text-xs flex items-center gap-1.5"
+                >
+                  {workflowBusy ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <CheckCheck className="h-3 w-3" />
+                  )}
+                  Approve Prewrite & Start Writing
                 </button>
               )}
               {workflowStage === 'outline_build' && workflowFlags.outlineReviewOptional && (
@@ -803,6 +833,17 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                   workflowEvents.map((event) => (
                     <div key={event._id} className="rounded-md px-2 py-1.5 text-xs" style={{ background: 'var(--mc-overlay)' }}>
                       <p style={{ color: 'var(--mc-text-secondary)' }}>{event.summary}</p>
+                      {event.payload?.meta && (
+                        <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
+                          {event.payload.meta.stageRole ? `Role: ${event.payload.meta.stageRole}` : null}
+                          {event.payload.meta.model?.model
+                            ? `${event.payload.meta.stageRole ? ' · ' : ''}Model: ${event.payload.meta.model.providerName || 'ai'}/${event.payload.meta.model.model}`
+                            : null}
+                          {event.payload.meta.skillNames && event.payload.meta.skillNames.length > 0
+                            ? `${event.payload.meta.stageRole || event.payload.meta.model?.model ? ' · ' : ''}Skills: ${event.payload.meta.skillNames.join(', ')}`
+                            : null}
+                        </p>
+                      )}
                       <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
                         {event.actorName || event.actorType} · {new Date(event.createdAt).toLocaleString()}
                       </p>
@@ -844,6 +885,19 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                             {STAGE_LABELS[event.stageKey as TopicStageKey] || event.stageKey}
                           </span>
                         </div>
+                        {(event.payload?.meta?.stageRole ||
+                          event.payload?.meta?.model?.model ||
+                          (event.payload?.meta?.skillNames && event.payload.meta.skillNames.length > 0)) && (
+                          <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
+                            {event.payload?.meta?.stageRole ? `Role: ${event.payload.meta.stageRole}` : null}
+                            {event.payload?.meta?.model?.model
+                              ? `${event.payload?.meta?.stageRole ? ' · ' : ''}Model: ${event.payload.meta.model.providerName || 'ai'}/${event.payload.meta.model.model}`
+                              : null}
+                            {event.payload?.meta?.skillNames && event.payload.meta.skillNames.length > 0
+                              ? `${event.payload?.meta?.stageRole || event.payload?.meta?.model?.model ? ' · ' : ''}Skills: ${event.payload.meta.skillNames.join(', ')}`
+                              : null}
+                          </p>
+                        )}
                         {artifact.body && (
                           <pre
                             className="whitespace-pre-wrap text-[11px] leading-4 max-h-28 overflow-y-auto"
@@ -851,6 +905,16 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                           >
                             {artifact.body}
                           </pre>
+                        )}
+                        {task.documentId && (
+                          <a
+                            href={withProjectScope(`/documents/${task.documentId}`, task.projectId)}
+                            className="inline-flex items-center gap-1 underline"
+                            style={{ color: 'var(--mc-accent)' }}
+                          >
+                            <FileText className="h-3 w-3" />
+                            Open in Editor Workflow Tab
+                          </a>
                         )}
                         {deliverable?.url ? (
                           <a
@@ -1084,6 +1148,21 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                 </div>
               ) : (
                 <p style={{ color: 'var(--mc-text-muted)' }}>No research summary yet.</p>
+              )}
+              {docPreview.outlineSnapshot?.markdown ? (
+                <div>
+                  <p className="font-medium mb-0.5" style={{ color: 'var(--mc-text-secondary)' }}>
+                    Outline snapshot
+                  </p>
+                  <pre
+                    className="whitespace-pre-wrap text-[11px] leading-4 max-h-28 overflow-y-auto"
+                    style={{ color: 'var(--mc-text-tertiary)' }}
+                  >
+                    {docPreview.outlineSnapshot.markdown}
+                  </pre>
+                </div>
+              ) : (
+                <p style={{ color: 'var(--mc-text-muted)' }}>No outline snapshot yet.</p>
               )}
               {docPreview.prewriteChecklist && (
                 <div style={{ color: 'var(--mc-text-tertiary)' }}>

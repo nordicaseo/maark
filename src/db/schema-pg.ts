@@ -54,6 +54,7 @@ export const documents = pgTable('documents', {
   semanticScore: real('semantic_score'),
   contentQualityScore: real('content_quality_score'),
   researchSnapshot: jsonb('research_snapshot'),
+  outlineSnapshot: jsonb('outline_snapshot'),
   prewriteChecklist: jsonb('prewrite_checklist'),
   agentQuestions: jsonb('agent_questions'),
   previewToken: text('preview_token'),

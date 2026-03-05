@@ -66,6 +66,7 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       semantic_score REAL,
       content_quality_score REAL,
       research_snapshot JSONB,
+      outline_snapshot JSONB,
       prewrite_checklist JSONB,
       agent_questions JSONB,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -78,6 +79,7 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS author_id TEXT REFERENCES users(id) ON DELETE SET NULL;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS research_snapshot JSONB;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS outline_snapshot JSONB;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS prewrite_checklist JSONB;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS agent_questions JSONB;
   `);
@@ -426,6 +428,7 @@ function createDb() {
       semantic_score REAL,
       content_quality_score REAL,
       research_snapshot TEXT,
+      outline_snapshot TEXT,
       prewrite_checklist TEXT,
       agent_questions TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -438,6 +441,7 @@ function createDb() {
   addColumnSafe(sqlite, 'documents', 'author_id', "TEXT REFERENCES users(id) ON DELETE SET NULL");
   addColumnSafe(sqlite, 'documents', 'preview_token', "TEXT");
   addColumnSafe(sqlite, 'documents', 'research_snapshot', "TEXT");
+  addColumnSafe(sqlite, 'documents', 'outline_snapshot', "TEXT");
   addColumnSafe(sqlite, 'documents', 'prewrite_checklist', "TEXT");
   addColumnSafe(sqlite, 'documents', 'agent_questions', "TEXT");
 

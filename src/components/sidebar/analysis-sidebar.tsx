@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import {
@@ -34,6 +34,7 @@ interface AnalysisSidebarProps {
   isAiWriting?: boolean;
   onLiveGenerate: (instruction: string, tone: string, skillContent?: string) => void;
   onCancelGeneration: () => void;
+  onUpdateDocument?: (updates: Partial<Document>) => void | Promise<void>;
   activeProjectId?: number | null;
   editor?: Editor | null;
   commentsRefreshKey?: number;
@@ -54,6 +55,7 @@ interface SidebarContentProps {
   isAiWriting?: boolean;
   onLiveGenerate: (instruction: string, tone: string, skillContent?: string) => void;
   onCancelGeneration: () => void;
+  onUpdateDocument?: (updates: Partial<Document>) => void | Promise<void>;
   activeProjectId?: number | null;
   editor?: Editor | null;
   commentsRefreshKey?: number;
@@ -74,12 +76,130 @@ function SidebarContent({
   isAiWriting,
   onLiveGenerate,
   onCancelGeneration,
+  onUpdateDocument,
   activeProjectId,
   editor,
   commentsRefreshKey,
 }: SidebarContentProps) {
   void onInsertAiText;
   void onReplaceContent;
+
+  const [researchSummary, setResearchSummary] = useState('');
+  const [researchFacts, setResearchFacts] = useState('');
+  const [researchStats, setResearchStats] = useState('');
+  const [researchSources, setResearchSources] = useState('');
+  const [outlineMarkdown, setOutlineMarkdown] = useState('');
+  const [workflowSaving, setWorkflowSaving] = useState(false);
+  const [rerunBusy, setRerunBusy] = useState<'research' | 'outline_build' | null>(null);
+  const [workflowMessage, setWorkflowMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setResearchSummary(document.researchSnapshot?.summary || '');
+    setResearchFacts((document.researchSnapshot?.facts || []).join('\n'));
+    setResearchStats(
+      (document.researchSnapshot?.statistics || [])
+        .map((stat) => `${stat.stat}${stat.source ? ` | ${stat.source}` : ''}`)
+        .join('\n')
+    );
+    setResearchSources(
+      (document.researchSnapshot?.sources || [])
+        .map((source) => `${source.url}${source.title ? ` | ${source.title}` : ''}`)
+        .join('\n')
+    );
+    setOutlineMarkdown(document.outlineSnapshot?.markdown || '');
+  }, [
+    document.id,
+    document.researchSnapshot,
+    document.outlineSnapshot,
+  ]);
+
+  const handleSaveWorkflowContext = async () => {
+    if (!onUpdateDocument) return;
+    setWorkflowSaving(true);
+    setWorkflowMessage(null);
+    try {
+      const facts = researchFacts
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(0, 20);
+      const statistics = researchStats
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(0, 20)
+        .map((line) => {
+          const [stat, source] = line.split('|').map((part) => part.trim());
+          return source ? { stat, source } : { stat };
+        })
+        .filter((item) => item.stat);
+      const sources = researchSources
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(0, 20)
+        .map((line) => {
+          const [url, title] = line.split('|').map((part) => part.trim());
+          return title ? { url, title } : { url };
+        })
+        .filter((item) => item.url);
+      const headings = outlineMarkdown
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith('## '))
+        .map((line) => line.replace(/^##\s+/, '').trim())
+        .filter(Boolean);
+
+      await onUpdateDocument({
+        researchSnapshot: {
+          summary: researchSummary.trim(),
+          facts,
+          statistics,
+          sources,
+          analyzedAt: Date.now(),
+        },
+        outlineSnapshot: {
+          markdown: outlineMarkdown,
+          headingCount: headings.length,
+          headings,
+          generatedAt: Date.now(),
+        },
+      });
+      setWorkflowMessage('Workflow context saved.');
+    } catch {
+      setWorkflowMessage('Failed to save workflow context.');
+    } finally {
+      setWorkflowSaving(false);
+    }
+  };
+
+  const handleRerunFrom = async (fromStage: 'research' | 'outline_build') => {
+    setRerunBusy(fromStage);
+    setWorkflowMessage(null);
+    try {
+      const res = await fetch('/api/topic-workflow/rerun', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          documentId: document.id,
+          fromStage,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Rerun failed');
+      }
+      setWorkflowMessage(
+        fromStage === 'research'
+          ? 'Workflow rerun started from Research and will pause before Writing.'
+          : 'Workflow rerun started from Outline and will pause before Writing.'
+      );
+    } catch (error) {
+      setWorkflowMessage((error as Error).message);
+    } finally {
+      setRerunBusy(null);
+    }
+  };
 
   return (
     <Tabs defaultValue="write" className="flex flex-col h-full">
@@ -115,57 +235,87 @@ function SidebarContent({
 
         <TabsContent value="workflow" className={`p-3 mt-0 space-y-3 ${expanded ? 'p-4 max-w-2xl mx-auto' : ''}`}>
           <div className="rounded-md border p-3 space-y-2">
-            <p className="text-xs font-semibold">Research Snapshot</p>
-            {document.researchSnapshot?.summary ? (
-              <>
-                <p className="text-xs text-muted-foreground">{document.researchSnapshot.summary}</p>
-                {document.researchSnapshot.facts && document.researchSnapshot.facts.length > 0 && (
-                  <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-0.5">
-                    {document.researchSnapshot.facts.slice(0, 5).map((fact, idx) => (
-                      <li key={`${fact}-${idx}`}>{fact}</li>
-                    ))}
-                  </ul>
-                )}
-                {document.researchSnapshot.statistics && document.researchSnapshot.statistics.length > 0 && (
-                  <div className="space-y-1">
-                    <p className="text-[11px] font-medium text-muted-foreground">Stats</p>
-                    <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-0.5">
-                      {document.researchSnapshot.statistics.slice(0, 5).map((stat, idx) => (
-                        <li key={`${stat.stat}-${idx}`}>
-                          {stat.stat}
-                          {stat.source ? ` (${stat.source})` : ''}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {document.researchSnapshot.sources && document.researchSnapshot.sources.length > 0 && (
-                  <div className="space-y-1">
-                    <p className="text-[11px] font-medium text-muted-foreground">Sources</p>
-                    <ul className="text-xs text-muted-foreground space-y-0.5">
-                      {document.researchSnapshot.sources.slice(0, 5).map((source, idx) => (
-                        <li key={`${source.url}-${idx}`} className="truncate">
-                          <a
-                            href={source.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="underline hover:text-foreground"
-                          >
-                            {source.title || source.url}
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </>
-            ) : (
-              <p className="text-xs text-muted-foreground">No research snapshot yet.</p>
-            )}
+            <p className="text-xs font-semibold">Editable Research Snapshot</p>
+            <textarea
+              className="w-full min-h-16 rounded-md border px-2 py-1 text-xs"
+              placeholder="Research summary"
+              value={researchSummary}
+              onChange={(e) => setResearchSummary(e.target.value)}
+            />
+            <textarea
+              className="w-full min-h-20 rounded-md border px-2 py-1 text-xs"
+              placeholder="Facts (one per line)"
+              value={researchFacts}
+              onChange={(e) => setResearchFacts(e.target.value)}
+            />
+            <textarea
+              className="w-full min-h-20 rounded-md border px-2 py-1 text-xs"
+              placeholder="Statistics (format: stat | source)"
+              value={researchStats}
+              onChange={(e) => setResearchStats(e.target.value)}
+            />
+            <textarea
+              className="w-full min-h-20 rounded-md border px-2 py-1 text-xs"
+              placeholder="Sources (format: url | title)"
+              value={researchSources}
+              onChange={(e) => setResearchSources(e.target.value)}
+            />
           </div>
 
           <div className="rounded-md border p-3 space-y-2">
-            <p className="text-xs font-semibold">Prewrite Checklist</p>
+            <p className="text-xs font-semibold">Editable Outline Snapshot</p>
+            <textarea
+              className="w-full min-h-40 rounded-md border px-2 py-1 text-xs font-mono"
+              placeholder="Outline markdown"
+              value={outlineMarkdown}
+              onChange={(e) => setOutlineMarkdown(e.target.value)}
+            />
+          </div>
+
+          <div className="rounded-md border p-3 space-y-2">
+            <p className="text-xs font-semibold">Workflow Controls</p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                className="text-xs"
+                onClick={handleSaveWorkflowContext}
+                disabled={workflowSaving || !onUpdateDocument}
+              >
+                {workflowSaving ? 'Saving...' : 'Save Research + Outline'}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="text-xs"
+                onClick={() => handleRerunFrom('outline_build')}
+                disabled={rerunBusy !== null}
+              >
+                {rerunBusy === 'outline_build'
+                  ? 'Rerunning...'
+                  : 'Regenerate from Outline'}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="text-xs"
+                onClick={() => handleRerunFrom('research')}
+                disabled={rerunBusy !== null}
+              >
+                {rerunBusy === 'research'
+                  ? 'Rerunning...'
+                  : 'Regenerate from Research'}
+              </Button>
+            </div>
+            {workflowMessage && (
+              <p className="text-xs text-muted-foreground">{workflowMessage}</p>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Reruns pause before writing so a human can approve prewrite context.
+            </p>
+          </div>
+
+          <div className="rounded-md border p-3 space-y-2">
+            <p className="text-xs font-semibold">Current Prewrite Checklist</p>
             {document.prewriteChecklist ? (
               <div className="text-xs text-muted-foreground space-y-0.5">
                 <p>Brand context: {document.prewriteChecklist.brandContextReady ? 'ready' : 'pending'}</p>
@@ -233,6 +383,7 @@ export function AnalysisSidebar({
   isAiWriting,
   onLiveGenerate,
   onCancelGeneration,
+  onUpdateDocument,
   activeProjectId,
   editor,
   commentsRefreshKey,
@@ -278,6 +429,7 @@ export function AnalysisSidebar({
         isAiWriting={isAiWriting}
         onLiveGenerate={onLiveGenerate}
         onCancelGeneration={onCancelGeneration}
+        onUpdateDocument={onUpdateDocument}
         activeProjectId={activeProjectId}
         editor={editor}
         commentsRefreshKey={commentsRefreshKey}
@@ -317,6 +469,7 @@ export function AnalysisSidebar({
               isAiWriting={isAiWriting}
               onLiveGenerate={onLiveGenerate}
               onCancelGeneration={onCancelGeneration}
+              onUpdateDocument={onUpdateDocument}
               activeProjectId={activeProjectId}
               editor={editor}
               commentsRefreshKey={commentsRefreshKey}

@@ -8,7 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "convex:codegen": "npx convex codegen",
+    "convex:deploy": "npx convex deploy",
+    "convex:verify-public": "node scripts/verify-convex-public-functions.mjs",
+    "release:guard": "npm run convex:deploy && npm run convex:verify-public",
+    "ship:vercel": "npm run convex:codegen && npm run build && npm run convex:deploy && npm run convex:verify-public && vercel --prod"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

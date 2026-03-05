@@ -36,6 +36,7 @@ export const documents = sqliteTable('documents', {
   semanticScore: real('semantic_score'),
   contentQualityScore: real('content_quality_score'),
   researchSnapshot: text('research_snapshot', { mode: 'json' }),
+  outlineSnapshot: text('outline_snapshot', { mode: 'json' }),
   prewriteChecklist: text('prewrite_checklist', { mode: 'json' }),
   agentQuestions: text('agent_questions', { mode: 'json' }),
   previewToken: text('preview_token'),

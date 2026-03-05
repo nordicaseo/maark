@@ -54,7 +54,7 @@ const stageOwnerChains: Record<TopicStageKey, string[]> = {
   prewrite_context: ["project-manager"],
   writing: ["writer", "content", "lead"],
   final_review: ["seo-reviewer", "seo", "lead"],
-  complete: ["project-manager"],
+  complete: [],
 };
 
 const roleAliases: Record<string, string[]> = {
@@ -70,6 +70,7 @@ const roleAliases: Record<string, string[]> = {
 
 function stageOwnerSummary(stage: TopicStageKey): string {
   const chain = stageOwnerChains[stage] || ["lead"];
+  if (chain.length === 0) return "none";
   if (chain.length === 1) return chain[0];
   return `${chain[0]} (fallback: ${chain.slice(1).join(" -> ")})`;
 }
@@ -288,11 +289,57 @@ async function assignStageOwner(
     stageKey: TopicStageKey;
   }
 ) {
+  const stageOwnerChain = stageOwnerChains[args.stageKey] || [];
+  const assignableRoles = stageOwnerChain.filter((role) => role !== "human");
+  if (assignableRoles.length === 0) {
+    await ctx.db.patch(args.taskId, {
+      assignedAgentId: undefined,
+      workflowStageStatus: args.stageKey === "complete" ? "complete" : "in_progress",
+      workflowUpdatedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    return {
+      blocked: false,
+      assignedAgentId: null as Id<"agents"> | null,
+      assignedAgentName: null as string | null,
+    };
+  }
+
+  const now = Date.now();
   const assignment = await resolveStageOwnerAgent(ctx, args.stageKey);
-  if (!assignment) return null;
+  if (!assignment) {
+    await ctx.db.patch(args.taskId, {
+      assignedAgentId: undefined,
+      workflowStageStatus: "blocked",
+      workflowUpdatedAt: now,
+      updatedAt: now,
+    });
+
+    const summary = `PM assignment blocked: no available agent for ${args.stageKey}. Required owner chain: ${stageOwnerSummary(args.stageKey)}.`;
+    await insertWorkflowEvent(ctx, {
+      taskId: args.taskId,
+      projectId: args.projectId,
+      stageKey: args.stageKey,
+      eventType: "assignment_blocked",
+      actorType: "system",
+      actorName: "Workflow PM",
+      summary,
+      payload: {
+        requiredOwnerChain: stageOwnerChains[args.stageKey],
+      },
+    });
+
+    return {
+      blocked: true,
+      assignedAgentId: null as Id<"agents"> | null,
+      assignedAgentName: null as string | null,
+    };
+  }
 
   await ctx.db.patch(args.taskId, {
     assignedAgentId: assignment.agent._id,
+    workflowStageStatus: "in_progress",
+    workflowUpdatedAt: now,
     updatedAt: Date.now(),
   });
 
@@ -313,7 +360,13 @@ async function assignStageOwner(
     },
   });
 
-  return assignment;
+  return {
+    blocked: false,
+    assignedAgentId: assignment.agent._id,
+    assignedAgentName: assignment.agent.name,
+    requestedRole: assignment.requestedRole,
+    matchedRole: assignment.matchedRole,
+  };
 }
 
 async function transitionStage(
@@ -512,6 +565,112 @@ export const createTopicFromSource = mutation({
   },
 });
 
+export const ensureStageOwner = mutation({
+  args: {
+    taskId: v.id("tasks"),
+    stageKey: v.optional(stageValidator),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!isTopicTask(task)) {
+      throw new Error("Task is not a topic workflow task.");
+    }
+
+    const stageKey = (args.stageKey ||
+      task.workflowCurrentStageKey ||
+      "research") as TopicStageKey;
+
+    const assignment = await assignStageOwner(ctx, {
+      taskId: task._id,
+      projectId: task.projectId,
+      stageKey,
+    });
+
+    return {
+      ok: true,
+      stageKey,
+      blocked: Boolean(assignment?.blocked),
+      assignedAgentId: assignment?.assignedAgentId ?? null,
+      assignedAgentName: assignment?.assignedAgentName ?? null,
+    };
+  },
+});
+
+export const resetFromStage = mutation({
+  args: {
+    taskId: v.id("tasks"),
+    fromStage: v.union(v.literal("research"), v.literal("outline_build")),
+    actorType: v.union(v.literal("user"), v.literal("agent"), v.literal("system")),
+    actorId: v.optional(v.string()),
+    actorName: v.optional(v.string()),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!isTopicTask(task)) {
+      throw new Error("Task is not a topic workflow task.");
+    }
+
+    const now = Date.now();
+    const currentStage = (task.workflowCurrentStageKey || "research") as TopicStageKey;
+    const resetApprovals = {
+      outlineHuman: false,
+      outlineSeo: false,
+      seoFinal: false,
+      outlineSkipped: false,
+    };
+
+    await ctx.db.patch(task._id, {
+      workflowCurrentStageKey: args.fromStage,
+      workflowStageStatus: "in_progress",
+      workflowApprovals: resetApprovals,
+      workflowUpdatedAt: now,
+      workflowCompletedAt: undefined,
+      status: stageToTaskStatus(args.fromStage),
+      completedAt: undefined,
+      deliverables: [],
+      updatedAt: now,
+    });
+
+    const summary =
+      args.note ||
+      `Workflow reset from ${currentStage} to ${args.fromStage}. Downstream deliverables cleared.`;
+    await insertWorkflowEvent(ctx, {
+      taskId: task._id,
+      projectId: task.projectId,
+      stageKey: args.fromStage,
+      eventType: "reset",
+      fromStageKey: currentStage,
+      toStageKey: args.fromStage,
+      actorType: args.actorType,
+      actorId: args.actorId,
+      actorName: args.actorName,
+      summary,
+      payload: {
+        resetFrom: args.fromStage,
+        ownerChain: stageOwnerChains[args.fromStage],
+      },
+    });
+
+    await assignStageOwner(ctx, {
+      taskId: task._id,
+      projectId: task.projectId,
+      stageKey: args.fromStage,
+    });
+
+    await insertHandoffEvent(ctx, {
+      taskId: task._id,
+      projectId: task.projectId,
+      stageKey: args.fromStage,
+      fromStageKey: currentStage,
+      actorType: "system",
+      actorName: "Workflow PM",
+    });
+
+    return { ok: true };
+  },
+});
+
 export const advanceStage = mutation({
   args: {
     taskId: v.id("tasks"),
@@ -684,6 +843,7 @@ export const recordStageArtifact = mutation({
     actorName: v.optional(v.string()),
     artifact: v.optional(artifactValidator),
     deliverable: v.optional(deliverableValidator),
+    payload: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     const task = await ctx.db.get(args.taskId);
@@ -743,6 +903,7 @@ export const recordStageArtifact = mutation({
       payload: {
         artifact: args.artifact,
         deliverable: savedDeliverable,
+        ...(args.payload ? { meta: args.payload } : {}),
       },
     });
 

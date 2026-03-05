@@ -66,6 +66,9 @@ export async function createTopicWorkflow(input: CreateTopicWorkflowInput) {
     throw new Error('Mission Control is not configured (Convex URL missing)');
   }
 
+  // Ensure workflow-critical agent roles exist before assignment.
+  await convex.mutation(api.seed.seedAgents, {});
+
   const created = await convex.mutation(api.topicWorkflow.createTopicFromSource, {
     projectId: input.projectId,
     topic: input.topic,

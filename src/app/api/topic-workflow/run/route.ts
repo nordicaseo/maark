@@ -4,6 +4,7 @@ import { runTopicWorkflow } from '@/lib/topic-workflow-runner';
 import { getWorkflowTaskForUser } from '@/lib/topic-workflow';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import type { Id } from '../../../../../convex/_generated/dataModel';
+import { api } from '../../../../../convex/_generated/api';
 
 function parseTaskId(value: unknown): Id<'tasks'> | null {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -26,7 +27,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
     }
 
-    const { task } = await getWorkflowTaskForUser(auth.user, taskId);
+    const { task, convex } = await getWorkflowTaskForUser(auth.user, taskId);
+    await convex.mutation(api.seed.seedAgents, {});
 
     const result = await runTopicWorkflow({
       user: auth.user,

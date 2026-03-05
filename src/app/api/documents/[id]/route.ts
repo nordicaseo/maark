@@ -80,6 +80,7 @@ export async function PATCH(
     if (body.contentQualityScore !== undefined)
       updateData.contentQualityScore = body.contentQualityScore;
     if (body.researchSnapshot !== undefined) updateData.researchSnapshot = body.researchSnapshot;
+    if (body.outlineSnapshot !== undefined) updateData.outlineSnapshot = body.outlineSnapshot;
     if (body.prewriteChecklist !== undefined) updateData.prewriteChecklist = body.prewriteChecklist;
     if (body.agentQuestions !== undefined) updateData.agentQuestions = body.agentQuestions;
     const parsedProjectId =

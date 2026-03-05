@@ -126,7 +126,7 @@ function TaskCardContent({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 min-w-0 overflow-hidden">
       {/* Header: priority + title + delete */}
       <div className="flex items-start gap-2">
         <div className={`mc-priority-dot mt-1.5 ${PRIORITY_COLORS[task.priority] || 'low'}`} />
@@ -263,7 +263,7 @@ function TaskCardContent({
 
       {/* Deliverables */}
       {task.deliverables && task.deliverables.length > 0 && (
-        <div className="flex gap-1 pt-1 border-t" style={{ borderColor: 'var(--mc-border)' }}>
+        <div className="flex flex-wrap gap-1 pt-1 border-t min-w-0" style={{ borderColor: 'var(--mc-border)' }}>
           {task.deliverables.map((d) => (
             d.url ? (
               <a
@@ -271,7 +271,7 @@ function TaskCardContent({
                 href={d.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded"
+                className="inline-flex max-w-full min-w-0 items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded break-all"
                 style={{ background: 'var(--mc-accent-soft)', color: 'var(--mc-accent)' }}
                 onClick={(e) => e.stopPropagation()}
               >
@@ -281,7 +281,7 @@ function TaskCardContent({
             ) : (
               <span
                 key={d.id}
-                className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded"
+                className="inline-flex max-w-full min-w-0 items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded break-all"
                 style={{ background: 'var(--mc-overlay)', color: 'var(--mc-text-secondary)' }}
               >
                 <FileText className="h-3 w-3" />
