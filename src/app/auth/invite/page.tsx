@@ -10,6 +10,8 @@ import { Loader2, AlertCircle, UserPlus } from 'lucide-react';
 interface InviteInfo {
   valid: boolean;
   role?: string;
+  projectRole?: string | null;
+  projectIds?: number[];
   inviterName?: string;
   error?: string;
 }
@@ -91,6 +93,12 @@ function InviteContent() {
               {invite.role}
             </Badge>
           </p>
+          {Array.isArray(invite.projectIds) && invite.projectIds.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              Access scope: {invite.projectIds.length} project{invite.projectIds.length === 1 ? '' : 's'}{' '}
+              as <span className="font-medium capitalize">{invite.projectRole || 'writer'}</span>
+            </p>
+          )}
         </div>
 
         <div className="space-y-3">

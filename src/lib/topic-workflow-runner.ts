@@ -96,7 +96,6 @@ export interface RunTopicWorkflowResult {
 
 const RUNNABLE_STAGES = new Set<TopicStageKey>([
   'research',
-  'seo_intel_review',
   'outline_build',
   'prewrite_context',
   'writing',
@@ -500,10 +499,6 @@ function resolveAutoAdvance(
   stage: TopicStageKey
 ): { toStage: TopicStageKey; skipOptionalOutlineReview?: boolean } | null {
   if (stage === 'research') {
-    return { toStage: 'seo_intel_review' };
-  }
-
-  if (stage === 'seo_intel_review') {
     return { toStage: 'outline_build' };
   }
 
@@ -1380,16 +1375,60 @@ export async function runTopicWorkflow(
 
   const { convex } = await getWorkflowTaskForUser(input.user, input.taskId);
 
-  let currentTask = (await convex.query(api.tasks.get, { id: input.taskId })) as Doc<'tasks'> | null;
-  if (!currentTask) {
+  const initialTask = (await convex.query(api.tasks.get, {
+    id: input.taskId,
+  })) as Doc<'tasks'> | null;
+  if (!initialTask) {
     throw new Error('Task not found');
   }
+  let currentTask: Doc<'tasks'> = initialTask;
 
   const runs: WorkflowStageRun[] = [];
   let stoppedReason: string | undefined;
 
   for (let i = 0; i < maxStages; i += 1) {
     const stage = (currentTask.workflowCurrentStageKey || 'research') as TopicStageKey;
+
+    if (stage === 'seo_intel_review') {
+      const bypassSummary =
+        'SERP intel stage bypassed in primary workflow (deferred to keyword-level SEO intel). Moving to outline_build.';
+      await convex.mutation(api.topicWorkflow.recordStageProgress, {
+        taskId: currentTask._id,
+        stageKey: 'seo_intel_review',
+        summary: bypassSummary,
+        actorType: 'system',
+        actorId: input.user.id,
+        actorName: 'Workflow PM',
+        payload: {
+          status: 'bypassed',
+          reasonCode: 'serp_stage_bypassed_deferred',
+          fromStage: 'seo_intel_review',
+          toStage: 'outline_build',
+        },
+      });
+      await convex.mutation(api.topicWorkflow.advanceStage, {
+        taskId: currentTask._id,
+        toStage: 'outline_build',
+        actorType: 'system',
+        actorId: input.user.id,
+        actorName: 'Workflow PM',
+        note: bypassSummary,
+      });
+      runs.push({
+        stage: 'seo_intel_review',
+        summary: bypassSummary,
+        nextStage: 'outline_build',
+      });
+      const refreshedTask = await convex.query(api.tasks.get, {
+        id: currentTask._id,
+        projectId: currentTask.projectId ?? undefined,
+      });
+      if (!refreshedTask) {
+        throw new Error('Task not found after SEO stage bypass.');
+      }
+      currentTask = refreshedTask;
+      continue;
+    }
 
     if (stage === 'complete') {
       stoppedReason = 'Workflow already complete.';

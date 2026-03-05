@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { FolderOpen, Sparkles, Cpu, Users, FileText, Search, Globe, Bot } from 'lucide-react';
+import { useAuth } from '@/components/auth/auth-provider';
+import { hasRole } from '@/lib/permissions';
 
 interface Stats {
   projects: number;
@@ -15,6 +17,7 @@ interface Stats {
 }
 
 export default function AdminDashboard() {
+  const { user } = useAuth();
   const [stats, setStats] = useState<Stats | null>(null);
 
   useEffect(() => {
@@ -30,10 +33,14 @@ export default function AdminDashboard() {
     { label: 'Keywords', value: stats?.keywords ?? '—', icon: Search, href: '/keywords' },
     { label: 'Pages', value: stats?.pages ?? '—', icon: Globe, href: '/pages' },
     { label: 'Skills', value: stats?.skills ?? '—', icon: Sparkles, href: '/admin/skills' },
-    { label: 'Agents', value: '8 roles', icon: Bot, href: '/admin/agents' },
-    { label: 'AI Providers', value: stats?.providers ?? '—', icon: Cpu, href: '/admin/ai' },
     { label: 'Users', value: stats?.users ?? '—', icon: Users, href: '/admin/users' },
   ];
+  if (user && hasRole(user.role, 'super_admin')) {
+    cards.push(
+      { label: 'Agents', value: '8 roles', icon: Bot, href: '/admin/agents' },
+      { label: 'AI Providers', value: stats?.providers ?? '—', icon: Cpu, href: '/admin/ai' },
+    );
+  }
 
   return (
     <div>

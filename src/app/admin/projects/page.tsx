@@ -5,6 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -12,7 +19,8 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { Plus, Pencil, Trash2, FolderOpen, Users, FileText } from 'lucide-react';
+import { Plus, Pencil, Trash2, FolderOpen, Users, FileText, UserPlus } from 'lucide-react';
+import { PROJECT_ASSIGNABLE_ROLES } from '@/lib/permissions';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -31,12 +39,32 @@ interface Project {
   documentCount?: number;
 }
 
+interface ProjectMember {
+  id: number;
+  projectId: number;
+  userId: string;
+  role: string;
+  userName: string | null;
+  userEmail: string;
+}
+
+interface UserOption {
+  id: string;
+  name: string | null;
+  email: string;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
 export default function AdminProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [userOptions, setUserOptions] = useState<UserOption[]>([]);
+  const [membersByProject, setMembersByProject] = useState<Record<number, ProjectMember[]>>({});
+  const [membersOpen, setMembersOpen] = useState<Record<number, boolean>>({});
+  const [newMemberUserByProject, setNewMemberUserByProject] = useState<Record<number, string>>({});
+  const [newMemberRoleByProject, setNewMemberRoleByProject] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
 
   // Dialog state
@@ -63,9 +91,42 @@ export default function AdminProjectsPage() {
     }
   }, []);
 
+  const fetchUsers = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/users');
+      if (!res.ok) return;
+      const rows = await res.json();
+      if (!Array.isArray(rows)) return;
+      setUserOptions(
+        rows.map((row) => ({
+          id: String(row.id),
+          name: row.name ?? null,
+          email: String(row.email ?? ''),
+        }))
+      );
+    } catch (err) {
+      console.error('Failed to fetch users', err);
+    }
+  }, []);
+
+  const fetchProjectMembers = useCallback(async (projectId: number) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/members`);
+      if (!res.ok) return;
+      const rows = await res.json();
+      setMembersByProject((prev) => ({
+        ...prev,
+        [projectId]: Array.isArray(rows) ? rows : [],
+      }));
+    } catch (err) {
+      console.error('Failed to fetch project members', err);
+    }
+  }, []);
+
   useEffect(() => {
     fetchProjects();
-  }, [fetchProjects]);
+    fetchUsers();
+  }, [fetchProjects, fetchUsers]);
 
   /* ── CRUD ───────────────────────────────────────────────────────── */
 
@@ -105,6 +166,46 @@ export default function AdminProjectsPage() {
     if (!confirm('Delete this project? All associated documents and skills will be affected.')) return;
     await fetch(`/api/projects/${id}`, { method: 'DELETE' });
     fetchProjects();
+  }
+
+  async function toggleMembers(projectId: number) {
+    const next = !membersOpen[projectId];
+    setMembersOpen((prev) => ({ ...prev, [projectId]: next }));
+    if (next) {
+      await fetchProjectMembers(projectId);
+    }
+  }
+
+  async function updateMemberRole(projectId: number, userId: string, role: string) {
+    await fetch(`/api/projects/${projectId}/members`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, role }),
+    });
+    await fetchProjectMembers(projectId);
+  }
+
+  async function removeMember(projectId: number, userId: string) {
+    await fetch(`/api/projects/${projectId}/members`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    });
+    await fetchProjectMembers(projectId);
+  }
+
+  async function addMember(projectId: number) {
+    const userId = newMemberUserByProject[projectId];
+    const role = newMemberRoleByProject[projectId] || 'writer';
+    if (!userId) return;
+    await fetch(`/api/projects/${projectId}/members`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, role }),
+    });
+    setNewMemberUserByProject((prev) => ({ ...prev, [projectId]: '' }));
+    setNewMemberRoleByProject((prev) => ({ ...prev, [projectId]: 'writer' }));
+    await fetchProjectMembers(projectId);
   }
 
   /* ── Render ─────────────────────────────────────────────────────── */
@@ -178,6 +279,13 @@ export default function AdminProjectsPage() {
                   <Button
                     variant="ghost"
                     size="sm"
+                    onClick={() => void toggleMembers(p.id)}
+                  >
+                    <Users className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => openEdit(p)}
                   >
                     <Pencil className="h-3.5 w-3.5" />
@@ -191,6 +299,106 @@ export default function AdminProjectsPage() {
                   </Button>
                 </div>
               </div>
+              {membersOpen[p.id] && (
+                <div className="mt-4 border-t border-border pt-3 space-y-3">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Project Members
+                  </p>
+                  {(membersByProject[p.id] || []).length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No members assigned.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {(membersByProject[p.id] || []).map((member) => (
+                        <div
+                          key={`${member.projectId}-${member.userId}`}
+                          className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">
+                              {member.userName || member.userEmail}
+                            </p>
+                            <p className="text-xs text-muted-foreground truncate">{member.userEmail}</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Select
+                              value={member.role}
+                              onValueChange={(role) => void updateMemberRole(p.id, member.userId, role)}
+                            >
+                              <SelectTrigger className="w-28 h-8 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {PROJECT_ASSIGNABLE_ROLES.map((role) => (
+                                  <SelectItem key={role} value={role}>
+                                    {role}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => void removeMember(p.id, member.userId)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="rounded-md border border-dashed border-border p-3 space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                      <UserPlus className="h-3.5 w-3.5" />
+                      Add Member
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-[1fr_140px_auto] gap-2">
+                      <Select
+                        value={newMemberUserByProject[p.id] || ''}
+                        onValueChange={(value) =>
+                          setNewMemberUserByProject((prev) => ({ ...prev, [p.id]: value }))
+                        }
+                      >
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="Select user" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {userOptions.map((userOption) => (
+                            <SelectItem key={userOption.id} value={userOption.id}>
+                              {userOption.name || userOption.email}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={newMemberRoleByProject[p.id] || 'writer'}
+                        onValueChange={(value) =>
+                          setNewMemberRoleByProject((prev) => ({ ...prev, [p.id]: value }))
+                        }
+                      >
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PROJECT_ASSIGNABLE_ROLES.map((role) => (
+                            <SelectItem key={role} value={role}>
+                              {role}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        size="sm"
+                        onClick={() => void addMember(p.id)}
+                        disabled={!newMemberUserByProject[p.id]}
+                      >
+                        Add
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>

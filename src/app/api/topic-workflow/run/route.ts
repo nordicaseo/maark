@@ -12,7 +12,7 @@ function parseTaskId(value: unknown): Id<'tasks'> | null {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireRole('editor');
+  const auth = await requireRole('writer');
   if (auth.error) return auth.error;
 
   try {

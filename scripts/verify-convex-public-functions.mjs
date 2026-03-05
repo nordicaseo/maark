@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const REQUIRED_REMOTE_FUNCTIONS = [
@@ -22,6 +22,8 @@ const REQUIRED_API_ROUTES = [
   'src/app/api/admin/agents/route.ts',
   'src/app/api/admin/agents/shared-user/route.ts',
   'src/app/api/admin/agents/heartbeat/route.ts',
+  'src/app/api/mission-control/tasks/[id]/route.ts',
+  'src/app/api/client/dashboard/route.ts',
 ];
 
 const ACCEPTABLE_VALIDATION_ERRORS = [
@@ -51,6 +53,31 @@ function runConvex(fnName, args = '{}') {
   }
 }
 
+function verifyRoleMembershipReadiness() {
+  const permissionsPath = resolve(process.cwd(), 'src/lib/permissions.ts');
+  const accessPath = resolve(process.cwd(), 'src/lib/access.ts');
+  const permissions = readFileSync(permissionsPath, 'utf8');
+  const access = readFileSync(accessPath, 'utf8');
+
+  const requiredPermissionMarkers = ['super_admin', 'client', 'PROJECT_ROLE_LEVELS', 'isRootRole'];
+  const missingPermissionMarkers = requiredPermissionMarkers.filter(
+    (marker) => !permissions.includes(marker)
+  );
+  if (missingPermissionMarkers.length > 0) {
+    throw new Error(
+      `permissions.ts is missing required RBAC markers: ${missingPermissionMarkers.join(', ')}`
+    );
+  }
+
+  const requiredAccessMarkers = ['userCanMutateProject', 'getProjectMembershipRole', 'isAdminUser'];
+  const missingAccessMarkers = requiredAccessMarkers.filter((marker) => !access.includes(marker));
+  if (missingAccessMarkers.length > 0) {
+    throw new Error(
+      `access.ts is missing required membership markers: ${missingAccessMarkers.join(', ')}`
+    );
+  }
+}
+
 async function main() {
   const missingRoutes = REQUIRED_API_ROUTES.filter(
     (routePath) => !existsSync(resolve(process.cwd(), routePath))
@@ -62,6 +89,8 @@ async function main() {
     }
     process.exit(1);
   }
+
+  verifyRoleMembershipReadiness();
 
   const failures = [];
   for (const fnName of REQUIRED_REMOTE_FUNCTIONS) {

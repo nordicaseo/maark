@@ -13,6 +13,8 @@ import {
 } from '@/components/ui/select';
 import { InviteDialog } from '@/components/admin/invite-dialog';
 import { Users, Clock, UserPlus, Mail, Trash2, Link2 } from 'lucide-react';
+import { useAuth } from '@/components/auth/auth-provider';
+import { hasRole } from '@/lib/permissions';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -31,6 +33,8 @@ interface Invitation {
   id: number;
   email: string | null;
   role: string;
+  projectIds?: number[] | null;
+  projectRole?: string | null;
   token: string;
   inviterName: string | null;
   expiresAt: string;
@@ -43,6 +47,7 @@ interface Invitation {
 /* ------------------------------------------------------------------ */
 
 export default function AdminUsersPage() {
+  const { user } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -112,6 +117,7 @@ export default function AdminUsersPage() {
   function getRoleBadgeVariant(role: string) {
     switch (role) {
       case 'owner':
+      case 'super_admin':
         return 'default' as const;
       case 'admin':
         return 'default' as const;
@@ -123,6 +129,7 @@ export default function AdminUsersPage() {
   }
 
   const pendingInvitations = invitations.filter((i) => !i.acceptedAt);
+  const canEditRoles = Boolean(user && hasRole(user.role, 'super_admin'));
 
   /* ── Render ─────────────────────────────────────────────────────── */
 
@@ -196,9 +203,9 @@ export default function AdminUsersPage() {
               </div>
 
               <div className="flex items-center gap-3">
-                {u.role === 'owner' ? (
+                {u.role === 'owner' || !canEditRoles ? (
                   <Badge variant="default" className="capitalize">
-                    owner
+                    {u.role}
                   </Badge>
                 ) : (
                   <Select
@@ -209,9 +216,11 @@ export default function AdminUsersPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="client">Client</SelectItem>
                       <SelectItem value="writer">Writer</SelectItem>
                       <SelectItem value="editor">Editor</SelectItem>
                       <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="super_admin">Super Admin</SelectItem>
                     </SelectContent>
                   </Select>
                 )}
@@ -254,6 +263,9 @@ export default function AdminUsersPage() {
                     <span className="text-xs text-muted-foreground">
                       Invited {new Date(inv.createdAt).toLocaleDateString()} &middot; Expires{' '}
                       {new Date(inv.expiresAt).toLocaleDateString()}
+                      {Array.isArray(inv.projectIds) && inv.projectIds.length > 0
+                        ? ` · ${inv.projectIds.length} project${inv.projectIds.length === 1 ? '' : 's'} (${inv.projectRole || 'writer'})`
+                        : ''}
                     </span>
                   </div>
                 </div>

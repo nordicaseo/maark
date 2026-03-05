@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Copy, Check, Loader2, UserPlus, Link2 } from 'lucide-react';
+import { useAuth } from '@/components/auth/auth-provider';
 
 interface InviteDialogProps {
   open: boolean;
@@ -24,25 +25,73 @@ interface InviteDialogProps {
   onInviteCreated?: () => void;
 }
 
+interface ProjectOption {
+  id: number;
+  name: string;
+}
+
 export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDialogProps) {
+  const { user } = useAuth();
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('writer');
+  const [projectRole, setProjectRole] = useState('writer');
+  const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isRootInvite = role === 'owner' || role === 'super_admin';
+  const canInviteRootRoles = user?.role === 'owner';
+
+  useEffect(() => {
+    if (!open) return;
+    fetch('/api/projects')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((rows) => {
+        const normalized = Array.isArray(rows)
+          ? rows
+              .map((row) => ({
+                id: Number(row.id),
+                name: String(row.name ?? ''),
+              }))
+              .filter((row) => Number.isFinite(row.id) && row.id > 0 && row.name)
+          : [];
+        setProjectOptions(normalized);
+      })
+      .catch(() => setProjectOptions([]));
+  }, [open]);
+
+  useEffect(() => {
+    if (!isRootInvite) return;
+    setSelectedProjectIds([]);
+  }, [isRootInvite]);
+
+  const toggleProject = (projectId: number) => {
+    setSelectedProjectIds((prev) =>
+      prev.includes(projectId)
+        ? prev.filter((id) => id !== projectId)
+        : [...prev, projectId]
+    );
+  };
 
   const handleCreate = async () => {
     setLoading(true);
     setError(null);
 
     try {
+      if (!isRootInvite && selectedProjectIds.length === 0) {
+        throw new Error('Select at least one project for this invitation.');
+      }
+
       const res = await fetch('/api/admin/invitations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: email.trim() || undefined,
           role,
+          projectRole: isRootInvite ? undefined : projectRole,
+          projectIds: isRootInvite ? [] : selectedProjectIds,
         }),
       });
 
@@ -73,6 +122,8 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
       // Reset state when closing
       setEmail('');
       setRole('writer');
+      setProjectRole('writer');
+      setSelectedProjectIds([]);
       setInviteUrl(null);
       setCopied(false);
       setError(null);
@@ -111,12 +162,61 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="client">Client</SelectItem>
                   <SelectItem value="writer">Writer</SelectItem>
                   <SelectItem value="editor">Editor</SelectItem>
                   <SelectItem value="admin">Admin</SelectItem>
+                  {canInviteRootRoles && <SelectItem value="super_admin">Super Admin</SelectItem>}
+                  {canInviteRootRoles && <SelectItem value="owner">Owner</SelectItem>}
                 </SelectContent>
               </Select>
             </div>
+
+            {!isRootInvite && (
+              <>
+                <div className="space-y-2">
+                  <Label>Project Role</Label>
+                  <Select value={projectRole} onValueChange={setProjectRole}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="client">Client</SelectItem>
+                      <SelectItem value="writer">Writer</SelectItem>
+                      <SelectItem value="editor">Editor</SelectItem>
+                      <SelectItem value="admin">Admin</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Projects</Label>
+                  <div className="max-h-36 overflow-y-auto rounded-md border border-border">
+                    {projectOptions.length === 0 ? (
+                      <p className="px-3 py-2 text-xs text-muted-foreground">
+                        No projects available.
+                      </p>
+                    ) : (
+                      projectOptions.map((project) => {
+                        const selected = selectedProjectIds.includes(project.id);
+                        return (
+                          <label
+                            key={project.id}
+                            className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-accent/40"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => toggleProject(project.id)}
+                            />
+                            <span className="truncate">{project.name}</span>
+                          </label>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
 
             {error && (
               <p className="text-sm text-destructive">{error}</p>

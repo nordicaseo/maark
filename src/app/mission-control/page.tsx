@@ -120,6 +120,7 @@ export default function MissionControlPage() {
   const [showAgents, setShowAgents] = useState(true);
   const [selectedTaskId, setSelectedTaskId] = useState<Id<'tasks'> | null>(null);
   const [showActivity, setShowActivity] = useState(true);
+  const isClientRole = user?.role === 'client';
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -274,7 +275,8 @@ export default function MissionControlPage() {
               <button
                 onClick={() => setShowNewTask(true)}
                 className="mc-btn-primary"
-                disabled={!projectId}
+                disabled={!projectId || isClientRole}
+                title={isClientRole ? 'Clients have read-only Mission Control access' : undefined}
               >
                 + New Task
               </button>
@@ -304,7 +306,9 @@ export default function MissionControlPage() {
                 >
                   Content Queue
                 </h2>
-                <p className="mc-header-mono mt-0.5">Drag tasks between stages</p>
+                <p className="mc-header-mono mt-0.5">
+                  {isClientRole ? 'Read-only view for client role' : 'Drag tasks between stages'}
+                </p>
               </div>
             </div>
             {!projectId && (
@@ -315,6 +319,7 @@ export default function MissionControlPage() {
             )}
             <KanbanBoard
               projectId={projectId}
+              readOnly={isClientRole}
               onNewTask={() => setShowNewTask(true)}
               onTaskClick={setSelectedTaskId}
             />
@@ -336,6 +341,7 @@ export default function MissionControlPage() {
         <TaskDetailPanel
           taskId={selectedTaskId}
           projectId={projectId}
+          readOnly={isClientRole}
           onClose={() => setSelectedTaskId(null)}
         />
       </div>

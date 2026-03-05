@@ -7,7 +7,7 @@ import {
 } from '@/lib/agents/project-agent-profiles';
 
 export async function GET() {
-  const auth = await requireRole('admin');
+  const auth = await requireRole('super_admin');
   if (auth.error) return auth.error;
 
   try {
@@ -27,7 +27,7 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
-  const auth = await requireRole('admin');
+  const auth = await requireRole('super_admin');
   if (auth.error) return auth.error;
 
   try {

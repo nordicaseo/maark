@@ -27,8 +27,17 @@ export const TOPIC_STAGE_TRANSITIONS: Record<TopicStageKey, TopicStageKey[]> = O
   })
 ) as Record<TopicStageKey, TopicStageKey[]>;
 
+// Legacy compatibility: old workflows may still have this stage.
+TOPIC_STAGE_TRANSITIONS.seo_intel_review = ['outline_build'];
+
 export function canSkipOutlineReviewByRole(role: string): boolean {
-  return role === 'owner' || role === 'admin' || role === 'project_manager' || role === 'lead';
+  return (
+    role === 'owner' ||
+    role === 'super_admin' ||
+    role === 'admin' ||
+    role === 'project_manager' ||
+    role === 'lead'
+  );
 }
 
 export function evaluateStageTransition(args: {
@@ -44,7 +53,8 @@ export function evaluateStageTransition(args: {
     return { ok: true, approvals };
   }
 
-  let allowed = TOPIC_STAGE_TRANSITIONS[args.currentStage].includes(args.toStage);
+  const currentTransitions = TOPIC_STAGE_TRANSITIONS[args.currentStage] || [];
+  let allowed = currentTransitions.includes(args.toStage);
 
   if (
     !allowed &&

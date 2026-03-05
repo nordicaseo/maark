@@ -3,9 +3,26 @@ import { db, ensureDb } from '@/db';
 import { invitations, users } from '@/db/schema';
 import { desc, eq } from 'drizzle-orm';
 import { requireRole } from '@/lib/auth';
-import { ASSIGNABLE_ROLES } from '@/lib/permissions';
+import { ASSIGNABLE_ROLES, PROJECT_ASSIGNABLE_ROLES } from '@/lib/permissions';
 import { randomUUID } from 'crypto';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
+import { userCanMutateProject } from '@/lib/access';
+
+function sanitizeProjectIds(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return [];
+  const unique = new Set<number>();
+  for (const value of raw) {
+    const parsed = Number.parseInt(String(value), 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      unique.add(parsed);
+    }
+  }
+  return Array.from(unique);
+}
+
+function isRootRole(role: string): boolean {
+  return role === 'owner' || role === 'super_admin';
+}
 
 export async function GET() {
   await ensureDb();
@@ -19,6 +36,8 @@ export async function GET() {
         id: invitations.id,
         email: invitations.email,
         role: invitations.role,
+        projectIds: invitations.projectIds,
+        projectRole: invitations.projectRole,
         token: invitations.token,
         invitedById: invitations.invitedById,
         inviterName: users.name,
@@ -45,14 +64,50 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { email, role } = body;
+    const { email } = body;
+    const role = typeof body.role === 'string' ? body.role : 'writer';
+    const projectIds = sanitizeProjectIds(body.projectIds);
+    const projectRoleRaw =
+      typeof body.projectRole === 'string' ? body.projectRole : role;
 
     // Validate role
-    if (role && !ASSIGNABLE_ROLES.includes(role)) {
+    if (!ASSIGNABLE_ROLES.includes(role)) {
       return NextResponse.json(
         { error: `Invalid role. Must be one of: ${ASSIGNABLE_ROLES.join(', ')}` },
         { status: 400 }
       );
+    }
+    if (!PROJECT_ASSIGNABLE_ROLES.includes(projectRoleRaw as (typeof PROJECT_ASSIGNABLE_ROLES)[number])) {
+      return NextResponse.json(
+        { error: `Invalid projectRole. Must be one of: ${PROJECT_ASSIGNABLE_ROLES.join(', ')}` },
+        { status: 400 }
+      );
+    }
+
+    const inviterIsOwner = auth.user.role === 'owner';
+    const targetIsRootRole = isRootRole(role);
+
+    if (targetIsRootRole && !inviterIsOwner) {
+      return NextResponse.json(
+        { error: 'Only owner can invite owner/super_admin roles.' },
+        { status: 403 }
+      );
+    }
+
+    if (!targetIsRootRole && projectIds.length === 0) {
+      return NextResponse.json(
+        { error: 'At least one projectId is required for non-root invitations.' },
+        { status: 400 }
+      );
+    }
+
+    for (const projectId of projectIds) {
+      if (!(await userCanMutateProject(auth.user, projectId, 'admin'))) {
+        return NextResponse.json(
+          { error: `Forbidden project scope for projectId ${projectId}` },
+          { status: 403 }
+        );
+      }
     }
 
     const token = randomUUID();
@@ -62,7 +117,9 @@ export async function POST(req: NextRequest) {
       .insert(invitations)
       .values({
         email: email || null,
-        role: role || 'writer',
+        role,
+        projectIds: projectIds.length > 0 ? projectIds : null,
+        projectRole: targetIsRootRole ? null : projectRoleRaw,
         token,
         invitedById: auth.user.id,
         expiresAt: expiresAt.toISOString(),
@@ -75,7 +132,12 @@ export async function POST(req: NextRequest) {
       resourceType: 'invitation',
       resourceId: invitation.id,
       severity: 'warning',
-      metadata: { role: invitation.role, email: invitation.email },
+      metadata: {
+        role: invitation.role,
+        email: invitation.email,
+        projectIds: invitation.projectIds ?? [],
+        projectRole: invitation.projectRole ?? null,
+      },
     });
 
     // Build the invite URL
@@ -88,6 +150,8 @@ export async function POST(req: NextRequest) {
       token: invitation.token,
       inviteUrl,
       role: invitation.role,
+      projectIds: invitation.projectIds ?? [],
+      projectRole: invitation.projectRole,
       email: invitation.email,
       expiresAt: invitation.expiresAt,
     });

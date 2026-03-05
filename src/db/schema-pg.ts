@@ -211,6 +211,8 @@ export const invitations = pgTable('invitations', {
   id: serial('id').primaryKey(),
   email: varchar('email', { length: 300 }),
   role: varchar('role', { length: 30 }).notNull().default('writer'),
+  projectIds: jsonb('project_ids'),
+  projectRole: varchar('project_role', { length: 30 }),
   token: text('token').notNull().unique(),
   invitedById: text('invited_by_id').references(() => users.id, { onDelete: 'set null' }),
   expiresAt: timestamp('expires_at').notNull(),

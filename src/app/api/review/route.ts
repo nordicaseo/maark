@@ -3,6 +3,7 @@ import { db, ensureDb } from '@/db';
 import { documents, users, projects, projectMembers } from '@/db/schema';
 import { desc, eq, sql } from 'drizzle-orm';
 import { getAuthUser } from '@/lib/auth';
+import { isAdminUser } from '@/lib/access';
 
 export async function GET(req: NextRequest) {
   await ensureDb();
@@ -21,7 +22,7 @@ export async function GET(req: NextRequest) {
 
     let baseQuery;
 
-    if (user.role === 'owner') {
+    if (isAdminUser(user)) {
       // Admin: see all, optionally filtered by project
       baseQuery = db
         .select({

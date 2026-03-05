@@ -191,6 +191,8 @@ export const invitations = sqliteTable('invitations', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   email: text('email'),
   role: text('role').notNull().default('writer'),
+  projectIds: text('project_ids', { mode: 'json' }),
+  projectRole: text('project_role'),
   token: text('token').notNull().unique(),
   invitedById: text('invited_by_id').references(() => users.id, { onDelete: 'set null' }),
   expiresAt: text('expires_at').notNull(),

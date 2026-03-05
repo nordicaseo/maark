@@ -13,7 +13,7 @@ export async function PATCH(
   await ensureDb();
 
   // Only admin+ can change roles
-  const auth = await requireRole('admin');
+  const auth = await requireRole('super_admin');
   if (auth.error) return auth.error;
 
   const { id: targetUserId } = await params;
@@ -41,23 +41,28 @@ export async function PATCH(
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    // Only the owner can promote to owner or demote another owner
-    if (role === 'owner' && auth.user.role !== 'owner') {
+    const actorIsOwner = auth.user.role === 'owner';
+    const targetIsOwner = targetUser.role === 'owner';
+    const targetIsSuperAdmin = targetUser.role === 'super_admin';
+    const toOwnerOrSuperAdmin = role === 'owner' || role === 'super_admin';
+
+    // Owner-exclusive management for owner/super_admin.
+    if (toOwnerOrSuperAdmin && !actorIsOwner) {
       return NextResponse.json(
-        { error: 'Only the owner can promote to owner' },
+        { error: 'Only the owner can assign owner/super_admin roles' },
         { status: 403 }
       );
     }
 
-    if (targetUser.role === 'owner' && auth.user.role !== 'owner') {
+    if ((targetIsOwner || targetIsSuperAdmin) && !actorIsOwner) {
       return NextResponse.json(
-        { error: 'Only the owner can change another owner\'s role' },
+        { error: 'Only the owner can modify owner/super_admin roles' },
         { status: 403 }
       );
     }
 
     // Prevent demoting the last owner
-    if (targetUser.role === 'owner' && role !== 'owner') {
+    if (targetIsOwner && role !== 'owner') {
       const [countResult] = await db
         .select({ count: sql<number>`count(*)` })
         .from(users)

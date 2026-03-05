@@ -24,14 +24,20 @@ import {
   Bot,
 } from 'lucide-react';
 
-const NAV_ITEMS = [
+const PROJECT_ADMIN_ITEMS = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/admin/projects', label: 'Projects', icon: FolderOpen },
   { href: '/admin/skills', label: 'Skills', icon: Sparkles },
+  { href: '/admin/users', label: 'Users', icon: Users },
+];
+
+const SYSTEM_ADMIN_ITEMS = [
   { href: '/admin/agents', label: 'Agents', icon: Bot },
   { href: '/admin/ai', label: 'AI Models', icon: Cpu },
-  { href: '/admin/users', label: 'Users', icon: Users },
   { href: '/admin/observability', label: 'Observability', icon: Radar },
+];
+
+const OPERATIONS_ITEMS = [
   { href: '/keywords', label: 'Keywords', icon: Search },
   { href: '/pages', label: 'Pages', icon: Globe },
   { href: '/mission-control', label: 'Mission Control', icon: Kanban },
@@ -45,12 +51,28 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const { activeProjectId, setActiveProjectId } = useActiveProject();
   useProjectScopeSync(activeProjectId, setActiveProjectId);
   const shouldRedirect = !isLoading && (!user || !hasRole(user.role, 'admin'));
+  const canAccessSystemAdmin = Boolean(user && hasRole(user.role, 'super_admin'));
+  const navItems = [
+    ...PROJECT_ADMIN_ITEMS,
+    ...(canAccessSystemAdmin ? SYSTEM_ADMIN_ITEMS : []),
+    ...OPERATIONS_ITEMS,
+  ];
 
   useEffect(() => {
     if (shouldRedirect) {
       router.replace(withProjectScope('/documents', activeProjectId));
+      return;
     }
-  }, [shouldRedirect, router, activeProjectId]);
+    if (
+      user &&
+      !canAccessSystemAdmin &&
+      (pathname.startsWith('/admin/agents') ||
+        pathname.startsWith('/admin/ai') ||
+        pathname.startsWith('/admin/observability'))
+    ) {
+      router.replace('/admin');
+    }
+  }, [shouldRedirect, router, activeProjectId, user, canAccessSystemAdmin, pathname]);
 
   // Redirect non-admin users away from admin
   if (isLoading) {
@@ -77,7 +99,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
 
         <nav className="flex-1 p-2 space-y-0.5">
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const href = item.href.startsWith('/admin')
               ? item.href
               : withProjectScope(item.href, activeProjectId);

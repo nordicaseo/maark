@@ -32,7 +32,7 @@ function parseOptionalNumber(value: unknown): number | undefined {
 
 export async function POST(req: NextRequest) {
   await ensureDb();
-  const auth = await requireRole('editor');
+  const auth = await requireRole('writer');
   if (auth.error) return auth.error;
 
   try {

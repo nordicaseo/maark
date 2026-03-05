@@ -2,12 +2,16 @@ import { and, eq } from 'drizzle-orm';
 import { db, ensureDb } from '@/db/index';
 import { documents, keywords, pages, projectMembers, projects, skills } from '@/db/schema';
 import type { AppUser } from '@/lib/auth';
-import { hasRole } from '@/lib/permissions';
+import {
+  hasProjectRole,
+  isRootRole,
+  type ProjectAssignableRole,
+} from '@/lib/permissions';
 import { ACTIVE_PROJECT_COOKIE_KEY, parseProjectId } from '@/lib/project-context';
 import type { NextRequest } from 'next/server';
 
 export function isAdminUser(user: AppUser) {
-  return hasRole(user.role, 'admin');
+  return isRootRole(user.role);
 }
 
 export async function getAccessibleProjectIds(user: AppUser): Promise<number[]> {
@@ -27,7 +31,7 @@ export async function userCanAccessProject(
   user: AppUser,
   projectId: number | null | undefined
 ): Promise<boolean> {
-  if (!projectId) return true;
+  if (!projectId) return isAdminUser(user);
   await ensureDb();
   if (isAdminUser(user)) return true;
   const rows = await db
@@ -41,6 +45,41 @@ export async function userCanAccessProject(
     )
     .limit(1);
   return rows.length > 0;
+}
+
+export async function getProjectMembershipRole(
+  userId: string,
+  projectId: number
+): Promise<ProjectAssignableRole | null> {
+  await ensureDb();
+  const [row] = await db
+    .select({ role: projectMembers.role })
+    .from(projectMembers)
+    .where(
+      and(
+        eq(projectMembers.projectId, projectId),
+        eq(projectMembers.userId, userId)
+      )
+    )
+    .limit(1);
+  if (!row?.role) return null;
+  const role = String(row.role);
+  if (role === 'admin' || role === 'editor' || role === 'writer' || role === 'client') {
+    return role;
+  }
+  return null;
+}
+
+export async function userCanMutateProject(
+  user: AppUser,
+  projectId: number | null | undefined,
+  requiredRole: ProjectAssignableRole = 'writer'
+): Promise<boolean> {
+  if (!projectId) return isAdminUser(user);
+  if (isAdminUser(user)) return true;
+  const membershipRole = await getProjectMembershipRole(user.id, projectId);
+  if (!membershipRole) return false;
+  return hasProjectRole(membershipRole, requiredRole);
 }
 
 export async function userCanAccessDocument(
@@ -91,7 +130,7 @@ export async function userCanAccessSkill(
 
   if (skill.isGlobal === 1) {
     // Only admin/owner can mutate global skills.
-    return !write;
+    return !write || isAdminUser(user);
   }
 
   if (!skill.projectId) {

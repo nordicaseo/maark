@@ -12,7 +12,7 @@ function maskApiKey(key: string): string {
 
 export async function GET() {
   await ensureDb();
-  const auth = await requireRole('admin');
+  const auth = await requireRole('super_admin');
   if (auth.error) return auth.error;
   try {
     const rows = (await db
@@ -38,7 +38,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   await ensureDb();
-  const auth = await requireRole('admin');
+  const auth = await requireRole('super_admin');
   if (auth.error) return auth.error;
   try {
     const body = await req.json();

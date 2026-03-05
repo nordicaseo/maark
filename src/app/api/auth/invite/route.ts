@@ -17,6 +17,8 @@ export async function GET(req: NextRequest) {
       .select({
         id: invitations.id,
         role: invitations.role,
+        projectIds: invitations.projectIds,
+        projectRole: invitations.projectRole,
         email: invitations.email,
         expiresAt: invitations.expiresAt,
         acceptedAt: invitations.acceptedAt,
@@ -45,6 +47,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       valid: true,
       role: invitation.role,
+      projectIds: invitation.projectIds ?? [],
+      projectRole: invitation.projectRole ?? null,
       inviterName: invitation.inviterName || 'Team admin',
     });
   } catch (error) {

@@ -40,7 +40,7 @@ const deliverableValidator = v.object({
 });
 
 const stageTransitions: Record<TopicStageKey, TopicStageKey[]> = {
-  research: ["seo_intel_review"],
+  research: ["outline_build"],
   seo_intel_review: ["outline_build"],
   outline_build: ["outline_review"],
   outline_review: ["prewrite_context"],

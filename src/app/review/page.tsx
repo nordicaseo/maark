@@ -151,14 +151,12 @@ export default function ReviewPage() {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              {user.role === 'owner' && (
-                <div className="w-48">
-                  <ProjectSwitcher
-                    activeProjectId={activeProjectId}
-                    onProjectChange={setActiveProjectId}
-                  />
-                </div>
-              )}
+              <div className="w-48">
+                <ProjectSwitcher
+                  activeProjectId={activeProjectId}
+                  onProjectChange={setActiveProjectId}
+                />
+              </div>
             </div>
           </div>
 

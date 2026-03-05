@@ -70,6 +70,7 @@ interface TaskDetailPanelProps {
   taskId: Id<'tasks'> | null;
   onClose: () => void;
   projectId?: number | null;
+  readOnly?: boolean;
 }
 
 interface AgentRunResult {
@@ -127,7 +128,7 @@ interface WorkflowEvent {
   createdAt: number;
 }
 
-export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }: TaskDetailPanelProps) {
   const { user } = useAuth();
   const task = useQuery(
     api.tasks.get,
@@ -135,7 +136,6 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
   );
   const agents = useQuery(api.agents.list, { limit: 300 });
   const updateTask = useMutation(api.tasks.update);
-  const updateStatus = useMutation(api.tasks.updateStatus);
   const updateAgentStatus = useMutation(api.agents.updateStatus);
 
   const taskMessages = useQuery(
@@ -276,12 +276,32 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
     []
   );
 
+  const patchMissionTask = useCallback(
+    async (payload: Record<string, unknown>) => {
+      if (!taskId) return;
+      const res = await fetch(`/api/mission-control/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to update task');
+      }
+    },
+    [taskId]
+  );
+
   if (!taskId || !task) return null;
 
   const isTopicWorkflow = task.workflowTemplateKey === 'topic_production_v1';
   const workflowStage = (task.workflowCurrentStageKey || 'research') as TopicStageKey;
   const workflowFlags = task.workflowFlags || {};
   const workflowApprovals = task.workflowApprovals || {};
+  const visibleWorkflowStages =
+    workflowStage === 'seo_intel_review'
+      ? (['research', 'seo_intel_review', ...TOPIC_STAGES.slice(1)] as TopicStageKey[])
+      : Array.from(TOPIC_STAGES) as TopicStageKey[];
   const defaultNextStage = TOPIC_STAGE_NEXT[workflowStage];
   const workflowNextStage =
     workflowStage === 'outline_build' &&
@@ -307,7 +327,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
     toStage: TopicStageKey,
     options?: { skipOptionalOutlineReview?: boolean; note?: string }
   ) => {
-    if (!isTopicWorkflow) return;
+    if (!isTopicWorkflow || readOnly) return;
     setWorkflowBusy(true);
     setWorkflowError(null);
     try {
@@ -337,7 +357,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
     gate: 'outline_human' | 'outline_seo' | 'seo_final',
     approved: boolean
   ) => {
-    if (!isTopicWorkflow) return;
+    if (!isTopicWorkflow || readOnly) return;
     setWorkflowBusy(true);
     setWorkflowError(null);
     try {
@@ -363,7 +383,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
   };
 
   const handleRunWorkflow = async (autoContinue: boolean) => {
-    if (!isTopicWorkflow) return;
+    if (!isTopicWorkflow || readOnly) return;
     setWorkflowRunBusy(true);
     setWorkflowError(null);
     try {
@@ -390,6 +410,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
 
   // ─── Start Agent: writes the article ─────────────────────────────
   const handleStartAgent = async () => {
+    if (readOnly) return;
     setAgentRunning(true);
     setLastResult(null);
 
@@ -398,19 +419,11 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
       let agentId = task.assignedAgentId;
         if (!agentId && onlineAgents.length > 0) {
           agentId = onlineAgents[0]._id;
-        await updateTask({
-          id: task._id,
-          expectedProjectId: task.projectId ?? undefined,
-          assignedAgentId: agentId,
-        });
+        await patchMissionTask({ assignedAgentId: agentId });
       }
 
       // Move task to IN_PROGRESS
-      await updateStatus({
-        id: task._id,
-        status: 'IN_PROGRESS',
-        expectedProjectId: task.projectId ?? undefined,
-      });
+      await patchMissionTask({ status: 'IN_PROGRESS' });
       syncStatusToDrizzle(task.documentId, 'IN_PROGRESS');
 
       // Set agent to WORKING
@@ -455,11 +468,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
         documentId: result.documentId,
         deliverables: [...existingDeliverables, result.deliverable],
       });
-      await updateStatus({
-        id: task._id,
-        status: 'IN_REVIEW',
-        expectedProjectId: task.projectId ?? undefined,
-      });
+      await patchMissionTask({ status: 'IN_REVIEW' });
       syncStatusToDrizzle(result.documentId || task.documentId, 'IN_REVIEW');
 
       // Set agent back to ONLINE
@@ -469,11 +478,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
     } catch (err) {
       console.error('Agent start error:', err);
       // Revert status on failure
-      await updateStatus({
-        id: task._id,
-        status: task.status,
-        expectedProjectId: task.projectId ?? undefined,
-      });
+      await patchMissionTask({ status: task.status });
       setLastResult({ error: (err as Error).message });
     } finally {
       setAgentRunning(false);
@@ -482,17 +487,13 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
 
   // ─── Process Feedback: revises based on comments ─────────────────
   const handleProcessFeedback = async (useResearch: boolean = false) => {
-    if (!task.documentId) return;
+    if (!task.documentId || readOnly) return;
     setFeedbackRunning(true);
     setLastResult(null);
 
     try {
       // Move back to IN_PROGRESS while processing
-      await updateStatus({
-        id: task._id,
-        status: 'IN_PROGRESS',
-        expectedProjectId: task.projectId ?? undefined,
-      });
+      await patchMissionTask({ status: 'IN_PROGRESS' });
       syncStatusToDrizzle(task.documentId, 'IN_PROGRESS');
 
       const res = await fetch('/api/agent/process-feedback', {
@@ -515,19 +516,11 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
       setLastResult(result);
 
       // Move back to IN_REVIEW
-      await updateStatus({
-        id: task._id,
-        status: 'IN_REVIEW',
-        expectedProjectId: task.projectId ?? undefined,
-      });
+      await patchMissionTask({ status: 'IN_REVIEW' });
       syncStatusToDrizzle(task.documentId, 'IN_REVIEW');
     } catch (err) {
       console.error('Feedback processing error:', err);
-      await updateStatus({
-        id: task._id,
-        status: 'IN_REVIEW',
-        expectedProjectId: task.projectId ?? undefined,
-      });
+      await patchMissionTask({ status: 'IN_REVIEW' });
       setLastResult({ error: (err as Error).message });
     } finally {
       setFeedbackRunning(false);
@@ -536,15 +529,12 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
 
   // ─── Mark Complete ───────────────────────────────────────────────
   const handleComplete = async () => {
+    if (readOnly) return;
     if (isTopicWorkflow) {
       await handleAdvanceWorkflowStage('complete');
       return;
     }
-    await updateStatus({
-      id: task._id,
-      status: 'COMPLETED',
-      expectedProjectId: task.projectId ?? undefined,
-    });
+    await patchMissionTask({ status: 'COMPLETED' });
     syncStatusToDrizzle(task.documentId, 'COMPLETED');
   };
 
@@ -667,7 +657,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
           <div className="space-y-2.5">
             <h3 className="mc-header-mono text-xs">Topic Workflow</h3>
             <div className="flex items-center gap-2 flex-wrap text-[10px]">
-              {TOPIC_STAGES.map((stage) => (
+              {visibleWorkflowStages.map((stage) => (
                 <span
                   key={stage}
                   className="px-1.5 py-0.5 rounded"
@@ -744,7 +734,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                 <>
                   <button
                     onClick={() => handleRunWorkflow(false)}
-                    disabled={workflowRunBusy || workflowBusy}
+                    disabled={workflowRunBusy || workflowBusy || readOnly}
                     className="mc-btn-primary text-xs flex items-center gap-1.5"
                   >
                     {workflowRunBusy ? (
@@ -756,7 +746,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                   </button>
                   <button
                     onClick={() => handleRunWorkflow(true)}
-                    disabled={workflowRunBusy || workflowBusy}
+                    disabled={workflowRunBusy || workflowBusy || readOnly}
                     className="mc-btn-secondary text-xs flex items-center gap-1.5"
                   >
                     <RefreshCw className="h-3 w-3" />
@@ -769,7 +759,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                 workflowStage !== 'prewrite_context' && (
                 <button
                   onClick={() => handleAdvanceWorkflowStage(workflowNextStage as TopicStageKey)}
-                  disabled={workflowBusy || workflowRunBusy}
+                  disabled={workflowBusy || workflowRunBusy || readOnly}
                   className="mc-btn-secondary text-xs flex items-center gap-1.5"
                 >
                   {workflowBusy ? (
@@ -787,7 +777,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                       note: 'Prewrite approved by human. Start writing stage.',
                     })
                   }
-                  disabled={workflowBusy || workflowRunBusy}
+                  disabled={workflowBusy || workflowRunBusy || readOnly}
                   className="mc-btn-primary text-xs flex items-center gap-1.5"
                 >
                   {workflowBusy ? (
@@ -806,7 +796,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                       note: 'Outline review skipped by PM/lead.',
                     })
                   }
-                  disabled={workflowBusy || workflowRunBusy}
+                  disabled={workflowBusy || workflowRunBusy || readOnly}
                   className="mc-btn-secondary text-xs"
                 >
                   Skip Optional Outline Review
@@ -823,7 +813,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                   <div className="flex items-center gap-2 flex-wrap">
                     <button
                       onClick={() => handleWorkflowApproval('outline_human', true)}
-                      disabled={workflowBusy || workflowRunBusy}
+                      disabled={workflowBusy || workflowRunBusy || readOnly}
                       className="mc-btn-secondary text-xs flex items-center gap-1.5"
                     >
                       <CheckCheck className="h-3 w-3" />
@@ -831,7 +821,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                     </button>
                     <button
                       onClick={() => handleWorkflowApproval('outline_seo', true)}
-                      disabled={workflowBusy || workflowRunBusy}
+                      disabled={workflowBusy || workflowRunBusy || readOnly}
                       className="mc-btn-secondary text-xs flex items-center gap-1.5"
                     >
                       <CheckCheck className="h-3 w-3" />
@@ -846,7 +836,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                   <div className="flex items-center gap-2 flex-wrap">
                     <button
                       onClick={() => handleWorkflowApproval('seo_final', true)}
-                      disabled={workflowBusy || workflowRunBusy}
+                      disabled={workflowBusy || workflowRunBusy || readOnly}
                       className="mc-btn-secondary text-xs flex items-center gap-1.5"
                     >
                       <CheckCheck className="h-3 w-3" />
@@ -1260,7 +1250,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
           {showStartAgent && (
             <button
               onClick={handleStartAgent}
-              disabled={isProcessing}
+              disabled={isProcessing || readOnly}
               className="mc-btn-primary w-full flex items-center justify-center gap-2"
             >
               {agentRunning ? (
@@ -1277,7 +1267,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
             <div className="space-y-1.5">
               <button
                 onClick={() => handleProcessFeedback(false)}
-                disabled={isProcessing}
+                disabled={isProcessing || readOnly}
                 className="mc-btn-secondary w-full flex items-center justify-center gap-2"
               >
                 {feedbackRunning ? (
@@ -1289,7 +1279,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
               </button>
               <button
                 onClick={() => handleProcessFeedback(true)}
-                disabled={isProcessing}
+                disabled={isProcessing || readOnly}
                 className="mc-btn-secondary w-full flex items-center justify-center gap-2 text-xs"
               >
                 <MessageSquare className="h-3.5 w-3.5" />
@@ -1302,7 +1292,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
           {showRerun && (
             <button
               onClick={handleStartAgent}
-              disabled={isProcessing}
+              disabled={isProcessing || readOnly}
               className="mc-btn-secondary w-full flex items-center justify-center gap-2 text-xs"
             >
               <Play className="h-3.5 w-3.5" />
@@ -1314,7 +1304,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
           {showComplete && (
             <button
               onClick={handleComplete}
-              disabled={isProcessing}
+              disabled={isProcessing || readOnly}
               className="w-full flex items-center justify-center gap-2 text-xs py-2 px-3 rounded-md border transition-colors hover:bg-green-50"
               style={{
                 borderColor: 'var(--mc-complete)',
@@ -1376,7 +1366,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
           <div className="flex items-center gap-1 text-[10px] flex-wrap"
                style={{ color: 'var(--mc-text-tertiary)' }}>
             {isTopicWorkflow
-              ? TOPIC_STAGES.map((stage, i) => (
+              ? visibleWorkflowStages.map((stage, i) => (
                   <span key={stage} className="flex items-center gap-1">
                     <span
                       className="px-1.5 py-0.5 rounded"
@@ -1390,7 +1380,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                     >
                       {TOPIC_STAGE_LABELS[stage]}
                     </span>
-                    {i < TOPIC_STAGES.length - 1 && <ArrowRight className="h-3 w-3" />}
+                    {i < visibleWorkflowStages.length - 1 && <ArrowRight className="h-3 w-3" />}
                   </span>
                 ))
               : TASK_STATUS_ORDER.map((s, i) => (
@@ -1462,7 +1452,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
           onSubmit={async (e) => {
             e.preventDefault();
             const text = messageText.trim();
-            if (!text || !taskId) return;
+            if (!text || !taskId || readOnly) return;
             setMessageText('');
             await sendMessage({
               taskId,
@@ -1483,14 +1473,15 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
             placeholder="Type a message…"
             className="flex-1 text-xs py-1.5 px-3 rounded-md border bg-white"
             style={{ borderColor: 'var(--mc-border)', color: 'var(--mc-text-primary)' }}
+            disabled={readOnly}
           />
           <button
             type="submit"
-            disabled={!messageText.trim()}
+            disabled={!messageText.trim() || readOnly}
             className="p-1.5 rounded-md transition-colors"
             style={{
-              background: messageText.trim() ? 'var(--mc-accent)' : 'var(--mc-overlay)',
-              color: messageText.trim() ? 'white' : 'var(--mc-text-muted)',
+              background: messageText.trim() && !readOnly ? 'var(--mc-accent)' : 'var(--mc-overlay)',
+              color: messageText.trim() && !readOnly ? 'white' : 'var(--mc-text-muted)',
             }}
           >
             <Send className="h-3.5 w-3.5" />

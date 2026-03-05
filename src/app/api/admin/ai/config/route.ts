@@ -8,7 +8,7 @@ import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 
 export async function GET() {
   await ensureDb();
-  const auth = await requireRole('admin');
+  const auth = await requireRole('super_admin');
   if (auth.error) return auth.error;
   try {
     const configs = (await db.select().from(aiModelConfig)) as Array<{
@@ -48,7 +48,7 @@ export async function GET() {
 
 export async function PUT(req: NextRequest) {
   await ensureDb();
-  const auth = await requireRole('admin');
+  const auth = await requireRole('super_admin');
   if (auth.error) return auth.error;
   try {
     const body = await req.json();

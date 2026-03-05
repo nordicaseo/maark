@@ -20,7 +20,7 @@ function parseRoleFilter(value: unknown): AgentRole[] | undefined {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireRole('admin');
+  const auth = await requireRole('super_admin');
   if (auth.error) return auth.error;
 
   try {

@@ -14,8 +14,6 @@ import {
   Trash2,
   GripVertical,
 } from 'lucide-react';
-import { useMutation } from 'convex/react';
-import { api } from '../../../convex/_generated/api';
 import type { Doc } from '../../../convex/_generated/dataModel';
 import { useTeamMembers } from './team-members-provider';
 import { useSkills } from './skills-provider';
@@ -51,9 +49,11 @@ function timeAgo(ts: number): string {
 
 export function SortableTaskCard({
   task,
+  readOnly = false,
   onClick,
 }: {
   task: Task;
+  readOnly?: boolean;
   onClick?: () => void;
 }) {
   const {
@@ -64,7 +64,7 @@ export function SortableTaskCard({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: task._id });
+  } = useSortable({ id: task._id, disabled: readOnly });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -80,6 +80,7 @@ export function SortableTaskCard({
     >
       <TaskCardContent
         task={task}
+        readOnly={readOnly}
         dragAttributes={attributes}
         dragListeners={listeners}
         setDragHandleRef={setActivatorNodeRef}
@@ -90,18 +91,19 @@ export function SortableTaskCard({
 
 function TaskCardContent({
   task,
+  readOnly,
   dragAttributes,
   dragListeners,
   setDragHandleRef,
 }: {
   task: Task;
+  readOnly: boolean;
   dragAttributes: DragAttributes;
   dragListeners: DragListeners | undefined;
   setDragHandleRef: (element: HTMLElement | null) => void;
 }) {
   const { getMember } = useTeamMembers();
   const { getSkillName } = useSkills();
-  const removeTask = useMutation(api.tasks.remove);
   const assignee = task.assigneeId ? getMember(task.assigneeId) : undefined;
   const skillName = task.skillId ? getSkillName(task.skillId) : undefined;
   const isTopicWorkflow = task.workflowTemplateKey === 'topic_production_v1';
@@ -127,11 +129,22 @@ function TaskCardContent({
     workflowStage !== 'research' &&
     workflowStage !== 'outline_build';
 
-  const handleDelete = (e: React.MouseEvent) => {
+  const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
+    if (readOnly) return;
     if (confirm('Delete this task?')) {
-      removeTask({ id: task._id, expectedProjectId: task.projectId ?? undefined });
+      try {
+        const res = await fetch(`/api/mission-control/tasks/${task._id}`, {
+          method: 'DELETE',
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Failed to delete task');
+        }
+      } catch (error) {
+        console.error('Failed to delete task:', error);
+      }
     }
   };
 
@@ -186,18 +199,24 @@ function TaskCardContent({
           {...dragAttributes}
           {...(dragListeners ?? {})}
           onClick={(e) => e.stopPropagation()}
-          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/5 shrink-0 mt-0.5 cursor-grab active:cursor-grabbing"
+          className={`opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/5 shrink-0 mt-0.5 ${
+            readOnly ? 'cursor-default hidden' : 'cursor-grab active:cursor-grabbing'
+          }`}
           style={{ color: 'var(--mc-text-muted)' }}
           title="Drag task"
           aria-label="Drag task"
+          disabled={readOnly}
         >
           <GripVertical className="h-3.5 w-3.5" />
         </button>
         <button
           onClick={handleDelete}
-          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 shrink-0 mt-0.5"
+          className={`opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 shrink-0 mt-0.5 ${
+            readOnly ? 'hidden' : ''
+          }`}
           style={{ color: 'var(--mc-text-muted)' }}
           title="Delete task"
+          disabled={readOnly}
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>

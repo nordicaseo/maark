@@ -34,7 +34,7 @@ import { api } from '../../../../../convex/_generated/api';
  * }
  */
 export async function POST(req: NextRequest) {
-  const auth = await requireRole('editor');
+  const auth = await requireRole('writer');
   if (auth.error) return auth.error;
 
   try {

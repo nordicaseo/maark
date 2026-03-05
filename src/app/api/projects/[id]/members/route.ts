@@ -3,7 +3,8 @@ import { db, ensureDb } from '@/db/index';
 import { projectMembers, users } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { getAuthUser, requireRole } from '@/lib/auth';
-import { userCanAccessProject } from '@/lib/access';
+import { userCanAccessProject, userCanMutateProject } from '@/lib/access';
+import { PROJECT_ASSIGNABLE_ROLES } from '@/lib/permissions';
 
 export async function GET(
   req: NextRequest,
@@ -58,7 +59,7 @@ export async function POST(
   if (Number.isNaN(projectId)) {
     return NextResponse.json({ error: 'Invalid project id' }, { status: 400 });
   }
-  if (!(await userCanAccessProject(auth.user, projectId))) {
+  if (!(await userCanMutateProject(auth.user, projectId, 'admin'))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -68,6 +69,15 @@ export async function POST(
 
     if (!userId) {
       return NextResponse.json({ error: 'userId is required' }, { status: 400 });
+    }
+    if (
+      role !== undefined &&
+      !PROJECT_ASSIGNABLE_ROLES.includes(role as (typeof PROJECT_ASSIGNABLE_ROLES)[number])
+    ) {
+      return NextResponse.json(
+        { error: `Invalid role. Must be one of: ${PROJECT_ASSIGNABLE_ROLES.join(', ')}` },
+        { status: 400 }
+      );
     }
 
     const [member] = await db
@@ -101,7 +111,7 @@ export async function DELETE(
   if (Number.isNaN(projectId)) {
     return NextResponse.json({ error: 'Invalid project id' }, { status: 400 });
   }
-  if (!(await userCanAccessProject(auth.user, projectId))) {
+  if (!(await userCanMutateProject(auth.user, projectId, 'admin'))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -127,6 +137,60 @@ export async function DELETE(
     console.error('Error removing project member:', error);
     return NextResponse.json(
       { error: 'Failed to remove member' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  await ensureDb();
+  const auth = await requireRole('admin');
+  if (auth.error) return auth.error;
+  const { id } = await params;
+  const projectId = parseInt(id, 10);
+  if (Number.isNaN(projectId)) {
+    return NextResponse.json({ error: 'Invalid project id' }, { status: 400 });
+  }
+  if (!(await userCanMutateProject(auth.user, projectId, 'admin'))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  try {
+    const body = await req.json();
+    const { userId, role } = body;
+    if (!userId || !role) {
+      return NextResponse.json({ error: 'userId and role are required' }, { status: 400 });
+    }
+    if (!PROJECT_ASSIGNABLE_ROLES.includes(role as (typeof PROJECT_ASSIGNABLE_ROLES)[number])) {
+      return NextResponse.json(
+        { error: `Invalid role. Must be one of: ${PROJECT_ASSIGNABLE_ROLES.join(', ')}` },
+        { status: 400 }
+      );
+    }
+
+    const [updated] = await db
+      .update(projectMembers)
+      .set({ role })
+      .where(
+        and(
+          eq(projectMembers.projectId, projectId),
+          eq(projectMembers.userId, userId)
+        )
+      )
+      .returning();
+
+    if (!updated) {
+      return NextResponse.json({ error: 'Member not found' }, { status: 404 });
+    }
+
+    return NextResponse.json(updated);
+  } catch (error) {
+    console.error('Error updating project member:', error);
+    return NextResponse.json(
+      { error: 'Failed to update member' },
       { status: 500 }
     );
   }

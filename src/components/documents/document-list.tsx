@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, FileText, Trash2, Settings, Eye, Kanban, Search, Globe } from 'lucide-react';
+import { Plus, FileText, Trash2, Settings, Eye, Kanban, Search, Globe, LayoutDashboard } from 'lucide-react';
 import Link from 'next/link';
 import { CreateDialog } from './create-dialog';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
@@ -20,6 +20,7 @@ import { useAuth } from '@/components/auth/auth-provider';
 import type { Document, DocumentStatus } from '@/types/document';
 import { STATUS_LABELS } from '@/types/document';
 import { withProjectScope } from '@/lib/project-context';
+import { hasRole } from '@/lib/permissions';
 
 interface DocumentListProps {
   documents: Document[];
@@ -204,7 +205,16 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
           <Globe className="h-4 w-4" />
           Pages
         </Link>
-        {user?.role === 'owner' && (
+        {user?.role === 'client' && (
+          <Link
+            href={withProjectScope('/client/dashboard', activeProjectId)}
+            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+          >
+            <LayoutDashboard className="h-4 w-4" />
+            Dashboard
+          </Link>
+        )}
+        {user?.role && hasRole(user.role, 'admin') && (
           <Link
             href={withProjectScope('/admin', activeProjectId)}
             className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"

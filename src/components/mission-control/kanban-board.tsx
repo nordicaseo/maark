@@ -19,7 +19,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { useDroppable } from '@dnd-kit/core';
-import { useQuery, useMutation } from 'convex/react';
+import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { SortableTaskCard } from './task-card';
 import { Plus } from 'lucide-react';
@@ -35,13 +35,13 @@ type Task = Doc<'tasks'>;
 
 interface KanbanBoardProps {
   projectId?: number | null;
+  readOnly?: boolean;
   onNewTask?: () => void;
   onTaskClick?: (taskId: Id<'tasks'>) => void;
 }
 
-export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardProps) {
+export function KanbanBoard({ projectId, readOnly = false, onNewTask, onTaskClick }: KanbanBoardProps) {
   const tasks = useQuery(api.tasks.list, projectId ? { projectId, limit: 500 } : 'skip');
-  const updateStatus = useMutation(api.tasks.updateStatus);
 
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
@@ -66,6 +66,7 @@ export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardPr
       setActiveTask(null);
       const { active, over } = event;
       if (!over) return;
+      if (readOnly) return;
 
       const taskId = active.id as Id<'tasks'>;
 
@@ -90,13 +91,18 @@ export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardPr
       const currentTask = tasks?.find((t) => t._id === taskId);
       if (currentTask?.status === targetStatus) return;
 
-      // Optimistic: update immediately via Convex mutation
       try {
-        await updateStatus({
-          id: taskId,
-          status: targetStatus,
-          expectedProjectId: currentTask?.projectId ?? projectId ?? undefined,
+        const res = await fetch(`/api/mission-control/tasks/${taskId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: targetStatus,
+          }),
         });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Failed to update task status');
+        }
       } catch (error) {
         console.error('Failed to update task status from drag-and-drop:', error);
         return;
@@ -117,7 +123,7 @@ export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardPr
         );
       }
     },
-    [tasks, updateStatus, projectId]
+    [readOnly, tasks]
   );
 
   const handleDragCancel = useCallback((_event: DragCancelEvent) => {
@@ -159,7 +165,8 @@ export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardPr
               color={col.color}
               count={columnTasks.length}
               tasks={columnTasks}
-              onNewTask={col.id === 'BACKLOG' ? onNewTask : undefined}
+              readOnly={readOnly}
+              onNewTask={col.id === 'BACKLOG' && !readOnly ? onNewTask : undefined}
               onTaskClick={onTaskClick}
             />
           );
@@ -188,6 +195,7 @@ function KanbanColumn({
   color,
   count,
   tasks,
+  readOnly,
   onNewTask,
   onTaskClick,
 }: {
@@ -196,6 +204,7 @@ function KanbanColumn({
   color: string;
   count: number;
   tasks: Task[];
+  readOnly: boolean;
   onNewTask?: () => void;
   onTaskClick?: (taskId: Id<'tasks'>) => void;
 }) {
@@ -230,6 +239,7 @@ function KanbanColumn({
             <SortableTaskCard
               key={task._id}
               task={task}
+              readOnly={readOnly}
               onClick={() => onTaskClick?.(task._id)}
             />
           ))}

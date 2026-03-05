@@ -6,7 +6,7 @@ import { requireRole } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
   await ensureDb();
-  const auth = await requireRole('admin');
+  const auth = await requireRole('super_admin');
   if (auth.error) return auth.error;
 
   const limitParam = Number.parseInt(req.nextUrl.searchParams.get('limit') || '50', 10);

@@ -35,7 +35,6 @@ export const TASK_STATUS_COLUMNS: ReadonlyArray<{
 
 export const TOPIC_STAGES = [
   'research',
-  'seo_intel_review',
   'outline_build',
   'outline_review',
   'prewrite_context',
@@ -44,7 +43,9 @@ export const TOPIC_STAGES = [
   'complete',
 ] as const;
 
-export type TopicStageKey = (typeof TOPIC_STAGES)[number];
+export type TopicStageKey =
+  | (typeof TOPIC_STAGES)[number]
+  | 'seo_intel_review';
 
 export const TOPIC_STAGE_LABELS: Record<TopicStageKey, string> = {
   research: 'Research',
@@ -58,7 +59,7 @@ export const TOPIC_STAGE_LABELS: Record<TopicStageKey, string> = {
 };
 
 export const TOPIC_STAGE_NEXT: Record<TopicStageKey, TopicStageKey | null> = {
-  research: 'seo_intel_review',
+  research: 'outline_build',
   seo_intel_review: 'outline_build',
   outline_build: 'outline_review',
   outline_review: 'prewrite_context',

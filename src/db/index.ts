@@ -260,12 +260,18 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       id SERIAL PRIMARY KEY,
       email VARCHAR(300),
       role VARCHAR(30) NOT NULL DEFAULT 'writer',
+      project_ids JSONB,
+      project_role VARCHAR(30),
       token TEXT NOT NULL UNIQUE,
       invited_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
       expires_at TIMESTAMP NOT NULL,
       accepted_at TIMESTAMP,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
+  `);
+  await sql.query(`
+    ALTER TABLE invitations ADD COLUMN IF NOT EXISTS project_ids JSONB;
+    ALTER TABLE invitations ADD COLUMN IF NOT EXISTS project_role VARCHAR(30);
   `);
 
   // ── Keywords ──
@@ -623,6 +629,8 @@ function createDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       email TEXT,
       role TEXT NOT NULL DEFAULT 'writer',
+      project_ids TEXT,
+      project_role TEXT,
       token TEXT NOT NULL UNIQUE,
       invited_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
       expires_at TEXT NOT NULL,
@@ -630,6 +638,8 @@ function createDb() {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+  addColumnSafe(sqlite, 'invitations', 'project_ids', 'TEXT');
+  addColumnSafe(sqlite, 'invitations', 'project_role', 'TEXT');
 
   // ── Keywords ──
   sqlite.exec(`
