@@ -21,12 +21,14 @@ import {
   Search,
   Globe,
   Radar,
+  Bot,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/admin/projects', label: 'Projects', icon: FolderOpen },
   { href: '/admin/skills', label: 'Skills', icon: Sparkles },
+  { href: '/admin/agents', label: 'Agents', icon: Bot },
   { href: '/admin/ai', label: 'AI Models', icon: Cpu },
   { href: '/admin/users', label: 'Users', icon: Users },
   { href: '/admin/observability', label: 'Observability', icon: Radar },

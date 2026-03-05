@@ -174,6 +174,48 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
     );
   `);
 
+  // ── Project Agent Profiles ──
+  await sql.query(`
+    DO $$ BEGIN
+      CREATE TABLE project_agent_profiles (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        role VARCHAR(60) NOT NULL,
+        display_name VARCHAR(200) NOT NULL,
+        emoji VARCHAR(16),
+        mission TEXT,
+        is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        file_bundle JSONB,
+        skill_ids JSONB,
+        model_overrides JSONB,
+        heartbeat_meta JSONB,
+        created_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        updated_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    EXCEPTION WHEN duplicate_table THEN NULL;
+    END $$;
+
+    DO $$ BEGIN
+      CREATE UNIQUE INDEX project_agent_profiles_unique_project_role
+        ON project_agent_profiles(project_id, role);
+    EXCEPTION WHEN duplicate_table OR duplicate_object THEN NULL;
+    END $$;
+
+    DO $$ BEGIN
+      CREATE TABLE agent_shared_profiles (
+        id SERIAL PRIMARY KEY,
+        key VARCHAR(120) NOT NULL UNIQUE,
+        content TEXT NOT NULL DEFAULT '',
+        updated_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    EXCEPTION WHEN duplicate_table THEN NULL;
+    END $$;
+  `);
+
   // ── Skill Parts ──
   await sql.query(`
     CREATE TABLE IF NOT EXISTS skill_parts (
@@ -500,6 +542,38 @@ function createDb() {
       content TEXT NOT NULL,
       is_global INTEGER DEFAULT 0,
       created_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  // ── Project Agent Profiles ──
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS project_agent_profiles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      role TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      emoji TEXT,
+      mission TEXT,
+      is_enabled INTEGER NOT NULL DEFAULT 1,
+      file_bundle TEXT,
+      skill_ids TEXT,
+      model_overrides TEXT,
+      heartbeat_meta TEXT,
+      created_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      updated_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS project_agent_profiles_unique_project_role
+      ON project_agent_profiles(project_id, role);
+
+    CREATE TABLE IF NOT EXISTS agent_shared_profiles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT NOT NULL UNIQUE,
+      content TEXT NOT NULL DEFAULT '',
+      updated_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );

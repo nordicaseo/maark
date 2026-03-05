@@ -14,6 +14,11 @@ export interface ModelOverride {
   temperature?: number;
 }
 
+export interface ResolveModelPriorityInput {
+  projectRoleOverride?: ModelOverride;
+  agentOverride?: ModelOverride;
+}
+
 export interface ResolvedModelConfig {
   provider: AIProviderInterface;
   providerName: string;
@@ -35,11 +40,30 @@ function createProvider(name: string, apiKey: string): AIProviderInterface {
   }
 }
 
+function mergeModelOverrides(
+  ...overrides: Array<ModelOverride | undefined>
+): ModelOverride | undefined {
+  const merged: ModelOverride = {};
+  for (const override of overrides) {
+    if (!override) continue;
+    if (override.provider) merged.provider = override.provider;
+    if (override.modelId) merged.modelId = override.modelId;
+    if (override.temperature !== undefined) merged.temperature = override.temperature;
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
 export async function resolveProviderForAction(
   action: AIAction,
-  override?: ModelOverride
+  override?: ModelOverride,
+  priority?: ResolveModelPriorityInput
 ): Promise<ResolvedModelConfig> {
   await ensureDb();
+  const effectiveOverride = mergeModelOverrides(
+    priority?.projectRoleOverride,
+    priority?.agentOverride,
+    override
+  );
 
   const [baseConfig] = await db
     .select({
@@ -59,15 +83,15 @@ export async function resolveProviderForAction(
     return {
       provider: fallback.provider,
       providerName: 'anthropic',
-      model: override?.modelId || fallback.model,
+      model: effectiveOverride?.modelId || fallback.model,
       maxTokens: fallback.maxTokens,
-      temperature: override?.temperature ?? fallback.temperature,
+      temperature: effectiveOverride?.temperature ?? fallback.temperature,
     };
   }
 
   let providerName = baseConfig.providerName;
   let providerApiKey = baseConfig.providerApiKey;
-  if (override?.provider && override.provider !== providerName) {
+  if (effectiveOverride?.provider && effectiveOverride.provider !== providerName) {
     const [overrideProvider] = await db
       .select({
         name: aiProviders.name,
@@ -76,7 +100,7 @@ export async function resolveProviderForAction(
       .from(aiProviders)
       .where(
         and(
-          eq(aiProviders.name, override.provider),
+          eq(aiProviders.name, effectiveOverride.provider),
           eq(aiProviders.isActive, 1)
         )
       )
@@ -90,8 +114,8 @@ export async function resolveProviderForAction(
   return {
     provider: createProvider(providerName, providerApiKey),
     providerName,
-    model: override?.modelId || baseConfig.model,
+    model: effectiveOverride?.modelId || baseConfig.model,
     maxTokens: baseConfig.maxTokens ?? 4096,
-    temperature: override?.temperature ?? baseConfig.temperature ?? 1.0,
+    temperature: effectiveOverride?.temperature ?? baseConfig.temperature ?? 1.0,
   };
 }

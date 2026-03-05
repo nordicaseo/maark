@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const REQUIRED_REMOTE_FUNCTIONS = [
   'tasks:get',
@@ -6,6 +8,20 @@ const REQUIRED_REMOTE_FUNCTIONS = [
   'agents:list',
   'topicWorkflow:getWorkflowContext',
   'topicWorkflow:advanceStage',
+  'topicWorkflow:resetFromStage',
+  'topicWorkflow:ensureStageOwner',
+];
+
+const REQUIRED_API_ROUTES = [
+  'src/app/api/ai/process-comments/route.ts',
+  'src/app/api/topic-workflow/create/route.ts',
+  'src/app/api/topic-workflow/run/route.ts',
+  'src/app/api/topic-workflow/advance/route.ts',
+  'src/app/api/topic-workflow/approve/route.ts',
+  'src/app/api/topic-workflow/rerun/route.ts',
+  'src/app/api/admin/agents/route.ts',
+  'src/app/api/admin/agents/shared-user/route.ts',
+  'src/app/api/admin/agents/heartbeat/route.ts',
 ];
 
 const ACCEPTABLE_VALIDATION_ERRORS = [
@@ -36,6 +52,17 @@ function runConvex(fnName, args = '{}') {
 }
 
 async function main() {
+  const missingRoutes = REQUIRED_API_ROUTES.filter(
+    (routePath) => !existsSync(resolve(process.cwd(), routePath))
+  );
+  if (missingRoutes.length > 0) {
+    console.error('\nRequired API routes are missing.\n');
+    for (const routePath of missingRoutes) {
+      console.error(`- ${routePath}`);
+    }
+    process.exit(1);
+  }
+
   const failures = [];
   for (const fnName of REQUIRED_REMOTE_FUNCTIONS) {
     const result = runConvex(fnName, '{}');

@@ -12,7 +12,7 @@ import { getWorkflowTaskForUser } from '@/lib/topic-workflow';
 import { runTopicWorkflow } from '@/lib/topic-workflow-runner';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 
-type RerunStage = 'research' | 'outline_build';
+type RerunStage = 'research' | 'outline_build' | 'writing';
 
 function parseTaskId(value: unknown): Id<'tasks'> | null {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -26,7 +26,7 @@ function parseOptionalNumber(value: unknown): number | undefined {
 }
 
 function parseRerunStage(value: unknown): RerunStage | null {
-  if (value === 'research' || value === 'outline_build') return value;
+  if (value === 'research' || value === 'outline_build' || value === 'writing') return value;
   return null;
 }
 
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
 
     if (!fromStage) {
       return NextResponse.json(
-        { error: "fromStage must be 'research' or 'outline_build'" },
+        { error: "fromStage must be 'research', 'outline_build', or 'writing'" },
         { status: 400 }
       );
     }
@@ -111,7 +111,12 @@ export async function POST(req: NextRequest) {
       }
 
       const [doc] = await db
-        .select({ id: documents.id, projectId: documents.projectId })
+        .select({
+          id: documents.id,
+          projectId: documents.projectId,
+          prewriteChecklist: documents.prewriteChecklist,
+          agentQuestions: documents.agentQuestions,
+        })
         .from(documents)
         .where(eq(documents.id, effectiveDocumentId))
         .limit(1);
@@ -138,10 +143,16 @@ export async function POST(req: NextRequest) {
               prewriteChecklist: null,
               agentQuestions: null,
             }
-          : {
+          : fromStage === 'outline_build'
+          ? {
               outlineSnapshot: null,
               prewriteChecklist: null,
               agentQuestions: null,
+            }
+          : {
+              // Preserve research + outline + prewrite context for writing reruns.
+              prewriteChecklist: doc.prewriteChecklist ?? null,
+              agentQuestions: doc.agentQuestions ?? null,
             };
 
       await db
@@ -170,7 +181,7 @@ export async function POST(req: NextRequest) {
       user: auth.user,
       taskId,
       autoContinue: true,
-      maxStages: fromStage === 'research' ? 4 : 3,
+      maxStages: fromStage === 'research' ? 4 : fromStage === 'outline_build' ? 3 : 2,
     });
 
     await logAuditEvent({

@@ -11,6 +11,19 @@ import { userCanAccessDocument, userCanAccessProject, userCanAccessSkill } from 
 import { resolveProviderForAction, type ModelOverride } from '@/lib/ai/model-resolution';
 import { getConvexClient } from '@/lib/convex/server';
 import { api } from '../../../../../convex/_generated/api';
+import {
+  appendMemoryEntry,
+  buildRolePromptContext,
+  resolveProjectRoleModelOverride,
+  setWorkingState,
+} from '@/lib/agents/project-agent-profiles';
+import {
+  buildEndingCompletionPrompt,
+  buildContinuationPrompt,
+  evaluateWritingCompleteness,
+  extractOutlineHeadings,
+  stripHtmlForCompleteness,
+} from '@/lib/workflow/writing-completeness';
 
 /**
  * POST /api/agent/execute
@@ -145,6 +158,55 @@ export async function POST(req: NextRequest) {
       docId = newDoc.id;
     }
 
+    const effectiveProjectId =
+      Number(
+        (doc as { projectId?: number | null }).projectId ??
+          (projectId ?? null)
+      ) || null;
+
+    let writerRolePromptContext = '';
+    let writerRoleProfileName = 'Writer';
+    let projectRoleOverride: ModelOverride | undefined;
+
+    if (effectiveProjectId) {
+      try {
+        const writerContext = await buildRolePromptContext(effectiveProjectId, 'writer');
+        writerRolePromptContext = writerContext.promptContext;
+        writerRoleProfileName = writerContext.profile.displayName || writerRoleProfileName;
+        projectRoleOverride = resolveProjectRoleModelOverride(writerContext.profile, [
+          'writing',
+          'writing_stage',
+          'workflow',
+        ]);
+      } catch (error) {
+        console.error('Non-fatal writer role profile context load error:', error);
+      }
+    }
+
+    const outlineMarkdown = String(
+      (doc as { outlineSnapshot?: { markdown?: string } }).outlineSnapshot?.markdown || ''
+    ).trim();
+    const outlineHeadings = extractOutlineHeadings(outlineMarkdown);
+    if (!outlineMarkdown || outlineHeadings.length === 0) {
+      if (effectiveProjectId) {
+        await appendMemoryEntry(
+          effectiveProjectId,
+          'writer',
+          `Manual writing blocked for "${title}": outline missing or invalid.`,
+          auth.user.id
+        );
+      }
+      return NextResponse.json(
+        {
+          ok: false,
+          code: 'OUTLINE_REQUIRED',
+          error:
+            'Outline is required before writing. Generate/approve an outline and rerun writing.',
+        },
+        { status: 409 }
+      );
+    }
+
     // ─── Step 2: Load Skill (if provided or auto-resolved) ──────────
     let skillContent = '';
     if (resolvedSkillId) {
@@ -191,10 +253,34 @@ export async function POST(req: NextRequest) {
 
     const { provider, model, maxTokens, temperature } = await resolveProviderForAction(
       'writing',
-      modelOverride
+      undefined,
+      {
+        projectRoleOverride,
+        agentOverride: modelOverride,
+      }
     );
 
-    const systemPrompt = buildSystemPrompt(skillContent, contentType, targetKeyword);
+    const systemPrompt = buildSystemPrompt(
+      skillContent,
+      contentType,
+      targetKeyword,
+      writerRolePromptContext
+    );
+
+    if (effectiveProjectId) {
+      await setWorkingState(
+        effectiveProjectId,
+        'writer',
+        `${writerRoleProfileName} started manual writing for "${title}" (task ${String(taskId)}).`,
+        auth.user.id
+      );
+      await appendMemoryEntry(
+        effectiveProjectId,
+        'writer',
+        `${writerRoleProfileName} started manual writing for "${title}" using model ${model}.`,
+        auth.user.id
+      );
+    }
 
     const stream = provider.stream({
       model,
@@ -217,20 +303,141 @@ export async function POST(req: NextRequest) {
 
     if (!generatedContent.trim()) {
       return NextResponse.json(
-        { error: 'AI generated empty content' },
+        { ok: false, code: 'EMPTY_DRAFT', error: 'AI generated empty content' },
         { status: 500 }
       );
     }
 
-    // ─── Step 4: Save content to document ───────────────────────────
     const normalizedHtml = normalizeGeneratedHtml(generatedContent);
-    const plainText = stripHtml(normalizedHtml);
-    const wordCount = plainText.split(/\s+/).filter(Boolean).length;
+    let plainText = stripHtmlForCompleteness(normalizedHtml);
+    let completion = evaluateWritingCompleteness({
+      html: normalizedHtml,
+      plainText,
+      outlineHeadings,
+    });
+    let finalHtml = normalizedHtml;
+    const MAX_CONTINUATION_ATTEMPTS = 3;
+    let continuationAttempts = 0;
+    let endingCompletionAttempted = false;
+
+    while (!completion.complete && continuationAttempts < MAX_CONTINUATION_ATTEMPTS) {
+      continuationAttempts += 1;
+      const continuationPrompt = buildContinuationPrompt({
+        reasons: completion.reasons,
+        missingHeadings: completion.missingHeadings,
+        currentHtml: trimTo(finalHtml, 9000),
+      });
+
+      const continuationStream = provider.stream({
+        model,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: continuationPrompt }],
+        maxTokens,
+        temperature,
+      });
+      const continuationReader = (continuationStream as ReadableStream).getReader();
+      let continuationChunk = '';
+      while (true) {
+        const { done, value } = await continuationReader.read();
+        if (done) break;
+        continuationChunk += decoder.decode(value, { stream: true });
+      }
+      if (!continuationChunk.trim()) {
+        break;
+      }
+      finalHtml = normalizeGeneratedHtml(`${finalHtml}\n${continuationChunk}`);
+      plainText = stripHtmlForCompleteness(finalHtml);
+      completion = evaluateWritingCompleteness({
+        html: finalHtml,
+        plainText,
+        outlineHeadings,
+      });
+    }
+
+    if (
+      !completion.complete &&
+      completion.abruptEnding &&
+      completion.reasons.length === 1
+    ) {
+      endingCompletionAttempted = true;
+      const endingPrompt = buildEndingCompletionPrompt({
+        currentHtml: trimTo(finalHtml, 9000),
+      });
+      const endingStream = provider.stream({
+        model,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: endingPrompt }],
+        maxTokens,
+        temperature,
+      });
+      const endingReader = (endingStream as ReadableStream).getReader();
+      let endingChunk = '';
+      while (true) {
+        const { done, value } = await endingReader.read();
+        if (done) break;
+        endingChunk += decoder.decode(value, { stream: true });
+      }
+      if (endingChunk.trim()) {
+        finalHtml = normalizeGeneratedHtml(`${finalHtml}\n${endingChunk}`);
+        plainText = stripHtmlForCompleteness(finalHtml);
+        completion = evaluateWritingCompleteness({
+          html: finalHtml,
+          plainText,
+          outlineHeadings,
+        });
+      }
+    }
+
+    if (!completion.complete) {
+      if (effectiveProjectId) {
+        const incompleteSummary =
+          `Manual writing incomplete for "${title}". ` +
+          `Missing headings: ${completion.missingHeadings.length}, word gap: ${completion.wordGap}.`;
+        await appendMemoryEntry(
+          effectiveProjectId,
+          'writer',
+          incompleteSummary,
+          auth.user.id
+        );
+        await setWorkingState(
+          effectiveProjectId,
+          'writer',
+          incompleteSummary,
+          auth.user.id
+        );
+      }
+      return NextResponse.json(
+        {
+          ok: false,
+          code: 'DRAFT_INCOMPLETE',
+          error:
+            'Generated draft is incomplete and was not saved to the document.',
+          diagnostics: {
+            reasons: completion.reasons,
+            missingHeadings: completion.missingHeadings,
+            headingCoverage: completion.headingCoverage,
+            wordCount: completion.wordCount,
+            minWords: completion.minWords,
+            wordGap: completion.wordGap,
+            abruptEnding: completion.abruptEnding,
+            continuationAttempts,
+            endingCompletionAttempted,
+          },
+          partialDraft: {
+            preview: trimTo(plainText, 1200),
+          },
+        },
+        { status: 422 }
+      );
+    }
+
+    // ─── Step 4: Save content to document ───────────────────────────
+    const wordCount = completion.wordCount;
 
     await db
       .update(documents)
       .set({
-        content: normalizedHtml,
+        content: finalHtml,
         plainText,
         wordCount,
         status: 'draft',
@@ -293,16 +500,37 @@ export async function POST(req: NextRequest) {
       action: 'agent.execute',
       resourceType: 'document',
       resourceId: docId,
-      projectId: doc.projectId ?? null,
+      projectId: effectiveProjectId,
       metadata: {
         taskId: String(taskId),
         skillId: resolvedSkillId ?? null,
         agentId: agentId ?? null,
         model,
+        projectRoleProfile: writerRoleProfileName,
       },
     });
 
+    if (effectiveProjectId) {
+      const successSummary =
+        `${writerRoleProfileName} completed manual writing for "${title}" ` +
+        `(${wordCount} words, coverage ${(completion.headingCoverage * 100).toFixed(0)}%).`;
+      await appendMemoryEntry(
+        effectiveProjectId,
+        'writer',
+        successSummary,
+        auth.user.id
+      );
+      await setWorkingState(
+        effectiveProjectId,
+        'writer',
+        `${successSummary}\nPreview: /preview/${previewToken}`,
+        auth.user.id
+      );
+    }
+
     return NextResponse.json({
+      ok: true,
+      code: 'DRAFT_SAVED',
       success: true,
       taskId,
       documentId: docId,
@@ -311,6 +539,12 @@ export async function POST(req: NextRequest) {
       contentQualityScore,
       previewToken,
       previewUrl: `/preview/${previewToken}`,
+      continuationAttempts,
+      completeness: {
+        minWords: completion.minWords,
+        headingCoverage: completion.headingCoverage,
+      },
+      endingCompletionAttempted,
       deliverable: {
         id: `del_${Date.now()}`,
         type: 'preview_link',
@@ -368,14 +602,20 @@ function buildInstruction(
 function buildSystemPrompt(
   skillContent: string,
   contentType: string,
-  targetKeyword: string | undefined
+  targetKeyword: string | undefined,
+  rolePromptContext?: string
 ): string {
   const keywordStr = targetKeyword
     ? `The target keyword is "${targetKeyword}". Naturally incorporate it and related terms.`
     : '';
+  const roleContext = rolePromptContext?.trim()
+    ? `\n\nRole profile context:\n${rolePromptContext.trim()}`
+    : '';
 
   if (skillContent) {
     return `${skillContent}\n\n${keywordStr}
+
+${roleContext}
 
 Additional writing guidelines:
 - Write naturally, varying sentence length and structure
@@ -386,7 +626,7 @@ Additional writing guidelines:
 - Output clean HTML. No meta-commentary about the writing task.`;
   }
 
-  return `You are a skilled content writer specializing in ${contentType.replace(/_/g, ' ')} content. ${keywordStr}
+  return `You are a skilled content writer specializing in ${contentType.replace(/_/g, ' ')} content. ${keywordStr}${roleContext}
 
 Important writing guidelines:
 - Write naturally, varying sentence length and structure
@@ -399,14 +639,7 @@ Important writing guidelines:
 - Output clean, well-structured HTML. No meta-commentary about the writing task.`;
 }
 
-function stripHtml(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/\s+/g, ' ')
-    .trim();
+function trimTo(input: string, maxChars: number): string {
+  if (input.length <= maxChars) return input;
+  return `${input.slice(0, maxChars).trimEnd()}…`;
 }

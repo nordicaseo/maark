@@ -10,6 +10,8 @@ import {
   ChevronDown,
   ChevronRight,
   Search,
+  AlertTriangle,
+  RotateCcw,
 } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
 import { normalizeGeneratedHtml, validateRevisedHtmlOutput } from '@/lib/utils/html-normalize';
@@ -34,6 +36,18 @@ interface CommentsPanelProps {
   refreshKey?: number;
 }
 
+type ProcessNoticeCode =
+  | 'editor_not_ready'
+  | 'no_comments'
+  | 'processing_failed'
+  | 'processed';
+
+interface ProcessNotice {
+  code: ProcessNoticeCode;
+  message: string;
+  retryable: boolean;
+}
+
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
@@ -51,6 +65,13 @@ export function CommentsPanel({ documentId, editor, onContentReplaced, refreshKe
   const [processing, setProcessing] = useState(false);
   const [showResolved, setShowResolved] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [processNotice, setProcessNotice] = useState<ProcessNotice | null>(null);
+  const [lastUseResearch, setLastUseResearch] = useState(false);
+
+  useEffect(() => {
+    setProcessNotice(null);
+    setSelectedIds(new Set());
+  }, [documentId]);
 
   const fetchComments = useCallback(async () => {
     if (!documentId) return;
@@ -111,6 +132,11 @@ export function CommentsPanel({ documentId, editor, onContentReplaced, refreshKe
   const resolvedComments = comments.filter((c) => !!c.isResolved);
   const inlineComments = unresolvedComments.filter((c) => c.quotedText);
   const generalComments = unresolvedComments.filter((c) => !c.quotedText);
+  const processDisabledReason = !editor
+    ? 'Editor not ready'
+    : unresolvedComments.length === 0
+      ? 'No unresolved comments'
+      : null;
 
   const handleResolve = async (commentId: number) => {
     if (!documentId) return;
@@ -162,8 +188,34 @@ export function CommentsPanel({ documentId, editor, onContentReplaced, refreshKe
   };
 
   const handleProcessWithAI = async (useResearch: boolean = false) => {
-    if (!documentId || !editor) return;
+    setLastUseResearch(useResearch);
+    if (!documentId) {
+      setProcessNotice({
+        code: 'processing_failed',
+        message: 'Document is missing. Reload and try again.',
+        retryable: true,
+      });
+      return;
+    }
+    if (!editor) {
+      setProcessNotice({
+        code: 'editor_not_ready',
+        message: 'Editor not ready yet. Wait for the document to finish loading.',
+        retryable: false,
+      });
+      return;
+    }
+    if (unresolvedComments.length === 0) {
+      setProcessNotice({
+        code: 'no_comments',
+        message: 'No unresolved comments to process.',
+        retryable: false,
+      });
+      return;
+    }
+
     setProcessing(true);
+    setProcessNotice(null);
 
     try {
       const commentIdsToProcess = selectedIds.size > 0
@@ -180,51 +232,71 @@ export function CommentsPanel({ documentId, editor, onContentReplaced, refreshKe
         }),
       });
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        alert(err.error || 'Failed to process comments');
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload?.ok) {
+        const message =
+          payload?.error ||
+          payload?.message ||
+          'Failed to process comments';
+        setProcessNotice({
+          code:
+            payload?.code === 'NO_COMMENTS'
+              ? 'no_comments'
+              : payload?.code === 'EDITOR_NOT_READY'
+                ? 'editor_not_ready'
+                : 'processing_failed',
+          message,
+          retryable: payload?.code !== 'NO_COMMENTS',
+        });
         setProcessing(false);
         return;
       }
 
-      // Read the streamed response
-      const reader = res.body?.getReader();
-      if (!reader) {
+      const result = String(payload.contentHtml || '').trim();
+      if (!result) {
+        setProcessNotice({
+          code: 'processing_failed',
+          message: 'AI returned an empty revision. Retry processing.',
+          retryable: true,
+        });
         setProcessing(false);
         return;
       }
 
-      const decoder = new TextDecoder();
-      let result = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        result += decoder.decode(value, { stream: true });
+      const sourceHtml = editor.getHTML();
+      const normalized = normalizeGeneratedHtml(result);
+      const validation = validateRevisedHtmlOutput(sourceHtml, normalized);
+      if (!validation.ok) {
+        setProcessNotice({
+          code: 'processing_failed',
+          message:
+            validation.reason || 'AI output was rejected to prevent document truncation.',
+          retryable: true,
+        });
+        setProcessing(false);
+        return;
+      }
+      editor.chain().focus().clearContent().insertContent(normalized).run();
+
+      const idsToResolve = commentIdsToProcess || unresolvedComments.map((c) => c.id);
+      for (const id of idsToResolve) {
+        await handleResolve(id);
       }
 
-      // Apply revised content to editor
-      if (result.trim()) {
-        const sourceHtml = editor.getHTML();
-        const normalized = normalizeGeneratedHtml(result);
-        const validation = validateRevisedHtmlOutput(sourceHtml, normalized);
-        if (!validation.ok) {
-          alert(validation.reason || 'AI output was rejected to prevent document truncation.');
-          setProcessing(false);
-          return;
-        }
-        editor.chain().focus().clearContent().insertContent(normalized).run();
-
-        // Mark processed comments as resolved
-        const idsToResolve = commentIdsToProcess || unresolvedComments.map((c) => c.id);
-        for (const id of idsToResolve) {
-          await handleResolve(id);
-        }
-
-        setSelectedIds(new Set());
-        onContentReplaced?.();
-      }
+      setSelectedIds(new Set());
+      onContentReplaced?.();
+      setProcessNotice({
+        code: 'processed',
+        message: `Processed ${idsToResolve.length} comment${idsToResolve.length === 1 ? '' : 's'} with AI.`,
+        retryable: false,
+      });
     } catch (err) {
       console.error('AI processing error:', err);
+      setProcessNotice({
+        code: 'processing_failed',
+        message: (err as Error)?.message || 'Failed to process comments',
+        retryable: true,
+      });
     } finally {
       setProcessing(false);
     }
@@ -273,32 +345,59 @@ export function CommentsPanel({ documentId, editor, onContentReplaced, refreshKe
         </div>
 
         {/* AI Processing buttons */}
-        {unresolvedComments.length > 0 && (
-          <div className="flex flex-col sm:flex-row gap-2">
-            <Button
-              size="sm"
-              className="h-8 text-xs w-full sm:flex-1 gap-1"
-              onClick={() => handleProcessWithAI(false)}
-              disabled={processing}
+        <div className="flex flex-col sm:flex-row gap-2">
+          <Button
+            size="sm"
+            className="h-8 text-xs w-full sm:flex-1 gap-1"
+            onClick={() => handleProcessWithAI(false)}
+            disabled={processing || Boolean(processDisabledReason)}
+            title={processDisabledReason || undefined}
+          >
+            {processing ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Sparkles className="h-3 w-3" />
+            )}
+            {selectedIds.size > 0 ? `Process ${selectedIds.size} with AI` : 'Process All with AI'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 text-xs w-full sm:w-auto gap-1"
+            onClick={() => handleProcessWithAI(true)}
+            disabled={processing || Boolean(processDisabledReason)}
+            title="Process with AI + Perplexity research"
+          >
+            <Search className="h-3 w-3" />
+            + Research
+          </Button>
+        </div>
+        {(processDisabledReason || processNotice) && (
+          <div className="mt-2 text-[11px] flex items-center justify-between gap-2">
+            <span
+              className={`flex items-center gap-1 ${
+                processNotice?.code === 'processing_failed'
+                  ? 'text-red-600'
+                  : 'text-muted-foreground'
+              }`}
             >
-              {processing ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <Sparkles className="h-3 w-3" />
-              )}
-              {selectedIds.size > 0 ? `Process ${selectedIds.size} with AI` : 'Process All with AI'}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 text-xs w-full sm:w-auto gap-1"
-              onClick={() => handleProcessWithAI(true)}
-              disabled={processing}
-              title="Process with AI + Perplexity research"
-            >
-              <Search className="h-3 w-3" />
-              + Research
-            </Button>
+              {processNotice?.code === 'processing_failed' ? (
+                <AlertTriangle className="h-3 w-3" />
+              ) : null}
+              {processNotice?.message || processDisabledReason}
+            </span>
+            {processNotice?.retryable && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-[10px]"
+                onClick={() => handleProcessWithAI(lastUseResearch)}
+                disabled={processing}
+              >
+                <RotateCcw className="h-3 w-3 mr-1" />
+                Retry
+              </Button>
+            )}
           </div>
         )}
       </div>

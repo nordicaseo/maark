@@ -123,6 +123,37 @@ export const skills = pgTable('skills', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+// ── Project Agent Profiles ────────────────────────────────────────
+
+export const projectAgentProfiles = pgTable('project_agent_profiles', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  role: varchar('role', { length: 60 }).notNull(),
+  displayName: varchar('display_name', { length: 200 }).notNull(),
+  emoji: varchar('emoji', { length: 16 }),
+  mission: text('mission'),
+  isEnabled: boolean('is_enabled').notNull().default(true),
+  fileBundle: jsonb('file_bundle'),
+  skillIds: jsonb('skill_ids'),
+  modelOverrides: jsonb('model_overrides'),
+  heartbeatMeta: jsonb('heartbeat_meta'),
+  createdById: text('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+  updatedById: text('updated_by_id').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('project_agent_profiles_unique_project_role').on(table.projectId, table.role),
+]);
+
+export const agentSharedProfiles = pgTable('agent_shared_profiles', {
+  id: serial('id').primaryKey(),
+  key: varchar('key', { length: 120 }).notNull().unique(),
+  content: text('content').notNull().default(''),
+  updatedById: text('updated_by_id').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
 // ── Skill Parts ──────────────────────────────────────────────────
 
 export const skillParts = pgTable('skill_parts', {

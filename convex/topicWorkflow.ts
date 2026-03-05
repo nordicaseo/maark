@@ -7,6 +7,7 @@ const WORKFLOW_TEMPLATE_KEY = "topic_production_v1";
 
 type TopicStageKey =
   | "research"
+  | "seo_intel_review"
   | "outline_build"
   | "outline_review"
   | "prewrite_context"
@@ -16,6 +17,7 @@ type TopicStageKey =
 
 const stageValidator = v.union(
   v.literal("research"),
+  v.literal("seo_intel_review"),
   v.literal("outline_build"),
   v.literal("outline_review"),
   v.literal("prewrite_context"),
@@ -38,7 +40,8 @@ const deliverableValidator = v.object({
 });
 
 const stageTransitions: Record<TopicStageKey, TopicStageKey[]> = {
-  research: ["outline_build"],
+  research: ["seo_intel_review"],
+  seo_intel_review: ["outline_build"],
   outline_build: ["outline_review"],
   outline_review: ["prewrite_context"],
   prewrite_context: ["writing"],
@@ -49,10 +52,11 @@ const stageTransitions: Record<TopicStageKey, TopicStageKey[]> = {
 
 const stageOwnerChains: Record<TopicStageKey, string[]> = {
   research: ["researcher", "seo", "lead"],
+  seo_intel_review: ["seo-reviewer", "seo", "lead"],
   outline_build: ["outliner", "content", "lead"],
   outline_review: ["human", "seo-reviewer"],
   prewrite_context: ["project-manager"],
-  writing: ["writer", "content", "lead"],
+  writing: ["writer"],
   final_review: ["seo-reviewer", "seo", "lead"],
   complete: [],
 };
@@ -60,13 +64,69 @@ const stageOwnerChains: Record<TopicStageKey, string[]> = {
 const roleAliases: Record<string, string[]> = {
   researcher: ["researcher", "seo", "editor", "writer"],
   outliner: ["outliner", "editor", "writer", "content"],
-  writer: ["writer", "content", "editor"],
+  writer: ["writer"],
   "seo-reviewer": ["seo-reviewer", "seo", "editor"],
   "project-manager": ["project-manager", "lead", "editor"],
   seo: ["seo", "seo-reviewer", "editor"],
   content: ["content", "writer", "editor"],
   lead: ["lead", "project-manager", "editor", "seo-reviewer"],
 };
+
+const WORKFLOW_ROLE_SEEDS: Array<{
+  name: string;
+  role: string;
+  specialization: string;
+  skills: string[];
+}> = [
+  {
+    name: "Atlas",
+    role: "writer",
+    specialization: "Long-form SEO content",
+    skills: ["SEO writing", "keyword research", "content structure", "blog posts"],
+  },
+  {
+    name: "Sage",
+    role: "researcher",
+    specialization: "Research & data analysis",
+    skills: ["topic research", "competitor analysis", "data synthesis", "citations"],
+  },
+  {
+    name: "Maple",
+    role: "outliner",
+    specialization: "Structured outlines and narrative flow",
+    skills: ["outline design", "content architecture", "section planning"],
+  },
+  {
+    name: "Orion",
+    role: "seo-reviewer",
+    specialization: "SEO and on-page optimization reviews",
+    skills: ["SERP alignment", "on-page SEO", "metadata reviews", "internal linking"],
+  },
+  {
+    name: "Pulse",
+    role: "project-manager",
+    specialization: "Workflow orchestration and handoffs",
+    skills: ["workflow planning", "handoffs", "risk checks"],
+  },
+  {
+    name: "Helix",
+    role: "seo",
+    specialization: "SEO strategy and keyword alignment",
+    skills: ["keyword strategy", "entity coverage", "ranking factors"],
+  },
+  {
+    name: "Lumen",
+    role: "content",
+    specialization: "General content production support",
+    skills: ["content planning", "drafting", "editing support"],
+  },
+  {
+    name: "Astra",
+    role: "lead",
+    specialization: "Editorial lead and escalation fallback",
+    skills: ["quality oversight", "final decisions", "workflow escalation"],
+  },
+];
 
 function stageOwnerSummary(stage: TopicStageKey): string {
   const chain = stageOwnerChains[stage] || ["lead"];
@@ -91,6 +151,7 @@ function isTopicTask(task: Doc<"tasks"> | null | undefined): task is Doc<"tasks"
 function stageToTaskStatus(stage: TopicStageKey): string {
   switch (stage) {
     case "research":
+    case "seo_intel_review":
     case "outline_build":
     case "outline_review":
     case "prewrite_context":
@@ -125,6 +186,199 @@ function normalizedRoleCandidates(role: string): string[] {
   const roleKey = role.toLowerCase();
   const base = roleAliases[roleKey] || [roleKey];
   return Array.from(new Set([roleKey, ...base]));
+}
+
+async function seedMissingWorkflowRoles(
+  ctx: MutationCtx,
+  roles?: string[]
+): Promise<{ seededRoles: string[] }> {
+  const existing = await ctx.db.query("agents").collect();
+  const existingRoles = new Set(existing.map((agent) => agent.role.toLowerCase()));
+  const wanted = roles
+    ? new Set(roles.map((role) => role.toLowerCase()))
+    : null;
+  const now = Date.now();
+  const seededRoles: string[] = [];
+
+  for (const template of WORKFLOW_ROLE_SEEDS) {
+    if (wanted && !wanted.has(template.role.toLowerCase())) continue;
+    if (existingRoles.has(template.role.toLowerCase())) continue;
+    await ctx.db.insert("agents", {
+      name: template.name,
+      role: template.role,
+      specialization: template.specialization,
+      skills: template.skills,
+      status: "ONLINE",
+      tasksCompleted: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    seededRoles.push(template.role);
+    existingRoles.add(template.role.toLowerCase());
+  }
+
+  return { seededRoles };
+}
+
+async function healWriterAvailability(
+  ctx: MutationCtx
+): Promise<{
+  healed: boolean;
+  reasonCode:
+    | "writer_available"
+    | "writer_seeded"
+    | "writer_status_recovered"
+    | "writer_still_unavailable";
+  diagnostics: {
+    writerCount: number;
+    writerOnline: number;
+    writerIdle: number;
+    writerWorking: number;
+    writerOffline: number;
+  };
+}> {
+  const allAgents = await ctx.db.query("agents").collect();
+  let writers = allAgents.filter((agent) => agent.role.toLowerCase() === "writer");
+
+  if (writers.length === 0) {
+    await seedMissingWorkflowRoles(ctx, ["writer"]);
+    const refreshed = await ctx.db.query("agents").collect();
+    writers = refreshed.filter((agent) => agent.role.toLowerCase() === "writer");
+    return {
+      healed: true,
+      reasonCode: writers.some((agent) => agent.status === "ONLINE" || agent.status === "IDLE")
+        ? "writer_seeded"
+        : "writer_still_unavailable",
+      diagnostics: {
+        writerCount: writers.length,
+        writerOnline: writers.filter((agent) => agent.status === "ONLINE").length,
+        writerIdle: writers.filter((agent) => agent.status === "IDLE").length,
+        writerWorking: writers.filter((agent) => agent.status === "WORKING").length,
+        writerOffline: writers.filter((agent) => agent.status === "OFFLINE").length,
+      },
+    };
+  }
+
+  if (writers.some((agent) => agent.status === "ONLINE" || agent.status === "IDLE")) {
+    return {
+      healed: false,
+      reasonCode: "writer_available",
+      diagnostics: {
+        writerCount: writers.length,
+        writerOnline: writers.filter((agent) => agent.status === "ONLINE").length,
+        writerIdle: writers.filter((agent) => agent.status === "IDLE").length,
+        writerWorking: writers.filter((agent) => agent.status === "WORKING").length,
+        writerOffline: writers.filter((agent) => agent.status === "OFFLINE").length,
+      },
+    };
+  }
+
+  let recoveredAny = false;
+  const now = Date.now();
+  for (const writer of writers) {
+    if (writer.status === "OFFLINE") {
+      await ctx.db.patch(writer._id, {
+        status: "IDLE",
+        currentTaskId: undefined,
+        updatedAt: now,
+      });
+      recoveredAny = true;
+      continue;
+    }
+
+    if (writer.status !== "WORKING") continue;
+
+    let staleWorking = false;
+    if (!writer.currentTaskId) {
+      staleWorking = true;
+    } else {
+      const currentTask = await ctx.db.get(writer.currentTaskId);
+      staleWorking =
+        !currentTask ||
+        currentTask.status === "COMPLETED" ||
+        currentTask.workflowCurrentStageKey === "complete";
+    }
+
+    if (staleWorking) {
+      await ctx.db.patch(writer._id, {
+        status: "IDLE",
+        currentTaskId: undefined,
+        updatedAt: now,
+      });
+      recoveredAny = true;
+    }
+  }
+
+  const refreshed = await ctx.db.query("agents").collect();
+  const refreshedWriters = refreshed.filter((agent) => agent.role.toLowerCase() === "writer");
+  const hasAssignable = refreshedWriters.some(
+    (agent) => agent.status === "ONLINE" || agent.status === "IDLE"
+  );
+
+  return {
+    healed: recoveredAny,
+    reasonCode: hasAssignable
+      ? recoveredAny
+        ? "writer_status_recovered"
+        : "writer_available"
+      : "writer_still_unavailable",
+    diagnostics: {
+      writerCount: refreshedWriters.length,
+      writerOnline: refreshedWriters.filter((agent) => agent.status === "ONLINE").length,
+      writerIdle: refreshedWriters.filter((agent) => agent.status === "IDLE").length,
+      writerWorking: refreshedWriters.filter((agent) => agent.status === "WORKING").length,
+      writerOffline: refreshedWriters.filter((agent) => agent.status === "OFFLINE").length,
+    },
+  };
+}
+
+function outlinePayloadLooksValid(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const p = payload as {
+    artifact?: {
+      data?: {
+        sections?: unknown;
+        headings?: unknown;
+        outlineSnapshot?: {
+          headingCount?: unknown;
+          headings?: unknown;
+        };
+      };
+    };
+  };
+  const data = p.artifact?.data;
+  if (!data || typeof data !== "object") return false;
+
+  const headingCount = Number(
+    (data as { outlineSnapshot?: { headingCount?: unknown } }).outlineSnapshot?.headingCount ??
+      (data as { sections?: unknown }).sections ??
+      0
+  );
+  if (Number.isFinite(headingCount) && headingCount > 0) return true;
+
+  const headings =
+    (data as { outlineSnapshot?: { headings?: unknown } }).outlineSnapshot?.headings ??
+    (data as { headings?: unknown }).headings;
+
+  return Array.isArray(headings) && headings.some((item) => String(item || "").trim().length > 0);
+}
+
+async function hasValidOutlineArtifact(
+  ctx: MutationCtx,
+  taskId: Id<"tasks">
+): Promise<boolean> {
+  const events = await ctx.db
+    .query("taskWorkflowEvents")
+    .withIndex("by_task_time", (q) => q.eq("taskId", taskId))
+    .order("desc")
+    .take(80);
+
+  return events.some(
+    (event) =>
+      event.stageKey === "outline_build" &&
+      event.eventType === "stage_artifact" &&
+      outlinePayloadLooksValid(event.payload)
+  );
 }
 
 async function resolveStageOwnerAgent(
@@ -300,37 +554,59 @@ async function assignStageOwner(
     });
     return {
       blocked: false,
+      queued: false,
       assignedAgentId: null as Id<"agents"> | null,
       assignedAgentName: null as string | null,
     };
   }
 
   const now = Date.now();
-  const assignment = await resolveStageOwnerAgent(ctx, args.stageKey);
+  let assignment = await resolveStageOwnerAgent(ctx, args.stageKey);
+  let assignmentDiagnostics: Record<string, unknown> | undefined;
+
+  if (!assignment && args.stageKey === "writing") {
+    const healResult = await healWriterAvailability(ctx);
+    assignmentDiagnostics = {
+      reasonCode: healResult.reasonCode,
+      ...healResult.diagnostics,
+      healed: healResult.healed,
+    };
+    assignment = await resolveStageOwnerAgent(ctx, args.stageKey);
+  }
+
   if (!assignment) {
+    const queueWriting = args.stageKey === "writing";
     await ctx.db.patch(args.taskId, {
       assignedAgentId: undefined,
-      workflowStageStatus: "blocked",
+      workflowStageStatus: queueWriting ? "queued" : "blocked",
       workflowUpdatedAt: now,
       updatedAt: now,
     });
 
-    const summary = `PM assignment blocked: no available agent for ${args.stageKey}. Required owner chain: ${stageOwnerSummary(args.stageKey)}.`;
+    const reasonCode =
+      (assignmentDiagnostics?.reasonCode as string | undefined) ||
+      (args.stageKey === "writing" ? "writer_unavailable" : "assignment_unavailable");
+    const summary = queueWriting
+      ? `PM writer queue: waiting for available writer on ${args.stageKey}. owner chain: ${stageOwnerSummary(args.stageKey)}.`
+      : `PM assignment blocked: no available agent for ${args.stageKey}. required owner chain: ${stageOwnerSummary(args.stageKey)}.`;
     await insertWorkflowEvent(ctx, {
       taskId: args.taskId,
       projectId: args.projectId,
       stageKey: args.stageKey,
-      eventType: "assignment_blocked",
+      eventType: queueWriting ? "assignment_queued" : "assignment_blocked",
       actorType: "system",
       actorName: "Workflow PM",
       summary,
       payload: {
+        reasonCode: queueWriting ? "writer_queue_waiting" : reasonCode,
         requiredOwnerChain: stageOwnerChains[args.stageKey],
+        diagnostics: assignmentDiagnostics,
       },
     });
 
     return {
-      blocked: true,
+      blocked: !queueWriting,
+      queued: queueWriting,
       assignedAgentId: null as Id<"agents"> | null,
       assignedAgentName: null as string | null,
     };
@@ -362,6 +638,7 @@ async function assignStageOwner(
 
   return {
     blocked: false,
+    queued: false,
     assignedAgentId: assignment.agent._id,
     assignedAgentName: assignment.agent.name,
     requestedRole: assignment.requestedRole,
@@ -465,6 +742,7 @@ export const createTopicFromSource = mutation({
   handler: async (ctx, args) => {
     const now = Date.now();
     const topicKey = normalizeTopicKey(args.topic);
+    await seedMissingWorkflowRoles(ctx);
 
     const projectTasks = await ctx.db
       .query("tasks")
@@ -590,6 +868,7 @@ export const ensureStageOwner = mutation({
       ok: true,
       stageKey,
       blocked: Boolean(assignment?.blocked),
+      queued: Boolean(assignment?.queued),
       assignedAgentId: assignment?.assignedAgentId ?? null,
       assignedAgentName: assignment?.assignedAgentName ?? null,
     };
@@ -599,7 +878,11 @@ export const ensureStageOwner = mutation({
 export const resetFromStage = mutation({
   args: {
     taskId: v.id("tasks"),
-    fromStage: v.union(v.literal("research"), v.literal("outline_build")),
+    fromStage: v.union(
+      v.literal("research"),
+      v.literal("outline_build"),
+      v.literal("writing")
+    ),
     actorType: v.union(v.literal("user"), v.literal("agent"), v.literal("system")),
     actorId: v.optional(v.string()),
     actorName: v.optional(v.string()),
@@ -613,12 +896,27 @@ export const resetFromStage = mutation({
 
     const now = Date.now();
     const currentStage = (task.workflowCurrentStageKey || "research") as TopicStageKey;
-    const resetApprovals = {
-      outlineHuman: false,
-      outlineSeo: false,
-      seoFinal: false,
-      outlineSkipped: false,
-    };
+    const existingApprovals = approvalsWithDefaults(task);
+    const resetApprovals =
+      args.fromStage === "writing"
+        ? {
+            outlineHuman: existingApprovals.outlineHuman,
+            outlineSeo: existingApprovals.outlineSeo,
+            seoFinal: false,
+            outlineSkipped: existingApprovals.outlineSkipped,
+          }
+        : {
+            outlineHuman: false,
+            outlineSeo: false,
+            seoFinal: false,
+            outlineSkipped: false,
+          };
+    const resetDeliverables =
+      args.fromStage === "writing"
+        ? (task.deliverables || []).filter(
+            (deliverable) => deliverable.type !== "preview_link"
+          )
+        : [];
 
     await ctx.db.patch(task._id, {
       workflowCurrentStageKey: args.fromStage,
@@ -628,7 +926,7 @@ export const resetFromStage = mutation({
       workflowCompletedAt: undefined,
       status: stageToTaskStatus(args.fromStage),
       completedAt: undefined,
-      deliverables: [],
+      deliverables: resetDeliverables,
       updatedAt: now,
     });
 
@@ -722,6 +1020,12 @@ export const advanceStage = mutation({
         (approvals.outlineHuman && approvals.outlineSeo);
       if (!outlineGateSatisfied) {
         throw new Error("Outline approvals must be completed before writing.");
+      }
+      const outlineReady = await hasValidOutlineArtifact(ctx, task._id);
+      if (!outlineReady) {
+        throw new Error(
+          "Outline artifact is missing or invalid. Writing cannot start before a valid outline is generated."
+        );
       }
     }
 

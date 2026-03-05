@@ -16,9 +16,25 @@ import {
   resolveProviderForAction,
   type ModelOverride,
 } from '@/lib/ai/model-resolution';
+import {
+  appendMemoryEntry,
+  buildRolePromptContext,
+  resolveProjectRoleModelOverride,
+  setWorkingState,
+} from '@/lib/agents/project-agent-profiles';
+import { getSerpIntelSnapshot } from '@/lib/serp/serp-intel';
 import { contentToHtml } from '@/lib/tiptap/to-html';
 import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
 import { getConvexClient } from '@/lib/convex/server';
+import {
+  buildEndingCompletionPrompt,
+  buildContinuationPrompt,
+  evaluateWritingCompleteness,
+  extractOutlineHeadings,
+  stripHtmlForCompleteness,
+  type WritingCompletenessResult,
+} from '@/lib/workflow/writing-completeness';
+import type { AgentRole } from '@/types/agent-profile';
 
 interface StageRunResult {
   summary: string;
@@ -44,8 +60,17 @@ interface SkillContext {
   applied: Array<{
     id: number;
     name: string;
-    origin: 'task' | 'project' | 'global';
+    origin: 'role_profile' | 'task' | 'project' | 'global';
   }>;
+}
+
+interface StageProfileContext {
+  role: AgentRole;
+  promptText: string;
+  profileUpdatedAt?: string;
+  profileName?: string;
+  roleSkillIds: number[];
+  projectRoleModelOverride?: ModelOverride;
 }
 
 export interface WorkflowStageRun {
@@ -71,6 +96,7 @@ export interface RunTopicWorkflowResult {
 
 const RUNNABLE_STAGES = new Set<TopicStageKey>([
   'research',
+  'seo_intel_review',
   'outline_build',
   'prewrite_context',
   'writing',
@@ -79,12 +105,23 @@ const RUNNABLE_STAGES = new Set<TopicStageKey>([
 const ROLE_ALIASES: Record<string, string[]> = {
   researcher: ['researcher', 'seo', 'editor'],
   outliner: ['outliner', 'editor', 'writer', 'content'],
-  writer: ['writer', 'content', 'editor'],
+  writer: ['writer'],
   'seo-reviewer': ['seo-reviewer', 'seo', 'editor'],
   'project-manager': ['project-manager', 'lead', 'editor'],
   seo: ['seo', 'seo-reviewer', 'editor'],
   content: ['content', 'writer', 'editor'],
   lead: ['lead', 'project-manager', 'editor', 'seo-reviewer'],
+};
+
+const STAGE_PRIMARY_ROLE: Record<TopicStageKey, AgentRole> = {
+  research: 'researcher',
+  seo_intel_review: 'seo-reviewer',
+  outline_build: 'outliner',
+  outline_review: 'seo-reviewer',
+  prewrite_context: 'project-manager',
+  writing: 'writer',
+  final_review: 'seo-reviewer',
+  complete: 'lead',
 };
 
 function stripCodeFences(input: string): string {
@@ -107,6 +144,31 @@ function stripHtml(html: string): string {
     .replace(/&#39;/g, "'")
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+class IncompleteDraftError extends Error {
+  completion: WritingCompletenessResult;
+  partialHtml: string;
+  partialPlainText: string;
+  continuationAttempts: number;
+  endingCompletionAttempted: boolean;
+
+  constructor(args: {
+    message: string;
+    completion: WritingCompletenessResult;
+    partialHtml: string;
+    partialPlainText: string;
+    continuationAttempts: number;
+    endingCompletionAttempted: boolean;
+  }) {
+    super(args.message);
+    this.name = 'IncompleteDraftError';
+    this.completion = args.completion;
+    this.partialHtml = args.partialHtml;
+    this.partialPlainText = args.partialPlainText;
+    this.continuationAttempts = args.continuationAttempts;
+    this.endingCompletionAttempted = args.endingCompletionAttempted;
+  }
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -147,9 +209,42 @@ function parseStringArray(value: unknown, limit = 8): string[] {
     .slice(0, limit);
 }
 
+function parseTermArray(value: unknown, limit = 10): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item === 'string') return item.trim();
+      if (item && typeof item === 'object') {
+        return String((item as { term?: unknown }).term ?? '').trim();
+      }
+      return '';
+    })
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
 function trimTo(input: string, maxChars: number): string {
   if (input.length <= maxChars) return input;
   return `${input.slice(0, maxChars).trimEnd()}…`;
+}
+
+function composeStageUserPrompt(
+  basePrompt: string,
+  rolePromptText: string,
+  skillPromptText: string
+): string {
+  const sections = [basePrompt.trim()];
+  const role = rolePromptText.trim();
+  const skills = skillPromptText.trim();
+
+  if (role) {
+    sections.push(`Role profile context:\n${role}`);
+  }
+  if (skills) {
+    sections.push(`Project skills and rules:\n${skills}`);
+  }
+
+  return sections.join('\n\n');
 }
 
 function normalizedRoleCandidates(role: string): string[] {
@@ -170,104 +265,47 @@ function isRoleAllowedForStage(stage: TopicStageKey, role: string): boolean {
   return false;
 }
 
-function normalizeHeading(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/[^\w\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
 
-function extractOutlineHeadings(markdown: string): string[] {
-  return markdown
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith('## '))
-    .map((line) => line.replace(/^##\s+/, '').trim())
-    .filter(Boolean);
-}
-
-function extractDraftHeadings(html: string): string[] {
-  const headings: string[] = [];
-  const matches = html.matchAll(/<h[1-4][^>]*>([\s\S]*?)<\/h[1-4]>/gi);
-  for (const match of matches) {
-    const text = normalizeHeading(match[1] || '');
-    if (text) headings.push(text);
-  }
-  return headings;
-}
-
-function hasAbruptEnding(plainText: string): boolean {
-  const trimmed = plainText.trim();
-  if (!trimmed) return true;
-  if (/(to be continued|continue in next)/i.test(trimmed)) return true;
-  const tail = trimmed.slice(-220);
-  if (!/[.!?]["')\]]?\s*$/.test(tail)) return true;
-  if (/[,:;(\-–—]\s*$/.test(trimmed)) return true;
-  return false;
-}
-
-function evaluateDraftCompleteness(args: {
-  html: string;
-  plainText: string;
-  outlineHeadings: string[];
-}) {
-  const normalizedOutline = args.outlineHeadings.map(normalizeHeading).filter(Boolean);
-  const draftHeadings = extractDraftHeadings(args.html);
-  const missingHeadings: string[] = [];
-
-  for (const expectedHeading of normalizedOutline) {
-    const present = draftHeadings.some(
-      (actualHeading) =>
-        actualHeading.includes(expectedHeading) ||
-        expectedHeading.includes(actualHeading)
-    );
-    if (!present) {
-      missingHeadings.push(expectedHeading);
-    }
-  }
-
-  const wordCount = args.plainText.split(/\s+/).filter(Boolean).length;
-  const minWords = Math.max(650, normalizedOutline.length * 140);
-  const headingCoverage =
-    normalizedOutline.length === 0
-      ? 1
-      : (normalizedOutline.length - missingHeadings.length) / normalizedOutline.length;
-
-  const reasons: string[] = [];
-  if (wordCount < minWords) {
-    reasons.push(`word count ${wordCount} is below minimum ${minWords}`);
-  }
-  if (headingCoverage < 0.75) {
-    reasons.push(
-      `heading coverage ${(headingCoverage * 100).toFixed(0)}% is below 75%`
-    );
-  }
-  if (hasAbruptEnding(args.plainText)) {
-    reasons.push('draft ending appears abrupt or incomplete');
-  }
-
-  return {
-    complete: reasons.length === 0,
-    reasons,
-    wordCount,
-    minWords,
-    headingCoverage,
-    missingHeadings,
-  };
-}
-
-async function buildSkillContext(task: Doc<'tasks'>): Promise<SkillContext> {
+async function buildSkillContext(
+  task: Doc<'tasks'>,
+  roleSkillIds: number[] = []
+): Promise<SkillContext> {
   const selectedSkills = new Map<
     number,
     {
       id: number;
       name: string;
       content: string;
-      origin: 'task' | 'project' | 'global';
+      origin: 'role_profile' | 'task' | 'project' | 'global';
     }
   >();
+
+  if (roleSkillIds.length > 0) {
+    const roleSkills = (await db
+      .select({
+        id: skills.id,
+        name: skills.name,
+        content: skills.content,
+      })
+      .from(skills)
+      .where(or(...roleSkillIds.map((id) => eq(skills.id, id))))) as Array<{
+      id: number;
+      name: string;
+      content: string;
+    }>;
+
+    const roleSkillById = new Map<number, { id: number; name: string; content: string }>(
+      roleSkills.map((skill) => [skill.id, skill])
+    );
+    for (const skillId of roleSkillIds) {
+      const roleSkill = roleSkillById.get(skillId);
+      if (!roleSkill) continue;
+      selectedSkills.set(roleSkill.id, {
+        ...roleSkill,
+        origin: 'role_profile',
+      });
+    }
+  }
 
   if (task.skillId) {
     const [explicitSkill] = await db
@@ -435,7 +473,7 @@ async function ensureTaskDocument(
   return { task: refreshed, document };
 }
 
-async function resolveStageModelOverride(
+async function resolveAgentStageModelOverride(
   task: Doc<'tasks'>,
   stage: TopicStageKey,
   action: 'research' | 'writing'
@@ -462,6 +500,10 @@ function resolveAutoAdvance(
   stage: TopicStageKey
 ): { toStage: TopicStageKey; skipOptionalOutlineReview?: boolean } | null {
   if (stage === 'research') {
+    return { toStage: 'seo_intel_review' };
+  }
+
+  if (stage === 'seo_intel_review') {
     return { toStage: 'outline_build' };
   }
 
@@ -513,12 +555,17 @@ async function setAgentOnline(
 async function runResearchStage(
   task: Doc<'tasks'>,
   documentId: number,
-  skillContext: SkillContext
+  skillContext: SkillContext,
+  stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
-  const modelOverride = await resolveStageModelOverride(task, 'research', 'research');
+  const modelOverride = await resolveAgentStageModelOverride(task, 'research', 'research');
   const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForAction(
     'research',
-    modelOverride
+    undefined,
+    {
+      projectRoleOverride: stageProfileContext.projectRoleModelOverride,
+      agentOverride: modelOverride,
+    }
   );
 
   const system = `You are a senior SEO researcher.
@@ -537,9 +584,11 @@ Target keyword: ${task.title}
 
 Produce a concise research brief for content production.`;
 
-  const fullUserPrompt = skillContext.promptText
-    ? `${user}\n\nProject skills and rules:\n${skillContext.promptText}`
-    : user;
+  const fullUserPrompt = composeStageUserPrompt(
+    user,
+    stageProfileContext.promptText,
+    skillContext.promptText
+  );
 
   const raw = await collectStreamText(
     provider.stream({
@@ -635,19 +684,131 @@ Produce a concise research brief for content production.`;
   };
 }
 
+async function runSeoIntelStage(
+  task: Doc<'tasks'>,
+  document: Awaited<ReturnType<typeof getDocumentById>>
+): Promise<StageRunResult> {
+  const keyword = String(document.targetKeyword || task.title || '').trim();
+  if (!keyword) {
+    throw new Error('SEO intel stage requires a target keyword or task title.');
+  }
+
+  const serpIntel = await getSerpIntelSnapshot({
+    keyword,
+    projectId: task.projectId ?? undefined,
+    preferFresh: true,
+  });
+
+  const existingResearch =
+    document.researchSnapshot && typeof document.researchSnapshot === 'object'
+      ? (document.researchSnapshot as Record<string, unknown>)
+      : {};
+
+  const mergedResearchSnapshot = {
+    ...existingResearch,
+    seoIntel: {
+      ...serpIntel,
+      reviewedAt: Date.now(),
+    },
+  };
+
+  await db
+    .update(documents)
+    .set({
+      researchSnapshot: mergedResearchSnapshot,
+      updatedAt: dbNow(),
+    })
+    .where(eq(documents.id, document.id));
+
+  const competitorsPreview = serpIntel.competitors
+    .slice(0, 5)
+    .map((item) => `- #${item.rank} ${item.domain} — ${item.title}`)
+    .join('\n');
+  const entitiesPreview = serpIntel.entities
+    .slice(0, 8)
+    .map((item) => `- ${item.term}`)
+    .join('\n');
+  const lsiPreview = serpIntel.lsiKeywords
+    .slice(0, 8)
+    .map((item) => `- ${item.term}`)
+    .join('\n');
+  const suggestionsPreview = serpIntel.suggestions
+    .slice(0, 6)
+    .map((item) => `- ${item}`)
+    .join('\n');
+
+  const body = [
+    `Provider: ${serpIntel.provider}`,
+    `Keyword: ${serpIntel.keyword}`,
+    '',
+    'Top competitors:',
+    competitorsPreview || '- none',
+    '',
+    'Entities:',
+    entitiesPreview || '- none',
+    '',
+    'LSI / related terms:',
+    lsiPreview || '- none',
+    '',
+    'Recommendations:',
+    suggestionsPreview || '- none',
+  ].join('\n');
+
+  return {
+    summary:
+      `SEO intel review completed (${serpIntel.competitors.length} competitors, ` +
+      `${serpIntel.entities.length} entities, ${serpIntel.lsiKeywords.length} related terms).`,
+    artifactTitle: 'SEO Intel Brief',
+    artifactBody: trimTo(body, 5000),
+    artifactData: serpIntel,
+    model: {
+      providerName: serpIntel.provider,
+      model: 'serp-intel',
+      maxTokens: 0,
+      temperature: 0,
+    },
+    deliverable: {
+      type: 'seo_brief',
+      title: 'SEO Intel Brief',
+    },
+  };
+}
+
 async function runOutlineStage(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
-  skillContext: SkillContext
+  skillContext: SkillContext,
+  stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
-  const modelOverride = await resolveStageModelOverride(task, 'outline_build', 'research');
+  const modelOverride = await resolveAgentStageModelOverride(task, 'outline_build', 'research');
   const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForAction(
     'research',
-    modelOverride
+    undefined,
+    {
+      projectRoleOverride: stageProfileContext.projectRoleModelOverride,
+      agentOverride: modelOverride,
+    }
   );
 
   const researchSummary = document.researchSnapshot?.summary || 'No research summary provided.';
   const researchFacts = parseStringArray(document.researchSnapshot?.facts, 8);
+  const seoIntel = (document.researchSnapshot as { seoIntel?: unknown } | null)?.seoIntel as
+    | {
+        entities?: unknown;
+        lsiKeywords?: unknown;
+        competitors?: unknown;
+        suggestions?: unknown;
+      }
+    | undefined;
+  const seoEntities = parseTermArray(seoIntel?.entities, 8);
+  const seoLsiKeywords = parseTermArray(seoIntel?.lsiKeywords, 10);
+  const seoSuggestions = parseTermArray(seoIntel?.suggestions, 6);
+  const competitorDomains = Array.isArray(seoIntel?.competitors)
+    ? (seoIntel?.competitors as Array<{ domain?: unknown }>)
+        .map((item) => String(item.domain ?? '').trim())
+        .filter(Boolean)
+        .slice(0, 6)
+    : [];
 
   const system = `You are an SEO outliner.
 Output markdown only.
@@ -663,12 +824,22 @@ Target keyword: ${document.targetKeyword || task.title}
 Research summary: ${researchSummary}
 Research facts:
 ${researchFacts.map((fact) => `- ${fact}`).join('\n') || '- (none)'}
+SEO entities:
+${seoEntities.map((term) => `- ${term}`).join('\n') || '- (none)'}
+SEO related terms:
+${seoLsiKeywords.map((term) => `- ${term}`).join('\n') || '- (none)'}
+Top competitors:
+${competitorDomains.map((domain) => `- ${domain}`).join('\n') || '- (none)'}
+SEO recommendations:
+${seoSuggestions.map((item) => `- ${item}`).join('\n') || '- (none)'}
 
 Generate the production outline now.`;
 
-  const fullUserPrompt = skillContext.promptText
-    ? `${user}\n\nProject skills and rules:\n${skillContext.promptText}`
-    : user;
+  const fullUserPrompt = composeStageUserPrompt(
+    user,
+    stageProfileContext.promptText,
+    skillContext.promptText
+  );
 
   const outlineRaw = await collectStreamText(
     provider.stream({
@@ -726,12 +897,17 @@ Generate the production outline now.`;
 async function runPrewriteStage(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
-  skillContext: SkillContext
+  skillContext: SkillContext,
+  stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
-  const modelOverride = await resolveStageModelOverride(task, 'prewrite_context', 'research');
+  const modelOverride = await resolveAgentStageModelOverride(task, 'prewrite_context', 'research');
   const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForAction(
     'research',
-    modelOverride
+    undefined,
+    {
+      projectRoleOverride: stageProfileContext.projectRoleModelOverride,
+      agentOverride: modelOverride,
+    }
   );
 
   const outlineText =
@@ -754,9 +930,11 @@ Outline excerpt: ${trimTo(outlineText, 1200)}
 
 Produce prewrite readiness and open questions.`;
 
-  const fullUserPrompt = skillContext.promptText
-    ? `${user}\n\nProject skills and rules:\n${skillContext.promptText}`
-    : user;
+  const fullUserPrompt = composeStageUserPrompt(
+    user,
+    stageProfileContext.promptText,
+    skillContext.promptText
+  );
 
   const raw = await collectStreamText(
     provider.stream({
@@ -837,12 +1015,17 @@ Produce prewrite readiness and open questions.`;
 async function runWritingStage(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
-  skillContext: SkillContext
+  skillContext: SkillContext,
+  stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
-  const modelOverride = await resolveStageModelOverride(task, 'writing', 'writing');
+  const modelOverride = await resolveAgentStageModelOverride(task, 'writing', 'writing');
   const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForAction(
     'writing',
-    modelOverride
+    undefined,
+    {
+      projectRoleOverride: stageProfileContext.projectRoleModelOverride,
+      agentOverride: modelOverride,
+    }
   );
 
   const research = document.researchSnapshot?.summary || '';
@@ -858,10 +1041,35 @@ async function runWritingStage(
         .filter((value): value is string => Boolean(value))
         .slice(0, 8)
     : [];
-  const outlineMarkdown =
-    String(document.outlineSnapshot?.markdown || '').trim() ||
-    stripHtml(contentToHtml(document.content, document.plainText));
+  const seoIntel = (document.researchSnapshot as { seoIntel?: unknown } | null)?.seoIntel as
+    | {
+        entities?: unknown;
+        lsiKeywords?: unknown;
+        suggestions?: unknown;
+        competitors?: unknown;
+      }
+    | undefined;
+  const seoEntities = parseTermArray(seoIntel?.entities, 8);
+  const seoLsiKeywords = parseTermArray(seoIntel?.lsiKeywords, 12);
+  const seoSuggestions = parseTermArray(seoIntel?.suggestions, 6);
+  const competitorDomains = Array.isArray(seoIntel?.competitors)
+    ? (seoIntel?.competitors as Array<{ domain?: unknown }>)
+        .map((item) => String(item.domain ?? '').trim())
+        .filter(Boolean)
+        .slice(0, 6)
+    : [];
+  const outlineMarkdown = String(document.outlineSnapshot?.markdown || '').trim();
+  if (!outlineMarkdown) {
+    throw new Error(
+      'Writing blocked: outlineSnapshot missing. Generate or approve an outline before writing.'
+    );
+  }
   const outlineHeadings = extractOutlineHeadings(outlineMarkdown);
+  if (outlineHeadings.length === 0) {
+    throw new Error(
+      'Writing blocked: outlineSnapshot is invalid (no H2 sections found).'
+    );
+  }
 
   const system = `You are a senior SEO writer.
 Output clean HTML only (no markdown, no code fences).
@@ -884,15 +1092,25 @@ ${facts.map((fact) => `- ${fact}`).join('\n') || '-'}
 
 Statistics:
 ${stats.map((s) => `- ${s}`).join('\n') || '-'}
+SEO entities to include:
+${seoEntities.map((term) => `- ${term}`).join('\n') || '-'}
+SEO related terms:
+${seoLsiKeywords.map((term) => `- ${term}`).join('\n') || '-'}
+Top competing domains:
+${competitorDomains.map((domain) => `- ${domain}`).join('\n') || '-'}
+SEO brief recommendations:
+${seoSuggestions.map((item) => `- ${item}`).join('\n') || '-'}
 
 Outline to follow:
 ${trimTo(outlineMarkdown, 2500)}
 
 Write the final article now.`;
 
-  const fullUserPrompt = skillContext.promptText
-    ? `${user}\n\nProject skills and rules:\n${skillContext.promptText}`
-    : user;
+  const fullUserPrompt = composeStageUserPrompt(
+    user,
+    stageProfileContext.promptText,
+    skillContext.promptText
+  );
 
   const raw = await collectStreamText(
     provider.stream({
@@ -909,25 +1127,22 @@ Write the final article now.`;
   }
 
   let normalizedHtml = normalizeGeneratedHtml(raw);
-  let plainText = stripHtml(normalizedHtml);
-  let completion = evaluateDraftCompleteness({
+  let plainText = stripHtmlForCompleteness(normalizedHtml);
+  let completion = evaluateWritingCompleteness({
     html: normalizedHtml,
     plainText,
     outlineHeadings,
   });
 
+  const MAX_CONTINUATION_ATTEMPTS = 3;
   let continuationAttempts = 0;
-  while (!completion.complete && continuationAttempts < 2) {
+  while (!completion.complete && continuationAttempts < MAX_CONTINUATION_ATTEMPTS) {
     continuationAttempts += 1;
-    const continuationPrompt = `The draft appears incomplete.
-Known issues: ${completion.reasons.join('; ') || 'Missing completion checks'}.
-Missing headings: ${completion.missingHeadings.slice(0, 6).join(', ') || 'none'}.
-
-Current draft HTML:
-${trimTo(normalizedHtml, 9000)}
-
-Continue the article from where it stopped and finish all remaining sections.
-Return HTML only for the continuation content, no preface and no duplicate opening sections.`;
+    const continuationPrompt = buildContinuationPrompt({
+      reasons: completion.reasons,
+      missingHeadings: completion.missingHeadings,
+      currentHtml: trimTo(normalizedHtml, 9000),
+    });
 
     const continuationRaw = await collectStreamText(
       provider.stream({
@@ -944,18 +1159,57 @@ Return HTML only for the continuation content, no preface and no duplicate openi
     }
 
     normalizedHtml = normalizeGeneratedHtml(`${normalizedHtml}\n${continuationRaw}`);
-    plainText = stripHtml(normalizedHtml);
-    completion = evaluateDraftCompleteness({
+    plainText = stripHtmlForCompleteness(normalizedHtml);
+    completion = evaluateWritingCompleteness({
       html: normalizedHtml,
       plainText,
       outlineHeadings,
     });
   }
 
-  if (!completion.complete) {
-    throw new Error(
-      `Writing output incomplete after ${continuationAttempts} continuation attempt(s): ${completion.reasons.join('; ')}`
+  let endingCompletionAttempted = false;
+  if (
+    !completion.complete &&
+    completion.abruptEnding &&
+    completion.reasons.length === 1
+  ) {
+    endingCompletionAttempted = true;
+    const endingPrompt = buildEndingCompletionPrompt({
+      currentHtml: trimTo(normalizedHtml, 9000),
+    });
+    const endingRaw = await collectStreamText(
+      provider.stream({
+        model,
+        system,
+        messages: [{ role: 'user', content: endingPrompt }],
+        maxTokens,
+        temperature,
+      })
     );
+
+    if (endingRaw.trim()) {
+      normalizedHtml = normalizeGeneratedHtml(`${normalizedHtml}\n${endingRaw}`);
+      plainText = stripHtmlForCompleteness(normalizedHtml);
+      completion = evaluateWritingCompleteness({
+        html: normalizedHtml,
+        plainText,
+        outlineHeadings,
+      });
+    }
+  }
+
+  if (!completion.complete) {
+    throw new IncompleteDraftError({
+      message:
+        `Writing output incomplete after ${continuationAttempts} continuation attempt(s)` +
+        `${endingCompletionAttempted ? ' + ending recovery pass' : ''}: ` +
+        `${completion.reasons.join('; ')}`,
+      completion,
+      partialHtml: normalizedHtml,
+      partialPlainText: plainText,
+      continuationAttempts,
+      endingCompletionAttempted,
+    });
   }
 
   const wordCount = completion.wordCount;
@@ -1007,6 +1261,7 @@ Return HTML only for the continuation content, no preface and no duplicate openi
       minWordTarget: completion.minWords,
       headingCoverage: completion.headingCoverage,
       continuationAttempts,
+      endingCompletionAttempted,
       aiDetectionScore,
       contentQualityScore,
       previewToken,
@@ -1029,25 +1284,90 @@ async function runStage(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
   stage: TopicStageKey,
-  skillContext: SkillContext
+  skillContext: SkillContext,
+  stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
   if (stage === 'research') {
-    return runResearchStage(task, document.id, skillContext);
+    return runResearchStage(task, document.id, skillContext, stageProfileContext);
+  }
+
+  if (stage === 'seo_intel_review') {
+    return runSeoIntelStage(task, document);
   }
 
   if (stage === 'outline_build') {
-    return runOutlineStage(task, document, skillContext);
+    return runOutlineStage(task, document, skillContext, stageProfileContext);
   }
 
   if (stage === 'prewrite_context') {
-    return runPrewriteStage(task, document, skillContext);
+    return runPrewriteStage(task, document, skillContext, stageProfileContext);
   }
 
   if (stage === 'writing') {
-    return runWritingStage(task, document, skillContext);
+    return runWritingStage(task, document, skillContext, stageProfileContext);
   }
 
   throw new Error(`Stage ${stage} is not runnable.`);
+}
+
+async function resolveStageProfileContext(
+  task: Doc<'tasks'>,
+  stage: TopicStageKey
+): Promise<StageProfileContext> {
+  const role = STAGE_PRIMARY_ROLE[stage] || 'lead';
+  if (!task.projectId) {
+    return {
+      role,
+      promptText: '',
+      roleSkillIds: [],
+      profileName: role,
+    };
+  }
+
+  try {
+    const context = await buildRolePromptContext(task.projectId, role);
+    const actionKey = stage === 'writing' ? 'writing' : 'research';
+    const projectRoleModelOverride = resolveProjectRoleModelOverride(context.profile, [
+      stage,
+      `${stage}_stage`,
+      actionKey,
+      'workflow',
+    ]);
+
+    return {
+      role,
+      promptText: context.promptContext,
+      roleSkillIds: context.roleSkillIds,
+      profileName: context.profile.displayName,
+      profileUpdatedAt: context.profile.updatedAt,
+      projectRoleModelOverride,
+    };
+  } catch (error) {
+    console.error('Non-fatal stage profile context load error:', error);
+    return {
+      role,
+      promptText: '',
+      roleSkillIds: [],
+      profileName: role,
+    };
+  }
+}
+
+async function recordRoleProfileActivity(
+  projectId: number | null | undefined,
+  role: AgentRole,
+  memoryEntry: string,
+  workingState?: string
+) {
+  if (!projectId) return;
+  try {
+    await appendMemoryEntry(projectId, role, memoryEntry, null);
+    if (workingState) {
+      await setWorkingState(projectId, role, workingState, null);
+    }
+  } catch (error) {
+    console.error('Non-fatal role profile memory update error:', error);
+  }
 }
 
 export async function runTopicWorkflow(
@@ -1103,6 +1423,45 @@ export async function runTopicWorkflow(
       throw new Error('Task not found after stage owner enforcement.');
     }
     currentTask = refreshedTaskForOwner;
+    const stageProfileContext = await resolveStageProfileContext(currentTask, stage);
+
+    const waitingWriterQueue =
+      stage === 'writing' &&
+      (ensuredOwner.queued || currentTask.workflowStageStatus === 'queued') &&
+      !currentTask.assignedAgentId;
+
+    if (waitingWriterQueue) {
+      const queueSummary =
+        'Writing queued: waiting for an available writer. The task remains in writer queue and will resume when a writer is online.';
+      await convex.mutation(api.topicWorkflow.recordStageProgress, {
+        taskId: currentTask._id,
+        stageKey: stage,
+        summary: queueSummary,
+        actorType: 'system',
+        actorId: input.user.id,
+        actorName: 'Workflow PM',
+        payload: {
+          status: 'queued',
+          reason: 'writer_queue_waiting',
+          stage,
+          ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
+          roleProfile: {
+            role: stageProfileContext.role,
+            profileName: stageProfileContext.profileName ?? null,
+            profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+          },
+        },
+      });
+      await recordRoleProfileActivity(
+        currentTask.projectId ?? null,
+        stageProfileContext.role,
+        queueSummary,
+        queueSummary
+      );
+      runs.push({ stage, summary: queueSummary });
+      stoppedReason = queueSummary;
+      break;
+    }
 
     if (ensuredOwner.blocked || !currentTask.assignedAgentId) {
       const blockedSummary =
@@ -1120,8 +1479,19 @@ export async function runTopicWorkflow(
           reason: 'assignment_blocked',
           stage,
           ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
+          roleProfile: {
+            role: stageProfileContext.role,
+            profileName: stageProfileContext.profileName ?? null,
+            profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+          },
         },
       });
+      await recordRoleProfileActivity(
+        currentTask.projectId ?? null,
+        stageProfileContext.role,
+        blockedSummary,
+        blockedSummary
+      );
       runs.push({ stage, summary: blockedSummary });
       stoppedReason = blockedSummary;
       break;
@@ -1154,8 +1524,19 @@ export async function runTopicWorkflow(
           assignedAgentId: currentTask.assignedAgentId,
           assignedAgentName: assignedAgent?.name ?? null,
           assignedAgentRole: assignedAgent?.role ?? null,
+          roleProfile: {
+            role: stageProfileContext.role,
+            profileName: stageProfileContext.profileName ?? null,
+            profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+          },
         },
       });
+      await recordRoleProfileActivity(
+        currentTask.projectId ?? null,
+        stageProfileContext.role,
+        blockedSummary,
+        blockedSummary
+      );
       runs.push({ stage, summary: blockedSummary });
       stoppedReason = blockedSummary;
       break;
@@ -1164,7 +1545,7 @@ export async function runTopicWorkflow(
     const ensured = await ensureTaskDocument(currentTask, input.user);
     currentTask = ensured.task;
     const freshDocument = await getDocumentById(ensured.document.id);
-    const skillContext = await buildSkillContext(currentTask);
+    const skillContext = await buildSkillContext(currentTask, stageProfileContext.roleSkillIds);
     const agent = await setAgentWorking(convex, currentTask, assignedAgent);
 
     const startedSummary = agent
@@ -1187,18 +1568,79 @@ export async function runTopicWorkflow(
         ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
         skillNames: skillContext.names,
         skills: skillContext.applied,
+        roleProfile: {
+          role: stageProfileContext.role,
+          profileName: stageProfileContext.profileName ?? null,
+          profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+          mappedSkillIds: stageProfileContext.roleSkillIds,
+        },
       },
     });
+    await recordRoleProfileActivity(
+      currentTask.projectId ?? null,
+      stageProfileContext.role,
+      startedSummary,
+      `${startedSummary}\nTask: ${currentTask.title}`
+    );
 
     let stageResult: StageRunResult;
     try {
-      stageResult = await runStage(currentTask, freshDocument, stage, skillContext);
+      stageResult = await runStage(
+        currentTask,
+        freshDocument,
+        stage,
+        skillContext,
+        stageProfileContext
+      );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const incompleteDraftError =
+        error instanceof IncompleteDraftError ? error : null;
       const failedSummary = `Stage ${stage} failed: ${errorMessage}`;
       const blockedBySafety =
         stage === 'writing' &&
         /incomplete|truncat|abrupt|minimum|coverage/i.test(errorMessage);
+      if (incompleteDraftError) {
+        const { completion } = incompleteDraftError;
+        await convex.mutation(api.topicWorkflow.recordStageArtifact, {
+          taskId: currentTask._id,
+          stageKey: stage,
+          summary:
+            `Partial draft captured. Missing ${completion.missingHeadings.length} outline heading(s), ` +
+            `word gap ${completion.wordGap}, coverage ${(completion.headingCoverage * 100).toFixed(0)}%.`,
+          actorType: 'system',
+          actorId: input.user.id,
+          actorName: 'Workflow PM',
+          artifact: {
+            title: 'Partial Draft (Incomplete)',
+            body: trimTo(incompleteDraftError.partialPlainText, 1800),
+            data: {
+              type: 'partial_draft',
+              html: incompleteDraftError.partialHtml,
+              reasons: completion.reasons,
+              wordCount: completion.wordCount,
+              minWords: completion.minWords,
+              wordGap: completion.wordGap,
+              headingCoverage: completion.headingCoverage,
+              missingHeadings: completion.missingHeadings,
+              abruptEnding: completion.abruptEnding,
+              continuationAttempts: incompleteDraftError.continuationAttempts,
+              endingCompletionAttempted: incompleteDraftError.endingCompletionAttempted,
+            },
+          },
+          payload: {
+            status: 'blocked',
+            reason: 'writing_incomplete',
+            stage,
+            outlineGap: completion.outlineGap,
+            roleProfile: {
+              role: stageProfileContext.role,
+              profileName: stageProfileContext.profileName ?? null,
+              profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+            },
+          },
+        });
+      }
       if (blockedBySafety) {
         await convex.mutation(api.tasks.update, {
           id: currentTask._id,
@@ -1222,8 +1664,31 @@ export async function runTopicWorkflow(
           assignedAgentId: currentTask.assignedAgentId ?? null,
           assignedAgentRole: agent?.role ?? assignedAgent?.role ?? null,
           error: errorMessage,
+          reason: incompleteDraftError ? 'writing_incomplete' : undefined,
+          outlineGap: incompleteDraftError?.completion.outlineGap,
+          roleProfile: {
+            role: stageProfileContext.role,
+            profileName: stageProfileContext.profileName ?? null,
+            profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+          },
+          diagnostics: incompleteDraftError
+            ? {
+                missingHeadings: incompleteDraftError.completion.missingHeadings,
+                headingCoverage: incompleteDraftError.completion.headingCoverage,
+                wordGap: incompleteDraftError.completion.wordGap,
+                abruptEnding: incompleteDraftError.completion.abruptEnding,
+                continuationAttempts: incompleteDraftError.continuationAttempts,
+                endingCompletionAttempted: incompleteDraftError.endingCompletionAttempted,
+              }
+            : undefined,
         },
       });
+      await recordRoleProfileActivity(
+        currentTask.projectId ?? null,
+        stageProfileContext.role,
+        failedSummary,
+        failedSummary
+      );
       await setAgentOnline(convex, currentTask);
       if (blockedBySafety) {
         runs.push({ stage, summary: failedSummary });
@@ -1264,8 +1729,20 @@ export async function runTopicWorkflow(
         model: stageResult.model,
         skillNames: skillContext.names,
         skills: skillContext.applied,
+        roleProfile: {
+          role: stageProfileContext.role,
+          profileName: stageProfileContext.profileName ?? null,
+          profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+          mappedSkillIds: stageProfileContext.roleSkillIds,
+        },
       },
     });
+    await recordRoleProfileActivity(
+      currentTask.projectId ?? null,
+      stageProfileContext.role,
+      stageSummary,
+      `${stageSummary}\nTask: ${currentTask.title}`
+    );
 
     const runRecord: WorkflowStageRun = {
       stage,

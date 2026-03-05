@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
 import { documents, documentComments } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
@@ -14,7 +14,7 @@ import { logAuditEvent } from '@/lib/observability';
  * POST /api/ai/process-comments
  * AI processes unresolved comments on a document, applying edits.
  * Body: { documentId: number, commentIds?: number[], useResearch?: boolean }
- * Returns: streamed revised HTML content.
+ * Returns: JSON with revised HTML content and deterministic status codes.
  */
 export async function POST(req: NextRequest) {
   const auth = await requireRole('editor');
@@ -24,13 +24,19 @@ export async function POST(req: NextRequest) {
     const { documentId, commentIds, useResearch } = await req.json();
 
     if (!documentId) {
-      return new Response(JSON.stringify({ error: 'documentId is required' }), { status: 400 });
+      return NextResponse.json(
+        { ok: false, code: 'DOCUMENT_ID_REQUIRED', error: 'documentId is required' },
+        { status: 400 }
+      );
     }
 
     await ensureDb();
 
     if (!(await userCanAccessDocument(auth.user, Number(documentId)))) {
-      return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 });
+      return NextResponse.json(
+        { ok: false, code: 'FORBIDDEN', error: 'Forbidden' },
+        { status: 403 }
+      );
     }
 
     // Fetch document
@@ -41,7 +47,10 @@ export async function POST(req: NextRequest) {
       .limit(1);
 
     if (!doc) {
-      return new Response(JSON.stringify({ error: 'Document not found' }), { status: 404 });
+      return NextResponse.json(
+        { ok: false, code: 'DOCUMENT_NOT_FOUND', error: 'Document not found' },
+        { status: 404 }
+      );
     }
 
     // Fetch unresolved comments
@@ -71,7 +80,14 @@ export async function POST(req: NextRequest) {
     }
 
     if (comments.length === 0) {
-      return new Response(JSON.stringify({ error: 'No unresolved comments to process' }), { status: 400 });
+      return NextResponse.json(
+        {
+          ok: false,
+          code: 'NO_COMMENTS',
+          error: 'No unresolved comments to process',
+        },
+        { status: 400 }
+      );
     }
 
     // Build comment instructions
@@ -179,6 +195,7 @@ Please revise the article to address all comments. Output the complete revised a
       });
       return new Response(
         JSON.stringify({
+          ok: false,
           error: validation.reason || 'AI revision was rejected due to possible truncation.',
           code: 'REVISION_REJECTED',
           metrics: validation.metrics,
@@ -202,14 +219,25 @@ Please revise the article to address all comments. Output the complete revised a
       },
     });
 
-    return new Response(normalizedHtml, {
-      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    return NextResponse.json({
+      ok: true,
+      code: 'COMMENTS_PROCESSED',
+      documentId,
+      processedCommentIds: comments.map((comment: { id: number }) => comment.id),
+      processedCount: comments.length,
+      contentHtml: normalizedHtml,
+      metrics: validation.metrics,
+      model,
     });
   } catch (error) {
     console.error('Process comments error:', error);
-    return new Response(
-      JSON.stringify({ error: 'Failed to process comments' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    return NextResponse.json(
+      {
+        ok: false,
+        code: 'PROCESS_COMMENTS_FAILED',
+        error: 'Failed to process comments',
+      },
+      { status: 500 }
     );
   }
 }

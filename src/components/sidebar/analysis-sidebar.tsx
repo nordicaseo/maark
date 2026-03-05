@@ -90,7 +90,7 @@ function SidebarContent({
   const [researchSources, setResearchSources] = useState('');
   const [outlineMarkdown, setOutlineMarkdown] = useState('');
   const [workflowSaving, setWorkflowSaving] = useState(false);
-  const [rerunBusy, setRerunBusy] = useState<'research' | 'outline_build' | null>(null);
+  const [rerunBusy, setRerunBusy] = useState<'research' | 'outline_build' | 'writing' | null>(null);
   const [workflowMessage, setWorkflowMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -173,7 +173,7 @@ function SidebarContent({
     }
   };
 
-  const handleRerunFrom = async (fromStage: 'research' | 'outline_build') => {
+  const handleRerunFrom = async (fromStage: 'research' | 'outline_build' | 'writing') => {
     setRerunBusy(fromStage);
     setWorkflowMessage(null);
     try {
@@ -192,7 +192,9 @@ function SidebarContent({
       setWorkflowMessage(
         fromStage === 'research'
           ? 'Workflow rerun started from Research and will pause before Writing.'
-          : 'Workflow rerun started from Outline and will pause before Writing.'
+          : fromStage === 'outline_build'
+            ? 'Workflow rerun started from Outline and will pause before Writing.'
+            : 'Workflow rerun started from Writing using the saved outline context.'
       );
     } catch (error) {
       setWorkflowMessage((error as Error).message);
@@ -282,6 +284,17 @@ function SidebarContent({
                 disabled={workflowSaving || !onUpdateDocument}
               >
                 {workflowSaving ? 'Saving...' : 'Save Research + Outline'}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="text-xs"
+                onClick={() => handleRerunFrom('writing')}
+                disabled={rerunBusy !== null}
+              >
+                {rerunBusy === 'writing'
+                  ? 'Rerunning...'
+                  : 'Retry Writing from Outline'}
               </Button>
               <Button
                 size="sm"

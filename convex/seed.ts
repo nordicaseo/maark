@@ -106,19 +106,67 @@ export const seedAgents = mutation({
     ];
 
     const ids = [];
+    const healedStatuses: string[] = [];
     for (const agent of agents) {
       if (existingRoles.has(agent.role)) continue;
       const id = await ctx.db.insert("agents", agent);
       ids.push(id);
     }
 
-    if (ids.length === 0) {
+    const criticalRoles = new Set(agents.map((agent) => agent.role.toLowerCase()));
+    const allAgents = await ctx.db.query("agents").collect();
+    for (const agent of allAgents) {
+      if (!criticalRoles.has(agent.role.toLowerCase())) continue;
+
+      if (agent.status === "OFFLINE") {
+        await ctx.db.patch(agent._id, {
+          status: "ONLINE",
+          currentTaskId: undefined,
+          updatedAt: now,
+        });
+        healedStatuses.push(`${agent.role}:offline->online`);
+        continue;
+      }
+
+      if (agent.status === "WORKING" && !agent.currentTaskId) {
+        await ctx.db.patch(agent._id, {
+          status: "IDLE",
+          currentTaskId: undefined,
+          updatedAt: now,
+        });
+        healedStatuses.push(`${agent.role}:working->idle`);
+        continue;
+      }
+
+      if (agent.status === "WORKING" && agent.currentTaskId) {
+        const activeTask = await ctx.db.get(agent.currentTaskId);
+        const staleWorking =
+          !activeTask ||
+          activeTask.status === "COMPLETED" ||
+          activeTask.workflowCurrentStageKey === "complete";
+        if (staleWorking) {
+          await ctx.db.patch(agent._id, {
+            status: "IDLE",
+            currentTaskId: undefined,
+            updatedAt: now,
+          });
+          healedStatuses.push(`${agent.role}:stale-working->idle`);
+        }
+      }
+    }
+
+    if (ids.length === 0 && healedStatuses.length === 0) {
       return {
         message: `No new agents needed — ${existing.length} existing agent(s) already cover seeded roles.`,
         ids,
+        healed: healedStatuses,
       };
     }
 
-    return { message: `Seeded ${ids.length} missing agent(s).`, ids };
+    return {
+      message: `Seeded ${ids.length} missing agent(s), healed ${healedStatuses.length} stale status record(s).`,
+      ids,
+      healed: healedStatuses,
+    };
   },
 });

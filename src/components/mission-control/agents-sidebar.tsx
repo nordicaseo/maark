@@ -11,6 +11,12 @@ const ROLE_BADGES: Record<string, string> = {
   writer: 'mc-badge-writer',
   editor: 'mc-badge-editor',
   researcher: 'mc-badge-researcher',
+  outliner: 'mc-badge-editor',
+  'seo-reviewer': 'mc-badge-researcher',
+  'project-manager': 'mc-badge-writer',
+  seo: 'mc-badge-researcher',
+  content: 'mc-badge-editor',
+  lead: 'mc-badge-writer',
 };
 
 const STATUS_DOTS: Record<string, string> = {
@@ -70,6 +76,18 @@ export function AgentsSidebar() {
   );
 }
 
+const ROLE_GRADIENTS: Record<string, string> = {
+  writer: '#4C8FE8',
+  editor: '#C47ADB',
+  researcher: '#E8A84C',
+  outliner: '#8B8CF6',
+  'seo-reviewer': '#3E9B6A',
+  'project-manager': '#D97706',
+  seo: '#0EA5E9',
+  content: '#64748B',
+  lead: '#111827',
+};
+
 function AgentCard({ agent }: { agent: Agent }) {
   return (
     <div className="mc-card">
@@ -79,11 +97,7 @@ function AgentCard({ agent }: { agent: Agent }) {
           className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-sm font-semibold shrink-0"
           style={{
             background: `linear-gradient(135deg, var(--mc-accent), ${
-              agent.role === 'writer'
-                ? '#4C8FE8'
-                : agent.role === 'editor'
-                  ? '#C47ADB'
-                  : '#E8A84C'
+              ROLE_GRADIENTS[agent.role] || '#E8A84C'
             })`,
           }}
         >

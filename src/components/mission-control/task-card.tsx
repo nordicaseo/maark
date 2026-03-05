@@ -104,8 +104,12 @@ function TaskCardContent({
   const workflowStageLabel =
     TOPIC_STAGE_LABELS[workflowStage as keyof typeof TOPIC_STAGE_LABELS] || workflowStage;
   const workflowLastEvent = task.workflowLastEventText;
+  const workflowBlocked = isTopicWorkflow && task.workflowStageStatus === 'blocked';
+  const workflowQueued = isTopicWorkflow && task.workflowStageStatus === 'queued';
   const researchReady =
     isTopicWorkflow &&
+    !workflowBlocked &&
+    !workflowQueued &&
     workflowStage !== 'research' &&
     workflowStage !== 'outline_build';
 
@@ -126,6 +130,12 @@ function TaskCardContent({
           {isTopicWorkflow && (
             <div className="flex items-center gap-1.5 mb-1 flex-wrap">
               <span className="mc-tag">{workflowStageLabel}</span>
+              {workflowBlocked && (
+                <span className="mc-tag text-red-500 border-red-300/60">Blocked</span>
+              )}
+              {workflowQueued && (
+                <span className="mc-tag text-amber-600 border-amber-300/60">Queued</span>
+              )}
               {researchReady && (
                 <span className="mc-tag text-green-400">Research Ready</span>
               )}
@@ -140,7 +150,12 @@ function TaskCardContent({
             </p>
           )}
           {isTopicWorkflow && workflowLastEvent && (
-            <p className="text-[10px] mt-1 line-clamp-2" style={{ color: 'var(--mc-text-tertiary)' }}>
+            <p
+              className="text-[10px] mt-1 line-clamp-3"
+              style={{
+                color: workflowBlocked ? '#b91c1c' : 'var(--mc-text-tertiary)',
+              }}
+            >
               {workflowLastEvent}
             </p>
           )}
@@ -255,7 +270,7 @@ function TaskCardContent({
 
       {/* Deliverables */}
       {task.deliverables && task.deliverables.length > 0 && (
-        <div className="flex flex-wrap gap-1 pt-1 border-t min-w-0" style={{ borderColor: 'var(--mc-border)' }}>
+        <div className="flex flex-wrap items-start gap-1 pt-1 border-t min-w-0 overflow-hidden" style={{ borderColor: 'var(--mc-border)' }}>
           {task.deliverables.map((d) => (
             d.url ? (
               <a
@@ -263,21 +278,21 @@ function TaskCardContent({
                 href={d.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex max-w-full min-w-0 items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded break-all"
+                className="inline-flex max-w-full min-w-0 items-start gap-0.5 text-[10px] px-1.5 py-0.5 rounded break-words whitespace-normal"
                 style={{ background: 'var(--mc-accent-soft)', color: 'var(--mc-accent)' }}
                 onClick={(e) => e.stopPropagation()}
               >
                 <Eye className="h-3 w-3" />
-                {d.title}
+                <span className="min-w-0">{d.title}</span>
               </a>
             ) : (
               <span
                 key={d.id}
-                className="inline-flex max-w-full min-w-0 items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded break-all"
+                className="inline-flex max-w-full min-w-0 items-start gap-0.5 text-[10px] px-1.5 py-0.5 rounded break-words whitespace-normal"
                 style={{ background: 'var(--mc-overlay)', color: 'var(--mc-text-secondary)' }}
               >
                 <FileText className="h-3 w-3" />
-                {d.title}
+                <span className="min-w-0">{d.title}</span>
               </span>
             )
           ))}

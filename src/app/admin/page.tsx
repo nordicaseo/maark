@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { FolderOpen, Sparkles, Cpu, Users, FileText, Search, Globe } from 'lucide-react';
+import { FolderOpen, Sparkles, Cpu, Users, FileText, Search, Globe, Bot } from 'lucide-react';
 
 interface Stats {
   projects: number;
@@ -30,6 +30,7 @@ export default function AdminDashboard() {
     { label: 'Keywords', value: stats?.keywords ?? '—', icon: Search, href: '/keywords' },
     { label: 'Pages', value: stats?.pages ?? '—', icon: Globe, href: '/pages' },
     { label: 'Skills', value: stats?.skills ?? '—', icon: Sparkles, href: '/admin/skills' },
+    { label: 'Agents', value: '8 roles', icon: Bot, href: '/admin/agents' },
     { label: 'AI Providers', value: stats?.providers ?? '—', icon: Cpu, href: '/admin/ai' },
     { label: 'Users', value: stats?.users ?? '—', icon: Users, href: '/admin/users' },
   ];
@@ -37,7 +38,7 @@ export default function AdminDashboard() {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-8 gap-4">
         {cards.map((card) => {
           const Icon = card.icon;
           return (

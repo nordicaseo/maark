@@ -86,6 +86,22 @@ interface WorkflowEvent {
   actorName?: string;
   summary: string;
   payload?: {
+    status?: string;
+    reason?: string;
+    reasonCode?: string;
+    outlineGap?: {
+      expectedHeadings?: number;
+      coveredHeadings?: number;
+      coverage?: number;
+      missingHeadings?: string[];
+    };
+    diagnostics?: {
+      missingHeadings?: string[];
+      headingCoverage?: number;
+      wordGap?: number;
+      abruptEnding?: boolean;
+      continuationAttempts?: number;
+    };
     meta?: {
       stageRole?: string;
       skillNames?: string[];
@@ -524,6 +540,16 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
   const stageArtifacts = workflowEvents.filter(
     (event) => event.eventType === 'stage_artifact' && Boolean(event.payload?.artifact)
   );
+  const latestBlockedEvent = workflowEvents.find(
+    (event) =>
+      event.payload?.status === 'blocked' ||
+      event.eventType === 'assignment_blocked'
+  );
+  const latestQueuedEvent = workflowEvents.find(
+    (event) =>
+      event.payload?.status === 'queued' ||
+      event.eventType === 'assignment_queued'
+  );
   const showStartAgent = isTopicWorkflow
     ? false
     : (task.status === 'BACKLOG' || task.status === 'PENDING' || !task.documentId);
@@ -644,6 +670,41 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
               <p className="text-xs rounded-md px-2 py-1.5" style={{ background: 'var(--mc-overlay)', color: 'var(--mc-text-secondary)' }}>
                 {task.workflowLastEventText}
               </p>
+            )}
+            {(task.workflowStageStatus === 'blocked' || latestBlockedEvent) && (
+              <div
+                className="rounded-md border px-2 py-1.5 text-xs space-y-1"
+                style={{ borderColor: '#fca5a5', background: '#fef2f2', color: '#991b1b' }}
+              >
+                <p className="font-medium">Stage blocked</p>
+                <p>{latestBlockedEvent?.summary || task.workflowLastEventText || 'Workflow is blocked.'}</p>
+                {(latestBlockedEvent?.payload?.reason || latestBlockedEvent?.payload?.reasonCode) && (
+                  <p className="text-[11px]">
+                    Reason: {latestBlockedEvent?.payload?.reason || latestBlockedEvent?.payload?.reasonCode}
+                  </p>
+                )}
+                {latestBlockedEvent?.payload?.outlineGap?.missingHeadings &&
+                  latestBlockedEvent.payload.outlineGap.missingHeadings.length > 0 && (
+                    <p className="text-[11px]">
+                      Missing headings: {latestBlockedEvent.payload.outlineGap.missingHeadings.slice(0, 5).join(', ')}
+                    </p>
+                  )}
+                {(latestBlockedEvent?.payload?.diagnostics?.wordGap ?? 0) > 0 && (
+                  <p className="text-[11px]">
+                    Word gap: {latestBlockedEvent?.payload?.diagnostics?.wordGap}
+                  </p>
+                )}
+              </div>
+            )}
+            {(task.workflowStageStatus === 'queued' || latestQueuedEvent) && (
+              <div
+                className="rounded-md border px-2 py-1.5 text-xs space-y-1"
+                style={{ borderColor: '#fcd34d', background: '#fffbeb', color: '#92400e' }}
+              >
+                <p className="font-medium">Writer queue</p>
+                <p>{latestQueuedEvent?.summary || task.workflowLastEventText || 'Waiting for an available writer.'}</p>
+                <p className="text-[11px]">This task will resume automatically when a writer is available.</p>
+              </div>
             )}
             {workflowError && (
               <p className="text-xs text-red-500">{workflowError}</p>
@@ -793,6 +854,22 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                           {event.payload.meta.skillNames && event.payload.meta.skillNames.length > 0
                             ? `${event.payload.meta.stageRole || event.payload.meta.model?.model ? ' · ' : ''}Skills: ${event.payload.meta.skillNames.join(', ')}`
                             : null}
+                        </p>
+                      )}
+                      {(event.payload?.reason || event.payload?.reasonCode) && (
+                        <p className="text-[10px]" style={{ color: '#b91c1c' }}>
+                          Reason: {event.payload?.reason || event.payload?.reasonCode}
+                        </p>
+                      )}
+                      {(event.payload?.outlineGap?.missingHeadings &&
+                        event.payload.outlineGap.missingHeadings.length > 0) && (
+                        <p className="text-[10px]" style={{ color: '#b91c1c' }}>
+                          Outline gaps: {event.payload.outlineGap.missingHeadings.slice(0, 4).join(', ')}
+                        </p>
+                      )}
+                      {(event.payload?.diagnostics?.wordGap ?? 0) > 0 && (
+                        <p className="text-[10px]" style={{ color: '#b91c1c' }}>
+                          Word gap: {event.payload?.diagnostics?.wordGap}
                         </p>
                       )}
                       <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
