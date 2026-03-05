@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { hasRole } from '@/lib/permissions';
 import { canSkipOutlineReviewByRole } from '@/lib/topic-workflow-rules';
 import { requireRole } from '@/lib/auth';
+import { runTopicWorkflow } from '@/lib/topic-workflow-runner';
 import {
   advanceTopicWorkflowStage,
   getWorkflowTaskForUser,
@@ -28,6 +29,7 @@ export async function POST(req: NextRequest) {
     const toStage = body.toStage as TopicStageKey;
     const note = typeof body.note === 'string' ? body.note : undefined;
     const skipOptionalOutlineReview = Boolean(body.skipOptionalOutlineReview);
+    const autoRunRequested = body.autoRun !== false;
 
     if (!taskId) {
       return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
@@ -56,6 +58,30 @@ export async function POST(req: NextRequest) {
       skipOptionalOutlineReview,
     });
 
+    let autoRunResult:
+      | {
+          taskId: string;
+          currentStage: TopicStageKey;
+          stoppedReason?: string;
+        }
+      | null = null;
+
+    // Critical UX path: when prewrite is approved and stage moves to writing,
+    // start the writer stage immediately so tasks don't appear stuck at handoff.
+    if (toStage === 'writing' && autoRunRequested) {
+      const runResult = await runTopicWorkflow({
+        user: auth.user,
+        taskId,
+        autoContinue: true,
+        maxStages: 4,
+      });
+      autoRunResult = {
+        taskId: runResult.taskId,
+        currentStage: runResult.currentStage,
+        stoppedReason: runResult.stoppedReason,
+      };
+    }
+
     await logAuditEvent({
       userId: auth.user.id,
       action: 'topic_workflow.advance',
@@ -66,10 +92,22 @@ export async function POST(req: NextRequest) {
         toStage,
         note: note ?? null,
         skipOptionalOutlineReview,
+        autoRunRequested,
+        autoRunTriggered: toStage === 'writing' && autoRunRequested,
+        autoRunResult: autoRunResult
+          ? {
+              currentStage: autoRunResult.currentStage,
+              stoppedReason: autoRunResult.stoppedReason ?? null,
+            }
+          : null,
       },
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({
+      ...result,
+      autoRunTriggered: toStage === 'writing' && autoRunRequested,
+      autoRunResult,
+    });
   } catch (error) {
     if (error instanceof Error && error.message === 'Task not found') {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
