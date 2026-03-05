@@ -25,6 +25,10 @@ import { Loader2 } from 'lucide-react';
 interface Skill {
   id: number;
   name: string;
+  description?: string | null;
+  content?: string;
+  projectId?: number | null;
+  isGlobal?: number;
 }
 
 interface NewTaskDialogProps {
@@ -33,8 +37,101 @@ interface NewTaskDialogProps {
   projectId?: number | null;
 }
 
+const PAGE_TYPE_OPTIONS = [
+  { value: 'product', label: 'Product' },
+  { value: 'collection', label: 'Collection' },
+  { value: 'blog', label: 'Blog' },
+  { value: 'landing_page', label: 'Landing Page' },
+  { value: 'homepage', label: 'Homepage' },
+  { value: 'faq', label: 'FAQ' },
+] as const;
+
+const BLOG_SUBTYPE_OPTIONS = [
+  { value: 'blog_post', label: 'Standard Post', contentType: 'blog_post' },
+  { value: 'how_to_guide', label: 'How-to Guide', contentType: 'blog_how_to' },
+  { value: 'best_of', label: 'Best-of', contentType: 'blog_listicle' },
+  { value: 'listicle', label: 'Listicle', contentType: 'blog_listicle' },
+  { value: 'buying_guide', label: 'Buying Guide', contentType: 'blog_buying_guide' },
+  { value: 'review', label: 'Review', contentType: 'blog_review' },
+  { value: 'comparison', label: 'Comparison', contentType: 'comparison' },
+] as const;
+
+const COLLECTION_SUBTYPE_OPTIONS = [
+  { value: 'both', label: 'Both (Default)' },
+  { value: 'above', label: 'Above' },
+  { value: 'below', label: 'Below' },
+] as const;
+
+type PageType = (typeof PAGE_TYPE_OPTIONS)[number]['value'];
+type BlogSubtype = (typeof BLOG_SUBTYPE_OPTIONS)[number]['value'];
+type CollectionSubtype = (typeof COLLECTION_SUBTYPE_OPTIONS)[number]['value'];
+
+function pageTypeLabel(pageType: PageType): string {
+  return PAGE_TYPE_OPTIONS.find((option) => option.value === pageType)?.label || pageType;
+}
+
+function subtypeLabel(pageType: PageType, subtype: string): string {
+  if (pageType === 'blog') {
+    return BLOG_SUBTYPE_OPTIONS.find((option) => option.value === subtype)?.label || subtype;
+  }
+  if (pageType === 'collection') {
+    return COLLECTION_SUBTYPE_OPTIONS.find((option) => option.value === subtype)?.label || subtype;
+  }
+  return subtype;
+}
+
+function resolveDefaultContentType(pageType: PageType, subtype: string): string {
+  if (pageType === 'blog') {
+    return (
+      BLOG_SUBTYPE_OPTIONS.find((option) => option.value === subtype)?.contentType ||
+      'blog_post'
+    );
+  }
+  if (pageType === 'collection') return 'product_category';
+  if (pageType === 'product') return 'product_description';
+  if (pageType === 'landing_page') return 'product_description';
+  if (pageType === 'homepage') return 'blog_post';
+  if (pageType === 'faq') return 'blog_how_to';
+  return 'blog_post';
+}
+
+function normalizeText(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function resolveAutoSkill(
+  skills: Skill[],
+  pageType: PageType,
+  subtype: string
+): Skill | null {
+  if (skills.length === 0) return null;
+  const pageText = normalizeText(pageTypeLabel(pageType));
+  const subtypeText = normalizeText(subtypeLabel(pageType, subtype));
+
+  let bestSkill: Skill | null = null;
+  let bestScore = 0;
+
+  for (const skill of skills) {
+    const haystack = normalizeText(
+      `${skill.name} ${skill.description || ''} ${skill.content || ''}`
+    );
+    let score = 0;
+    if (pageText && haystack.includes(pageText)) score += 3;
+    if (subtypeText && haystack.includes(subtypeText)) score += 4;
+    if (pageType === 'blog' && haystack.includes('blog')) score += 1;
+    if (pageType === 'collection' && haystack.includes('collection')) score += 1;
+    if (score > bestScore) {
+      bestScore = score;
+      bestSkill = skill;
+    }
+  }
+
+  return bestScore >= 4 ? bestSkill : null;
+}
+
 export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogProps) {
   const createTask = useMutation(api.tasks.create);
+  const updateTask = useMutation(api.tasks.update);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -42,7 +139,31 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
   const [priority, setPriority] = useState('MEDIUM');
   const [skillsList, setSkillsList] = useState<Skill[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState<string>('auto');
+  const [pageType, setPageType] = useState<PageType>('blog');
+  const [blogSubtype, setBlogSubtype] = useState<BlogSubtype>('blog_post');
+  const [collectionSubtype, setCollectionSubtype] = useState<CollectionSubtype>('both');
   const [saving, setSaving] = useState(false);
+  const hasSubtype = pageType === 'blog' || pageType === 'collection';
+  const selectedSubtype =
+    pageType === 'blog' ? blogSubtype : pageType === 'collection' ? collectionSubtype : 'standard';
+  const selectedSubtypeLabel = subtypeLabel(pageType, selectedSubtype);
+  const selectedPageLabel = pageTypeLabel(pageType);
+  const subtypeControlLabel =
+    pageType === 'blog'
+      ? 'Blog Type'
+      : pageType === 'collection'
+        ? 'Collection Placement'
+        : 'Content Type';
+  const autoMatchedSkill =
+    selectedSkillId === 'auto'
+      ? resolveAutoSkill(skillsList, pageType, selectedSubtype)
+      : null;
+  const explicitSkill =
+    selectedSkillId !== 'auto'
+      ? skillsList.find((skill) => skill.id.toString() === selectedSkillId) ?? null
+      : null;
+  const effectiveSelectedSkill = explicitSkill ?? autoMatchedSkill;
+  const willQueueSkillTask = type === 'content' && !effectiveSelectedSkill;
 
   // Fetch skills when project changes or dialog opens
   useEffect(() => {
@@ -54,6 +175,9 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
       .then(setSkillsList)
       .catch(() => setSkillsList([]));
     setSelectedSkillId('auto');
+    setPageType('blog');
+    setBlogSubtype('blog_post');
+    setCollectionSubtype('both');
   }, [open, projectId]);
 
   const handleCreate = async () => {
@@ -61,6 +185,10 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
     setSaving(true);
     try {
       const parsedProjectId = projectId;
+      const resolvedContentType = resolveDefaultContentType(pageType, selectedSubtype);
+      const pageTag = `page:${pageType}`;
+      const subtypeTag = `subtype:${selectedSubtype}`;
+      const typeTags = hasSubtype ? [pageTag, subtypeTag] : [pageTag];
 
       // For content/edit tasks, auto-create a linked document in the editor
       let documentId: number | undefined;
@@ -71,7 +199,7 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               title: title.trim(),
-              contentType: 'blog_post',
+              contentType: resolvedContentType,
               projectId: parsedProjectId,
             }),
           });
@@ -89,6 +217,12 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
         selectedSkillId && selectedSkillId !== 'auto'
           ? parseInt(selectedSkillId)
           : undefined;
+      const autoSkill =
+        selectedSkillId === 'auto'
+          ? resolveAutoSkill(skillsList, pageType, selectedSubtype)
+          : null;
+      const effectiveSkillId = parsedSkillId ?? autoSkill?.id;
+      const missingSkill = type === 'content' && !effectiveSkillId;
 
       if (type === 'content') {
         const workflowRes = await fetch('/api/topic-workflow/create', {
@@ -98,7 +232,8 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
             projectId: parsedProjectId,
             topic: title.trim(),
             entryPoint: 'mission_control',
-            skillId: parsedSkillId,
+            skillId: effectiveSkillId,
+            contentType: resolvedContentType,
             options: {
               outlineReviewOptional: true,
               seoReviewRequired: true,
@@ -113,16 +248,51 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
 
         const created = await workflowRes.json();
         if (created?.taskId) {
-          void fetch('/api/topic-workflow/run', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              taskId: created.taskId,
-              autoContinue: true,
-              maxStages: 6,
-            }),
-          }).catch((err) => {
-            console.error('Auto-run topic workflow failed:', err);
+          if (!created.reused) {
+            await updateTask({
+              id: created.taskId,
+              expectedProjectId: parsedProjectId,
+              tags: [
+                'topic',
+                'workflow',
+                'mission_control',
+                ...typeTags,
+                ...(missingSkill ? ['needs_skill'] : []),
+              ],
+              workflowLastEventText: missingSkill
+                ? hasSubtype
+                  ? `Waiting for skill: ${selectedPageLabel} / ${selectedSubtypeLabel}`
+                  : `Waiting for skill: ${selectedPageLabel}`
+                : undefined,
+            });
+          }
+          if (!missingSkill) {
+            void fetch('/api/topic-workflow/run', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                taskId: created.taskId,
+                autoContinue: true,
+                maxStages: 6,
+              }),
+            }).catch((err) => {
+              console.error('Auto-run topic workflow failed:', err);
+            });
+          }
+        }
+
+        if (missingSkill) {
+          const skillTarget = hasSubtype
+            ? `${selectedPageLabel} / ${selectedSubtypeLabel}`
+            : selectedPageLabel;
+          await createTask({
+            title: `Create Skill: ${skillTarget}`,
+            description: `Missing skill for task "${title.trim()}". Create a reusable skill for ${skillTarget} before starting this topic.`,
+            type: 'research',
+            status: 'BACKLOG',
+            priority: 'HIGH',
+            projectId: parsedProjectId,
+            tags: ['skill_setup', 'needs_skill', ...typeTags],
           });
         }
       } else {
@@ -133,8 +303,9 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
           status: 'BACKLOG',
           priority,
           projectId: parsedProjectId,
-          skillId: parsedSkillId,
+          skillId: effectiveSkillId,
           documentId,
+          tags: typeTags,
         });
       }
 
@@ -143,6 +314,9 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
       setType('content');
       setPriority('MEDIUM');
       setSelectedSkillId('auto');
+      setPageType('blog');
+      setBlogSubtype('blog_post');
+      setCollectionSubtype('both');
       onOpenChange(false);
     } catch (err) {
       console.error('Failed to create task:', err);
@@ -207,6 +381,66 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
               </Select>
             </div>
           </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium mb-1.5 block">Page Type</label>
+              <Select
+                value={pageType}
+                onValueChange={(value) => setPageType(value as PageType)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAGE_TYPE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1.5 block">{subtypeControlLabel}</label>
+              {pageType === 'blog' ? (
+                <Select
+                  value={blogSubtype}
+                  onValueChange={(value) => setBlogSubtype(value as BlogSubtype)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {BLOG_SUBTYPE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : pageType === 'collection' ? (
+                <Select
+                  value={collectionSubtype}
+                  onValueChange={(value) => setCollectionSubtype(value as CollectionSubtype)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {COLLECTION_SUBTYPE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                  Standard
+                </div>
+              )}
+            </div>
+          </div>
           <div>
             <label className="text-sm font-medium mb-1.5 block">Project</label>
             <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
@@ -230,6 +464,15 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
                 ))}
               </SelectContent>
             </Select>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {effectiveSelectedSkill
+                ? `Using skill: ${effectiveSelectedSkill.name}`
+                : willQueueSkillTask
+                  ? hasSubtype
+                    ? `No matching skill for ${selectedPageLabel} / ${selectedSubtypeLabel}. A high-priority "Create Skill" task will be queued.`
+                    : `No matching skill for ${selectedPageLabel}. A high-priority "Create Skill" task will be queued.`
+                  : 'Select Auto-detect to match by page type and content type.'}
+            </p>
           </div>
         </div>
         <DialogFooter>
