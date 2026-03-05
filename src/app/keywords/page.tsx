@@ -133,6 +133,20 @@ export default function KeywordsPage() {
     try {
       const res = await fetch(`/api/keywords/${keyword.id}/create-task`, { method: 'POST' });
       if (res.ok) {
+        const created = await res.json();
+        if (created?.taskId) {
+          void fetch('/api/topic-workflow/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              taskId: created.taskId,
+              autoContinue: true,
+              maxStages: 6,
+            }),
+          }).catch((err) => {
+            console.error('Auto-run topic workflow failed:', err);
+          });
+        }
         await fetchKeywords();
       }
     } finally {

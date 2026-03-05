@@ -11,7 +11,15 @@ export function isLikelyHtml(input: string): boolean {
 }
 
 export function textToHtml(text: string): string {
-  const escaped = text
+  const normalized = text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t\u00a0]{2,}/g, ' ').trimEnd())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  const escaped = normalized
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

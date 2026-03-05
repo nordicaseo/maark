@@ -60,6 +60,19 @@ export function CreateDialog({ open, onOpenChange, onCreated, projectId }: Creat
       if (res.ok) {
         const created = await res.json();
         const documentId = created.contentDocumentId;
+        if (created?.taskId) {
+          void fetch('/api/topic-workflow/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              taskId: created.taskId,
+              autoContinue: true,
+              maxStages: 6,
+            }),
+          }).catch((err) => {
+            console.error('Auto-run topic workflow failed:', err);
+          });
+        }
         onCreated();
         onOpenChange(false);
         setTitle('');

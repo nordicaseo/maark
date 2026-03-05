@@ -24,6 +24,19 @@ const stageValidator = v.union(
   v.literal("complete")
 );
 
+const artifactValidator = v.object({
+  title: v.string(),
+  body: v.optional(v.string()),
+  data: v.optional(v.any()),
+});
+
+const deliverableValidator = v.object({
+  id: v.optional(v.string()),
+  type: v.string(),
+  title: v.string(),
+  url: v.optional(v.string()),
+});
+
 const stageTransitions: Record<TopicStageKey, TopicStageKey[]> = {
   research: ["outline_build"],
   outline_build: ["outline_review"],
@@ -658,6 +671,82 @@ export const recordApproval = mutation({
     }
 
     return { ok: true, stageAdvanced };
+  },
+});
+
+export const recordStageArtifact = mutation({
+  args: {
+    taskId: v.id("tasks"),
+    stageKey: stageValidator,
+    summary: v.optional(v.string()),
+    actorType: v.union(v.literal("user"), v.literal("agent"), v.literal("system")),
+    actorId: v.optional(v.string()),
+    actorName: v.optional(v.string()),
+    artifact: v.optional(artifactValidator),
+    deliverable: v.optional(deliverableValidator),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!isTopicTask(task)) {
+      throw new Error("Task is not a topic workflow task.");
+    }
+
+    const now = Date.now();
+    const currentStage = (task.workflowCurrentStageKey || "research") as TopicStageKey;
+    if (currentStage !== args.stageKey) {
+      throw new Error(`Task is currently at ${currentStage}, cannot record artifact for ${args.stageKey}.`);
+    }
+
+    let savedDeliverable:
+      | {
+          id: string;
+          type: string;
+          title: string;
+          url?: string;
+          createdAt: number;
+        }
+      | null = null;
+
+    if (args.deliverable) {
+      const deliverables = task.deliverables || [];
+      const deliverableId = args.deliverable.id || `wf_${args.stageKey}_${now}`;
+      const exists = deliverables.some((d) => d.id === deliverableId);
+
+      savedDeliverable = {
+        id: deliverableId,
+        type: args.deliverable.type,
+        title: args.deliverable.title,
+        url: args.deliverable.url,
+        createdAt: now,
+      };
+
+      if (!exists) {
+        await ctx.db.patch(args.taskId, {
+          deliverables: [...deliverables, savedDeliverable],
+          workflowUpdatedAt: now,
+          updatedAt: now,
+        });
+      }
+    }
+
+    const summary = args.summary || `${args.stageKey} output recorded.`;
+
+    await insertWorkflowEvent(ctx, {
+      taskId: args.taskId,
+      projectId: task.projectId,
+      stageKey: args.stageKey as TopicStageKey,
+      eventType: "stage_artifact",
+      actorType: args.actorType,
+      actorId: args.actorId,
+      actorName: args.actorName,
+      summary,
+      payload: {
+        artifact: args.artifact,
+        deliverable: savedDeliverable,
+      },
+    });
+
+    return { ok: true, deliverableId: savedDeliverable?.id ?? null };
   },
 });
 

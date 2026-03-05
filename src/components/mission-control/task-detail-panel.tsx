@@ -134,6 +134,18 @@ interface WorkflowEvent {
   actorType: string;
   actorName?: string;
   summary: string;
+  payload?: {
+    artifact?: {
+      title: string;
+      body?: string;
+      data?: unknown;
+    };
+    deliverable?: {
+      title?: string;
+      url?: string;
+      type?: string;
+    };
+  };
   createdAt: number;
 }
 
@@ -158,6 +170,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
   const [agentRunning, setAgentRunning] = useState(false);
   const [feedbackRunning, setFeedbackRunning] = useState(false);
   const [workflowBusy, setWorkflowBusy] = useState(false);
+  const [workflowRunBusy, setWorkflowRunBusy] = useState(false);
   const [workflowLoading, setWorkflowLoading] = useState(false);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<AgentRunResult | null>(null);
@@ -360,6 +373,32 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
     }
   };
 
+  const handleRunWorkflow = async (autoContinue: boolean) => {
+    if (!isTopicWorkflow) return;
+    setWorkflowRunBusy(true);
+    setWorkflowError(null);
+    try {
+      const res = await fetch('/api/topic-workflow/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: task._id,
+          autoContinue,
+          maxStages: autoContinue ? 6 : 1,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to run workflow stage');
+      }
+      await refreshWorkflowContext();
+    } catch (err) {
+      setWorkflowError((err as Error).message);
+    } finally {
+      setWorkflowRunBusy(false);
+    }
+  };
+
   // ─── Start Agent: writes the article ─────────────────────────────
   const handleStartAgent = async () => {
     setAgentRunning(true);
@@ -521,8 +560,11 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
   };
 
   const isProcessing = agentRunning || feedbackRunning;
+  const stageArtifacts = workflowEvents.filter(
+    (event) => event.eventType === 'stage_artifact' && Boolean(event.payload?.artifact)
+  );
   const showStartAgent = isTopicWorkflow
-    ? workflowStage === 'writing'
+    ? false
     : (task.status === 'BACKLOG' || task.status === 'PENDING' || !task.documentId);
   const showProcessFeedback = isTopicWorkflow
     ? workflowStage === 'final_review' && Boolean(task.documentId)
@@ -647,10 +689,34 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
             )}
 
             <div className="flex items-center gap-2 flex-wrap">
+              {workflowStage !== 'complete' && workflowStage !== 'outline_review' && workflowStage !== 'final_review' && (
+                <>
+                  <button
+                    onClick={() => handleRunWorkflow(false)}
+                    disabled={workflowRunBusy || workflowBusy}
+                    className="mc-btn-primary text-xs flex items-center gap-1.5"
+                  >
+                    {workflowRunBusy ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Play className="h-3 w-3" />
+                    )}
+                    Run Current Stage
+                  </button>
+                  <button
+                    onClick={() => handleRunWorkflow(true)}
+                    disabled={workflowRunBusy || workflowBusy}
+                    className="mc-btn-secondary text-xs flex items-center gap-1.5"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    Run Full Workflow
+                  </button>
+                </>
+              )}
               {workflowNextStage && workflowStage !== 'complete' && (
                 <button
                   onClick={() => handleAdvanceWorkflowStage(workflowNextStage as TopicStageKey)}
-                  disabled={workflowBusy}
+                  disabled={workflowBusy || workflowRunBusy}
                   className="mc-btn-secondary text-xs flex items-center gap-1.5"
                 >
                   {workflowBusy ? (
@@ -669,7 +735,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                       note: 'Outline review skipped by PM/lead.',
                     })
                   }
-                  disabled={workflowBusy}
+                  disabled={workflowBusy || workflowRunBusy}
                   className="mc-btn-secondary text-xs"
                 >
                   Skip Optional Outline Review
@@ -686,7 +752,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                   <div className="flex items-center gap-2 flex-wrap">
                     <button
                       onClick={() => handleWorkflowApproval('outline_human', true)}
-                      disabled={workflowBusy}
+                      disabled={workflowBusy || workflowRunBusy}
                       className="mc-btn-secondary text-xs flex items-center gap-1.5"
                     >
                       <CheckCheck className="h-3 w-3" />
@@ -694,7 +760,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                     </button>
                     <button
                       onClick={() => handleWorkflowApproval('outline_seo', true)}
-                      disabled={workflowBusy}
+                      disabled={workflowBusy || workflowRunBusy}
                       className="mc-btn-secondary text-xs flex items-center gap-1.5"
                     >
                       <CheckCheck className="h-3 w-3" />
@@ -709,7 +775,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                   <div className="flex items-center gap-2 flex-wrap">
                     <button
                       onClick={() => handleWorkflowApproval('seo_final', true)}
-                      disabled={workflowBusy}
+                      disabled={workflowBusy || workflowRunBusy}
                       className="mc-btn-secondary text-xs flex items-center gap-1.5"
                     >
                       <CheckCheck className="h-3 w-3" />
@@ -749,6 +815,64 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                 )}
               </div>
             </div>
+
+            {stageArtifacts.length > 0 && (
+              <div>
+                <p className="text-xs font-medium mb-1.5" style={{ color: 'var(--mc-text-secondary)' }}>
+                  Stage Outputs
+                </p>
+                <div className="max-h-48 overflow-y-auto space-y-2">
+                  {stageArtifacts.slice(0, 8).map((event) => {
+                    const artifact = event.payload?.artifact;
+                    const deliverable = event.payload?.deliverable;
+                    if (!artifact) return null;
+
+                    return (
+                      <div
+                        key={`artifact-${event._id}`}
+                        className="rounded-md border p-2 text-xs space-y-1.5"
+                        style={{ borderColor: 'var(--mc-border)', background: 'var(--mc-overlay)' }}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-medium" style={{ color: 'var(--mc-text-primary)' }}>
+                            {artifact.title}
+                          </p>
+                          <span className="text-[10px]" style={{ color: 'var(--mc-text-muted)' }}>
+                            {STAGE_LABELS[event.stageKey as TopicStageKey] || event.stageKey}
+                          </span>
+                        </div>
+                        {artifact.body && (
+                          <pre
+                            className="whitespace-pre-wrap text-[11px] leading-4 max-h-28 overflow-y-auto"
+                            style={{ color: 'var(--mc-text-secondary)' }}
+                          >
+                            {artifact.body}
+                          </pre>
+                        )}
+                        {deliverable?.url ? (
+                          <a
+                            href={deliverable.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 underline"
+                            style={{ color: 'var(--mc-accent)' }}
+                          >
+                            <Eye className="h-3 w-3" />
+                            {deliverable.title || 'Open deliverable'}
+                          </a>
+                        ) : (
+                          deliverable?.title && (
+                            <p style={{ color: 'var(--mc-text-tertiary)' }}>
+                              Deliverable: {deliverable.title}
+                            </p>
+                          )
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -806,20 +930,34 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
             <h3 className="mc-header-mono text-xs mb-2">Deliverables</h3>
             <div className="space-y-1.5">
               {task.deliverables.map((d) => (
-                <a
-                  key={d.id}
-                  href={d.url}
-                  target="_blank"
-                  rel="noopener"
-                  className="flex items-center gap-2 text-xs p-2 rounded-md"
-                  style={{
-                    background: 'var(--mc-accent-soft)',
-                    color: 'var(--mc-accent)',
-                  }}
-                >
-                  <Eye className="h-3.5 w-3.5" />
-                  {d.title}
-                </a>
+                d.url ? (
+                  <a
+                    key={d.id}
+                    href={d.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-xs p-2 rounded-md"
+                    style={{
+                      background: 'var(--mc-accent-soft)',
+                      color: 'var(--mc-accent)',
+                    }}
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    {d.title}
+                  </a>
+                ) : (
+                  <div
+                    key={d.id}
+                    className="flex items-center gap-2 text-xs p-2 rounded-md"
+                    style={{
+                      background: 'var(--mc-overlay)',
+                      color: 'var(--mc-text-secondary)',
+                    }}
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    {d.title}
+                  </div>
+                )
               ))}
             </div>
           </div>

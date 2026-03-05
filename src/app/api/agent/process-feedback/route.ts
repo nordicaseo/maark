@@ -200,7 +200,9 @@ Revise the article to address all comments. Output the COMPLETE article in the s
     }
 
     // ─── Step 5: Save revised content ───────────────────────────────
-    const normalizedHtml = normalizeGeneratedHtml(revisedContent);
+    const normalizedHtml = normalizeGeneratedHtml(revisedContent)
+      .replace(/[ \t\u00a0]{5,}/g, ' ')
+      .trim();
     const validation = validateRevisedHtmlOutput(sourceHtml || '', normalizedHtml);
     if (!validation.ok) {
       await logAuditEvent({

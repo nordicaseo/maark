@@ -157,7 +157,9 @@ Please revise the article to address all comments. Output the complete revised a
       revisedContent += decoder.decode(value, { stream: true });
     }
 
-    const normalizedHtml = normalizeGeneratedHtml(revisedContent);
+    const normalizedHtml = normalizeGeneratedHtml(revisedContent)
+      .replace(/[ \t\u00a0]{5,}/g, ' ')
+      .trim();
     const validation = validateRevisedHtmlOutput(sourceHtml, normalizedHtml);
     if (!validation.ok) {
       await logAuditEvent({

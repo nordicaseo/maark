@@ -265,18 +265,29 @@ function TaskCardContent({
       {task.deliverables && task.deliverables.length > 0 && (
         <div className="flex gap-1 pt-1 border-t" style={{ borderColor: 'var(--mc-border)' }}>
           {task.deliverables.map((d) => (
-            <a
-              key={d.id}
-              href={d.url}
-              target="_blank"
-              rel="noopener"
-              className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded"
-              style={{ background: 'var(--mc-accent-soft)', color: 'var(--mc-accent)' }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <Eye className="h-3 w-3" />
-              {d.title}
-            </a>
+            d.url ? (
+              <a
+                key={d.id}
+                href={d.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded"
+                style={{ background: 'var(--mc-accent-soft)', color: 'var(--mc-accent)' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Eye className="h-3 w-3" />
+                {d.title}
+              </a>
+            ) : (
+              <span
+                key={d.id}
+                className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded"
+                style={{ background: 'var(--mc-overlay)', color: 'var(--mc-text-secondary)' }}
+              >
+                <FileText className="h-3 w-3" />
+                {d.title}
+              </span>
+            )
           ))}
         </div>
       )}

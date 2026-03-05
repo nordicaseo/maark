@@ -110,6 +110,21 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
           const err = await workflowRes.json().catch(() => ({}));
           throw new Error(err.error || 'Failed to create topic workflow task');
         }
+
+        const created = await workflowRes.json();
+        if (created?.taskId) {
+          void fetch('/api/topic-workflow/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              taskId: created.taskId,
+              autoContinue: true,
+              maxStages: 6,
+            }),
+          }).catch((err) => {
+            console.error('Auto-run topic workflow failed:', err);
+          });
+        }
       } else {
         await createTask({
           title: title.trim(),

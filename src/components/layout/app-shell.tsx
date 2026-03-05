@@ -447,7 +447,7 @@ ${editorHtml}
       {/* Left Sidebar */}
       <div
         className={`border-r border-border bg-card transition-all duration-200 flex flex-col shrink-0 ${
-          leftOpen ? 'w-[20rem] lg:w-[22rem] 2xl:w-[24rem]' : 'w-0'
+          leftOpen ? 'w-[22rem] lg:w-[24rem] 2xl:w-[26rem]' : 'w-0'
         } overflow-hidden`}
       >
         <DocumentList
