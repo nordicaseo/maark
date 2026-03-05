@@ -1,11 +1,7 @@
-export type TopicStageKey =
-  | 'research'
-  | 'outline_build'
-  | 'outline_review'
-  | 'prewrite_context'
-  | 'writing'
-  | 'final_review'
-  | 'complete';
+import {
+  TOPIC_STAGES,
+  type TopicStageKey,
+} from '@/lib/content-workflow-taxonomy';
 
 export interface WorkflowFlags {
   outlineReviewOptional: boolean;
@@ -19,15 +15,17 @@ export interface WorkflowApprovals {
   outlineSkipped: boolean;
 }
 
-export const TOPIC_STAGE_TRANSITIONS: Record<TopicStageKey, TopicStageKey[]> = {
-  research: ['outline_build'],
-  outline_build: ['outline_review'],
-  outline_review: ['prewrite_context'],
-  prewrite_context: ['writing'],
-  writing: ['final_review'],
-  final_review: ['complete'],
-  complete: [],
-};
+const DEFAULT_NEXT_BY_STAGE: Partial<Record<TopicStageKey, TopicStageKey>> = {};
+for (let i = 0; i < TOPIC_STAGES.length - 1; i += 1) {
+  DEFAULT_NEXT_BY_STAGE[TOPIC_STAGES[i]] = TOPIC_STAGES[i + 1];
+}
+
+export const TOPIC_STAGE_TRANSITIONS: Record<TopicStageKey, TopicStageKey[]> = Object.fromEntries(
+  TOPIC_STAGES.map((stage) => {
+    const next = DEFAULT_NEXT_BY_STAGE[stage];
+    return [stage, next ? [next] : []];
+  })
+) as Record<TopicStageKey, TopicStageKey[]>;
 
 export function canSkipOutlineReviewByRole(role: string): boolean {
   return role === 'owner' || role === 'admin' || role === 'project_manager' || role === 'lead';

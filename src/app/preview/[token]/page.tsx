@@ -16,6 +16,7 @@ import { TableHeader } from '@tiptap/extension-table-header';
 import Image from '@tiptap/extension-image';
 import { CommentMark } from '@/lib/tiptap/comment-mark';
 import { CheckCircle2 } from 'lucide-react';
+import { STATUS_LABELS } from '@/types/document';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -49,15 +50,6 @@ interface SelectionInfo {
   top: number;
   left: number;
 }
-
-const STATUS_LABELS: Record<string, string> = {
-  draft: 'Draft',
-  in_progress: 'In Progress',
-  review: 'Review',
-  accepted: 'Accepted',
-  publish: 'Publish',
-  live: 'Live',
-};
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
@@ -479,7 +471,7 @@ export default function PreviewPage() {
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center gap-3 mb-2">
             <span className="text-xs font-medium px-2 py-0.5 rounded bg-zinc-200 text-zinc-600">
-              {STATUS_LABELS[doc.status] || doc.status}
+              {STATUS_LABELS[doc.status as keyof typeof STATUS_LABELS] || doc.status}
             </span>
             <span className="text-xs text-zinc-400">{doc.wordCount} words</span>
             <span className="text-xs text-zinc-400">

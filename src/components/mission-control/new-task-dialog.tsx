@@ -21,6 +21,23 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2 } from 'lucide-react';
+import {
+  PAGE_TYPE_OPTIONS,
+  BLOG_SUBTYPE_OPTIONS,
+  COLLECTION_SUBTYPE_OPTIONS,
+  DEFAULT_PAGE_TYPE,
+  DEFAULT_BLOG_SUBTYPE,
+  DEFAULT_COLLECTION_SUBTYPE,
+  hasPageSubtype,
+  getPageSelectionTags,
+  pageSubtypeLabel,
+  pageTypeLabel,
+  resolveDefaultContentType,
+  type BlogSubtype,
+  type CollectionSubtype,
+  type PageType,
+  type PageSubtype,
+} from '@/lib/content-workflow-taxonomy';
 
 interface Skill {
   id: number;
@@ -37,64 +54,6 @@ interface NewTaskDialogProps {
   projectId?: number | null;
 }
 
-const PAGE_TYPE_OPTIONS = [
-  { value: 'product', label: 'Product' },
-  { value: 'collection', label: 'Collection' },
-  { value: 'blog', label: 'Blog' },
-  { value: 'landing_page', label: 'Landing Page' },
-  { value: 'homepage', label: 'Homepage' },
-  { value: 'faq', label: 'FAQ' },
-] as const;
-
-const BLOG_SUBTYPE_OPTIONS = [
-  { value: 'blog_post', label: 'Standard Post', contentType: 'blog_post' },
-  { value: 'how_to_guide', label: 'How-to Guide', contentType: 'blog_how_to' },
-  { value: 'best_of', label: 'Best-of', contentType: 'blog_listicle' },
-  { value: 'listicle', label: 'Listicle', contentType: 'blog_listicle' },
-  { value: 'buying_guide', label: 'Buying Guide', contentType: 'blog_buying_guide' },
-  { value: 'review', label: 'Review', contentType: 'blog_review' },
-  { value: 'comparison', label: 'Comparison', contentType: 'comparison' },
-] as const;
-
-const COLLECTION_SUBTYPE_OPTIONS = [
-  { value: 'both', label: 'Both (Default)' },
-  { value: 'above', label: 'Above' },
-  { value: 'below', label: 'Below' },
-] as const;
-
-type PageType = (typeof PAGE_TYPE_OPTIONS)[number]['value'];
-type BlogSubtype = (typeof BLOG_SUBTYPE_OPTIONS)[number]['value'];
-type CollectionSubtype = (typeof COLLECTION_SUBTYPE_OPTIONS)[number]['value'];
-
-function pageTypeLabel(pageType: PageType): string {
-  return PAGE_TYPE_OPTIONS.find((option) => option.value === pageType)?.label || pageType;
-}
-
-function subtypeLabel(pageType: PageType, subtype: string): string {
-  if (pageType === 'blog') {
-    return BLOG_SUBTYPE_OPTIONS.find((option) => option.value === subtype)?.label || subtype;
-  }
-  if (pageType === 'collection') {
-    return COLLECTION_SUBTYPE_OPTIONS.find((option) => option.value === subtype)?.label || subtype;
-  }
-  return subtype;
-}
-
-function resolveDefaultContentType(pageType: PageType, subtype: string): string {
-  if (pageType === 'blog') {
-    return (
-      BLOG_SUBTYPE_OPTIONS.find((option) => option.value === subtype)?.contentType ||
-      'blog_post'
-    );
-  }
-  if (pageType === 'collection') return 'product_category';
-  if (pageType === 'product') return 'product_description';
-  if (pageType === 'landing_page') return 'product_description';
-  if (pageType === 'homepage') return 'blog_post';
-  if (pageType === 'faq') return 'blog_how_to';
-  return 'blog_post';
-}
-
 function normalizeText(input: string): string {
   return input.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
@@ -102,11 +61,14 @@ function normalizeText(input: string): string {
 function resolveAutoSkill(
   skills: Skill[],
   pageType: PageType,
-  subtype: string
+  subtype: PageSubtype
 ): Skill | null {
   if (skills.length === 0) return null;
+  const requireSubtypeMatch = hasPageSubtype(pageType);
   const pageText = normalizeText(pageTypeLabel(pageType));
-  const subtypeText = normalizeText(subtypeLabel(pageType, subtype));
+  const subtypeText = requireSubtypeMatch
+    ? normalizeText(pageSubtypeLabel(pageType, subtype))
+    : '';
 
   let bestSkill: Skill | null = null;
   let bestScore = 0;
@@ -126,7 +88,7 @@ function resolveAutoSkill(
     }
   }
 
-  return bestScore >= 4 ? bestSkill : null;
+  return bestScore >= (requireSubtypeMatch ? 4 : 3) ? bestSkill : null;
 }
 
 export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogProps) {
@@ -139,14 +101,14 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
   const [priority, setPriority] = useState('MEDIUM');
   const [skillsList, setSkillsList] = useState<Skill[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState<string>('auto');
-  const [pageType, setPageType] = useState<PageType>('blog');
-  const [blogSubtype, setBlogSubtype] = useState<BlogSubtype>('blog_post');
-  const [collectionSubtype, setCollectionSubtype] = useState<CollectionSubtype>('both');
+  const [pageType, setPageType] = useState<PageType>(DEFAULT_PAGE_TYPE);
+  const [blogSubtype, setBlogSubtype] = useState<BlogSubtype>(DEFAULT_BLOG_SUBTYPE);
+  const [collectionSubtype, setCollectionSubtype] = useState<CollectionSubtype>(DEFAULT_COLLECTION_SUBTYPE);
   const [saving, setSaving] = useState(false);
-  const hasSubtype = pageType === 'blog' || pageType === 'collection';
-  const selectedSubtype =
+  const hasSubtype = hasPageSubtype(pageType);
+  const selectedSubtype: PageSubtype =
     pageType === 'blog' ? blogSubtype : pageType === 'collection' ? collectionSubtype : 'standard';
-  const selectedSubtypeLabel = subtypeLabel(pageType, selectedSubtype);
+  const selectedSubtypeLabel = pageSubtypeLabel(pageType, selectedSubtype);
   const selectedPageLabel = pageTypeLabel(pageType);
   const subtypeControlLabel =
     pageType === 'blog'
@@ -175,9 +137,9 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
       .then(setSkillsList)
       .catch(() => setSkillsList([]));
     setSelectedSkillId('auto');
-    setPageType('blog');
-    setBlogSubtype('blog_post');
-    setCollectionSubtype('both');
+    setPageType(DEFAULT_PAGE_TYPE);
+    setBlogSubtype(DEFAULT_BLOG_SUBTYPE);
+    setCollectionSubtype(DEFAULT_COLLECTION_SUBTYPE);
   }, [open, projectId]);
 
   const handleCreate = async () => {
@@ -186,9 +148,7 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
     try {
       const parsedProjectId = projectId;
       const resolvedContentType = resolveDefaultContentType(pageType, selectedSubtype);
-      const pageTag = `page:${pageType}`;
-      const subtypeTag = `subtype:${selectedSubtype}`;
-      const typeTags = hasSubtype ? [pageTag, subtypeTag] : [pageTag];
+      const typeTags = getPageSelectionTags(pageType, selectedSubtype);
 
       // For content/edit tasks, auto-create a linked document in the editor
       let documentId: number | undefined;
@@ -314,9 +274,9 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
       setType('content');
       setPriority('MEDIUM');
       setSelectedSkillId('auto');
-      setPageType('blog');
-      setBlogSubtype('blog_post');
-      setCollectionSubtype('both');
+      setPageType(DEFAULT_PAGE_TYPE);
+      setBlogSubtype(DEFAULT_BLOG_SUBTYPE);
+      setCollectionSubtype(DEFAULT_COLLECTION_SUBTYPE);
       onOpenChange(false);
     } catch (err) {
       console.error('Failed to create task:', err);

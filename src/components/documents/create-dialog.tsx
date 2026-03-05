@@ -14,15 +14,24 @@ import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2 } from 'lucide-react';
-import { CONTENT_FORMAT_GROUPS, CONTENT_FORMAT_LABELS, type ContentFormat } from '@/types/document';
 import { withProjectScope } from '@/lib/project-context';
+import {
+  PAGE_TYPE_OPTIONS,
+  BLOG_SUBTYPE_OPTIONS,
+  COLLECTION_SUBTYPE_OPTIONS,
+  DEFAULT_PAGE_TYPE,
+  DEFAULT_BLOG_SUBTYPE,
+  DEFAULT_COLLECTION_SUBTYPE,
+  resolveDefaultContentType,
+  type BlogSubtype,
+  type CollectionSubtype,
+  type PageType,
+} from '@/lib/content-workflow-taxonomy';
 
 interface CreateDialogProps {
   open: boolean;
@@ -34,9 +43,20 @@ interface CreateDialogProps {
 export function CreateDialog({ open, onOpenChange, onCreated, projectId }: CreateDialogProps) {
   const router = useRouter();
   const [title, setTitle] = useState('');
-  const [contentType, setContentType] = useState<ContentFormat>('blog_post');
+  const [pageType, setPageType] = useState<PageType>(DEFAULT_PAGE_TYPE);
+  const [blogSubtype, setBlogSubtype] = useState<BlogSubtype>(DEFAULT_BLOG_SUBTYPE);
+  const [collectionSubtype, setCollectionSubtype] = useState<CollectionSubtype>(DEFAULT_COLLECTION_SUBTYPE);
   const [keyword, setKeyword] = useState('');
   const [creating, setCreating] = useState(false);
+  const selectedSubtype =
+    pageType === 'blog' ? blogSubtype : pageType === 'collection' ? collectionSubtype : 'standard';
+  const contentType = resolveDefaultContentType(pageType, selectedSubtype);
+  const subtypeControlLabel =
+    pageType === 'blog'
+      ? 'Blog Type'
+      : pageType === 'collection'
+        ? 'Collection Placement'
+        : 'Content Type';
 
   const handleCreate = async () => {
     if (!projectId) return;
@@ -77,6 +97,9 @@ export function CreateDialog({ open, onOpenChange, onCreated, projectId }: Creat
         onOpenChange(false);
         setTitle('');
         setKeyword('');
+        setPageType(DEFAULT_PAGE_TYPE);
+        setBlogSubtype(DEFAULT_BLOG_SUBTYPE);
+        setCollectionSubtype(DEFAULT_COLLECTION_SUBTYPE);
         if (documentId) {
           router.push(withProjectScope(`/documents/${documentId}`, projectId));
         } else {
@@ -104,24 +127,59 @@ export function CreateDialog({ open, onOpenChange, onCreated, projectId }: Creat
             />
           </div>
           <div>
-            <label className="text-sm font-medium mb-1.5 block">Content Format</label>
-            <Select value={contentType} onValueChange={(val) => setContentType(val as ContentFormat)}>
+            <label className="text-sm font-medium mb-1.5 block">Page Type</label>
+            <Select value={pageType} onValueChange={(val) => setPageType(val as PageType)}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(CONTENT_FORMAT_GROUPS).map(([key, group]) => (
-                  <SelectGroup key={key}>
-                    <SelectLabel>{group.label}</SelectLabel>
-                    {group.formats.map((f) => (
-                      <SelectItem key={f} value={f}>
-                        {CONTENT_FORMAT_LABELS[f]}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
+                {PAGE_TYPE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-1.5 block">{subtypeControlLabel}</label>
+            {pageType === 'blog' ? (
+              <Select value={blogSubtype} onValueChange={(val) => setBlogSubtype(val as BlogSubtype)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {BLOG_SUBTYPE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : pageType === 'collection' ? (
+              <Select
+                value={collectionSubtype}
+                onValueChange={(val) => setCollectionSubtype(val as CollectionSubtype)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {COLLECTION_SUBTYPE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                Standard
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground mt-1">
+              Mapped content format: {contentType}
+            </p>
           </div>
           <div>
             <label className="text-sm font-medium mb-1.5 block">Target Keyword</label>

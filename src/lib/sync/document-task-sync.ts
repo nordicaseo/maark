@@ -1,36 +1,21 @@
 import type { DocumentStatus } from '@/types/document';
+import {
+  DOCUMENT_TO_TASK_STATUS,
+  TASK_TO_DOCUMENT_STATUS,
+  type TaskStatus,
+} from '@/lib/content-workflow-taxonomy';
 
 // ── Task status type (matches Convex schema) ──────────────────────────
 
-export type TaskStatus =
-  | 'BACKLOG'
-  | 'PENDING'
-  | 'IN_PROGRESS'
-  | 'IN_REVIEW'
-  | 'ACCEPTED'
-  | 'COMPLETED';
+export type { TaskStatus } from '@/lib/content-workflow-taxonomy';
 
 // ── Status mapping: Document → Task ──────────────────────────────────
 
-const DOC_TO_TASK: Record<DocumentStatus, TaskStatus> = {
-  draft: 'BACKLOG',
-  in_progress: 'IN_PROGRESS',
-  review: 'IN_REVIEW',
-  accepted: 'ACCEPTED',
-  publish: 'COMPLETED',
-  live: 'COMPLETED',
-};
+const DOC_TO_TASK: Record<DocumentStatus, TaskStatus> = DOCUMENT_TO_TASK_STATUS;
 
 // ── Status mapping: Task → Document ──────────────────────────────────
 
-const TASK_TO_DOC: Record<TaskStatus, DocumentStatus> = {
-  BACKLOG: 'draft',
-  PENDING: 'draft',
-  IN_PROGRESS: 'in_progress',
-  IN_REVIEW: 'review',
-  ACCEPTED: 'accepted',
-  COMPLETED: 'publish',
-};
+const TASK_TO_DOC: Record<TaskStatus, DocumentStatus> = TASK_TO_DOCUMENT_STATUS;
 
 // ── Mapping functions ────────────────────────────────────────────────
 

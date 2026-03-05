@@ -30,13 +30,13 @@ export const CONTENT_FORMAT_GROUPS: Record<string, { label: string; formats: Con
 };
 
 export const CONTENT_FORMAT_LABELS: Record<ContentFormat, string> = {
-  blog_post: 'Blog Post',
+  blog_post: 'Standard Post',
   blog_listicle: 'Listicle',
   blog_buying_guide: 'Buying Guide',
   blog_how_to: 'How-to Guide',
   blog_review: 'Review',
-  product_category: 'Product Category',
-  product_description: 'Product Description',
+  product_category: 'Collection Page',
+  product_description: 'Product / Landing Page',
   comparison: 'Comparison',
   news_article: 'News Article',
 };
@@ -45,11 +45,11 @@ export const CONTENT_FORMAT_LABELS: Record<ContentFormat, string> = {
 export const CONTENT_TYPE_LABELS = CONTENT_FORMAT_LABELS;
 
 export const STATUS_LABELS: Record<DocumentStatus, string> = {
-  draft: 'Draft',
-  in_progress: 'In Progress',
+  draft: 'Inbox',
+  in_progress: 'Working',
   review: 'Review',
   accepted: 'Accepted',
-  publish: 'Publish',
+  publish: 'Done',
   live: 'Live',
 };
 

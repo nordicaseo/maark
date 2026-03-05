@@ -11,6 +11,7 @@ import {
   getWorkflowTaskForUser,
   type TopicStageKey,
 } from '@/lib/topic-workflow';
+import { TOPIC_STAGE_OWNER_CHAINS } from '@/lib/content-workflow-taxonomy';
 import {
   resolveProviderForAction,
   type ModelOverride,
@@ -74,16 +75,6 @@ const RUNNABLE_STAGES = new Set<TopicStageKey>([
   'prewrite_context',
   'writing',
 ]);
-
-const STAGE_OWNER_CHAINS: Record<TopicStageKey, string[]> = {
-  research: ['researcher', 'seo', 'lead'],
-  outline_build: ['outliner', 'content', 'lead'],
-  outline_review: ['human', 'seo-reviewer'],
-  prewrite_context: ['project-manager'],
-  writing: ['writer', 'content', 'lead'],
-  final_review: ['seo-reviewer', 'seo', 'lead'],
-  complete: [],
-};
 
 const ROLE_ALIASES: Record<string, string[]> = {
   researcher: ['researcher', 'seo', 'editor'],
@@ -169,7 +160,7 @@ function normalizedRoleCandidates(role: string): string[] {
 
 function isRoleAllowedForStage(stage: TopicStageKey, role: string): boolean {
   const normalizedRole = role.toLowerCase();
-  const chain = STAGE_OWNER_CHAINS[stage] || [];
+  const chain = TOPIC_STAGE_OWNER_CHAINS[stage] || [];
   for (const requestedRole of chain) {
     if (requestedRole === 'human') continue;
     if (normalizedRoleCandidates(requestedRole).includes(normalizedRole)) {
@@ -1116,7 +1107,7 @@ export async function runTopicWorkflow(
     if (ensuredOwner.blocked || !currentTask.assignedAgentId) {
       const blockedSummary =
         `Stage ${stage} blocked: no available owner in ` +
-        `${(STAGE_OWNER_CHAINS[stage] || []).join(' -> ')}.`;
+        `${(TOPIC_STAGE_OWNER_CHAINS[stage] || []).join(' -> ')}.`;
       await convex.mutation(api.topicWorkflow.recordStageProgress, {
         taskId: currentTask._id,
         stageKey: stage,
@@ -1128,7 +1119,7 @@ export async function runTopicWorkflow(
           status: 'blocked',
           reason: 'assignment_blocked',
           stage,
-          ownerChain: STAGE_OWNER_CHAINS[stage],
+          ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
         },
       });
       runs.push({ stage, summary: blockedSummary });
@@ -1159,7 +1150,7 @@ export async function runTopicWorkflow(
           status: 'blocked',
           reason: 'owner_role_mismatch',
           stage,
-          ownerChain: STAGE_OWNER_CHAINS[stage],
+          ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
           assignedAgentId: currentTask.assignedAgentId,
           assignedAgentName: assignedAgent?.name ?? null,
           assignedAgentRole: assignedAgent?.role ?? null,
@@ -1193,7 +1184,7 @@ export async function runTopicWorkflow(
         assignedAgentId: currentTask.assignedAgentId ?? null,
         assignedAgentName: agent?.name ?? null,
         assignedAgentRole: agent?.role ?? null,
-        ownerChain: STAGE_OWNER_CHAINS[stage],
+        ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
         skillNames: skillContext.names,
         skills: skillContext.applied,
       },
@@ -1227,7 +1218,7 @@ export async function runTopicWorkflow(
         payload: {
           status: blockedBySafety ? 'blocked' : 'failed',
           stage,
-          ownerChain: STAGE_OWNER_CHAINS[stage],
+          ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
           assignedAgentId: currentTask.assignedAgentId ?? null,
           assignedAgentRole: agent?.role ?? assignedAgent?.role ?? null,
           error: errorMessage,
@@ -1266,7 +1257,7 @@ export async function runTopicWorkflow(
       payload: {
         status: 'completed',
         stage,
-        ownerChain: STAGE_OWNER_CHAINS[stage],
+        ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
         stageRole: agent?.role ?? null,
         assignedAgentId: currentTask.assignedAgentId ?? null,
         assignedAgentName: agent?.name ?? null,

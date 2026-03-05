@@ -28,6 +28,15 @@ import TaskItem from '@tiptap/extension-task-item';
 import { useAuth } from '@/components/auth/auth-provider';
 import { withProjectScope } from '@/lib/project-context';
 import {
+  TASK_STATUS_LABELS,
+  TASK_STATUS_ORDER,
+  TOPIC_STAGES,
+  TOPIC_STAGE_LABELS,
+  TOPIC_STAGE_NEXT,
+  TOPIC_STAGE_OWNERS,
+  type TopicStageKey,
+} from '@/lib/content-workflow-taxonomy';
+import {
   X,
   Play,
   RefreshCw,
@@ -47,69 +56,11 @@ import {
   CheckCheck,
 } from 'lucide-react';
 
-const STATUS_LABELS: Record<string, string> = {
-  BACKLOG: 'Inbox',
-  PENDING: 'Assigned',
-  IN_PROGRESS: 'Working',
-  IN_REVIEW: 'Review',
-  ACCEPTED: 'Accepted',
-  COMPLETED: 'Done',
-};
-
 const PRIORITY_LABELS: Record<string, { label: string; color: string }> = {
   LOW: { label: 'Low', color: 'var(--mc-complete)' },
   MEDIUM: { label: 'Medium', color: 'var(--mc-pending)' },
   HIGH: { label: 'High', color: 'var(--mc-review)' },
   URGENT: { label: 'Urgent', color: 'var(--mc-overdue)' },
-};
-
-type TopicStageKey =
-  | 'research'
-  | 'outline_build'
-  | 'outline_review'
-  | 'prewrite_context'
-  | 'writing'
-  | 'final_review'
-  | 'complete';
-
-const TOPIC_STAGES: TopicStageKey[] = [
-  'research',
-  'outline_build',
-  'outline_review',
-  'prewrite_context',
-  'writing',
-  'final_review',
-  'complete',
-];
-
-const STAGE_LABELS: Record<TopicStageKey, string> = {
-  research: 'Research',
-  outline_build: 'Outline',
-  outline_review: 'Outline Review',
-  prewrite_context: 'Prewrite',
-  writing: 'Writing',
-  final_review: 'SEO Review',
-  complete: 'Complete',
-};
-
-const STAGE_NEXT: Record<TopicStageKey, TopicStageKey | null> = {
-  research: 'outline_build',
-  outline_build: 'outline_review',
-  outline_review: 'prewrite_context',
-  prewrite_context: 'writing',
-  writing: 'final_review',
-  final_review: 'complete',
-  complete: null,
-};
-
-const STAGE_OWNERS: Record<TopicStageKey, string> = {
-  research: 'researcher -> seo -> lead',
-  outline_build: 'outliner -> content -> lead',
-  outline_review: 'human + seo-reviewer',
-  prewrite_context: 'project-manager',
-  writing: 'writer -> content -> lead',
-  final_review: 'seo-reviewer -> seo -> lead',
-  complete: 'pm handoff closed',
 };
 
 interface TaskDetailPanelProps {
@@ -312,7 +263,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
   const workflowStage = (task.workflowCurrentStageKey || 'research') as TopicStageKey;
   const workflowFlags = task.workflowFlags || {};
   const workflowApprovals = task.workflowApprovals || {};
-  const defaultNextStage = STAGE_NEXT[workflowStage];
+  const defaultNextStage = TOPIC_STAGE_NEXT[workflowStage];
   const workflowNextStage =
     workflowStage === 'outline_build' &&
     Boolean(workflowFlags.outlineReviewOptional) &&
@@ -597,7 +548,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
           <span className="mc-header-mono text-xs">{priority.label} Priority</span>
           <span className="text-xs px-2 py-0.5 rounded-full"
                 style={{ background: 'var(--mc-overlay)', color: 'var(--mc-text-secondary)' }}>
-            {STATUS_LABELS[task.status] || task.status}
+            {TASK_STATUS_LABELS[task.status as keyof typeof TASK_STATUS_LABELS] || task.status}
           </span>
         </div>
         <button
@@ -682,12 +633,12 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                     fontWeight: stage === workflowStage ? 600 : 500,
                   }}
                 >
-                  {STAGE_LABELS[stage]}
+                  {TOPIC_STAGE_LABELS[stage]}
                 </span>
               ))}
             </div>
             <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
-              Stage owner: {STAGE_OWNERS[workflowStage]}
+              Stage owner: {TOPIC_STAGE_OWNERS[workflowStage]}
             </p>
             {task.workflowLastEventText && (
               <p className="text-xs rounded-md px-2 py-1.5" style={{ background: 'var(--mc-overlay)', color: 'var(--mc-text-secondary)' }}>
@@ -736,7 +687,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                   ) : (
                     <ArrowRight className="h-3 w-3" />
                   )}
-                  Move to {STAGE_LABELS[workflowNextStage as TopicStageKey]}
+                  Move to {TOPIC_STAGE_LABELS[workflowNextStage as TopicStageKey]}
                 </button>
               )}
               {workflowStage === 'prewrite_context' && (
@@ -882,7 +833,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                             {artifact.title}
                           </p>
                           <span className="text-[10px]" style={{ color: 'var(--mc-text-muted)' }}>
-                            {STAGE_LABELS[event.stageKey as TopicStageKey] || event.stageKey}
+                            {TOPIC_STAGE_LABELS[event.stageKey as TopicStageKey] || event.stageKey}
                           </span>
                         </div>
                         {(event.payload?.meta?.stageRole ||
@@ -1331,12 +1282,12 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                         fontWeight: stage === workflowStage ? 600 : 400,
                       }}
                     >
-                      {STAGE_LABELS[stage]}
+                      {TOPIC_STAGE_LABELS[stage]}
                     </span>
                     {i < TOPIC_STAGES.length - 1 && <ArrowRight className="h-3 w-3" />}
                   </span>
                 ))
-              : ['BACKLOG', 'PENDING', 'IN_PROGRESS', 'IN_REVIEW', 'ACCEPTED', 'COMPLETED'].map((s, i) => (
+              : TASK_STATUS_ORDER.map((s, i) => (
                   <span key={s} className="flex items-center gap-1">
                     <span
                       className="px-1.5 py-0.5 rounded"
@@ -1346,9 +1297,9 @@ export function TaskDetailPanel({ taskId, onClose, projectId }: TaskDetailPanelP
                         fontWeight: s === task.status ? 600 : 400,
                       }}
                     >
-                      {STATUS_LABELS[s]}
+                      {TASK_STATUS_LABELS[s]}
                     </span>
-                    {i < 5 && <ArrowRight className="h-3 w-3" />}
+                    {i < TASK_STATUS_ORDER.length - 1 && <ArrowRight className="h-3 w-3" />}
                   </span>
                 ))}
           </div>

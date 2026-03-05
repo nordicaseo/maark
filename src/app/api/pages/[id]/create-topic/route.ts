@@ -6,6 +6,15 @@ import { db, ensureDb } from '@/db';
 import { pages } from '@/db/schema';
 import { createTopicWorkflow } from '@/lib/topic-workflow';
 import { logAuditEvent, logAlertEvent } from '@/lib/observability';
+import {
+  DEFAULT_BLOG_SUBTYPE,
+  DEFAULT_COLLECTION_SUBTYPE,
+  DEFAULT_PAGE_TYPE,
+  isBlogSubtype,
+  isCollectionSubtype,
+  isPageType,
+  resolveDefaultContentType,
+} from '@/lib/content-workflow-taxonomy';
 
 function parseId(id: string): number | null {
   const n = Number.parseInt(id, 10);
@@ -50,6 +59,14 @@ export async function POST(
     const topic = typeof body.topic === 'string' && body.topic.trim()
       ? body.topic.trim()
       : page.title || `Content for ${page.url}`;
+    const pageType = isPageType(body.pageType) ? body.pageType : DEFAULT_PAGE_TYPE;
+    const subtype =
+      pageType === 'blog'
+        ? (isBlogSubtype(body.subtype) ? body.subtype : DEFAULT_BLOG_SUBTYPE)
+        : pageType === 'collection'
+          ? (isCollectionSubtype(body.subtype) ? body.subtype : DEFAULT_COLLECTION_SUBTYPE)
+          : 'standard';
+    const contentType = resolveDefaultContentType(pageType, subtype);
 
     const created = await createTopicWorkflow({
       user: auth.user,
@@ -57,6 +74,7 @@ export async function POST(
       topic,
       entryPoint: 'pages',
       pageId: page.id,
+      contentType,
       targetKeyword: typeof body.targetKeyword === 'string' && body.targetKeyword.trim()
         ? body.targetKeyword.trim()
         : null,
@@ -75,6 +93,9 @@ export async function POST(
       metadata: {
         url: page.url,
         topic,
+        pageType,
+        subtype,
+        contentType,
         taskId: created.taskId,
         documentId: created.contentDocumentId ?? null,
         reused: created.reused,

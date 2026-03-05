@@ -20,6 +20,7 @@ import type { Doc } from '../../../convex/_generated/dataModel';
 import { useTeamMembers } from './team-members-provider';
 import { useSkills } from './skills-provider';
 import { withProjectScope } from '@/lib/project-context';
+import { TOPIC_STAGE_LABELS } from '@/lib/content-workflow-taxonomy';
 
 type Task = Doc<'tasks'>;
 type DragAttributes = ReturnType<typeof useSortable>['attributes'];
@@ -30,16 +31,6 @@ const PRIORITY_COLORS: Record<string, string> = {
   MEDIUM: 'medium',
   HIGH: 'high',
   URGENT: 'urgent',
-};
-
-const WORKFLOW_STAGE_LABELS: Record<string, string> = {
-  research: 'Research',
-  outline_build: 'Outline',
-  outline_review: 'Outline Review',
-  prewrite_context: 'Prewrite',
-  writing: 'Writing',
-  final_review: 'SEO Review',
-  complete: 'Complete',
 };
 
 function timeAgo(ts: number): string {
@@ -110,7 +101,8 @@ function TaskCardContent({
   const skillName = task.skillId ? getSkillName(task.skillId) : undefined;
   const isTopicWorkflow = task.workflowTemplateKey === 'topic_production_v1';
   const workflowStage = task.workflowCurrentStageKey || 'research';
-  const workflowStageLabel = WORKFLOW_STAGE_LABELS[workflowStage] || workflowStage;
+  const workflowStageLabel =
+    TOPIC_STAGE_LABELS[workflowStage as keyof typeof TOPIC_STAGE_LABELS] || workflowStage;
   const workflowLastEvent = task.workflowLastEventText;
   const researchReady =
     isTopicWorkflow &&

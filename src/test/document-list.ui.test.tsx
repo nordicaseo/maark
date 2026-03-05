@@ -67,7 +67,7 @@ describe('DocumentList sidebar cards', () => {
     expect(title).toBeInTheDocument();
     expect(title.className).toContain('break-words');
 
-    const status = screen.getByText('In Progress');
+    const status = screen.getByText('Working');
     expect(status).toBeInTheDocument();
 
     const card = title.closest('[role="button"]');

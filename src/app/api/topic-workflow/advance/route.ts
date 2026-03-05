@@ -9,16 +9,9 @@ import {
 } from '@/lib/topic-workflow';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import type { Id } from '../../../../../convex/_generated/dataModel';
+import { TOPIC_STAGES } from '@/lib/content-workflow-taxonomy';
 
-const STAGES = new Set<TopicStageKey>([
-  'research',
-  'outline_build',
-  'outline_review',
-  'prewrite_context',
-  'writing',
-  'final_review',
-  'complete',
-]);
+const STAGES = new Set<TopicStageKey>(TOPIC_STAGES);
 
 function parseTaskId(value: unknown): Id<'tasks'> | null {
   if (typeof value !== 'string' || !value.trim()) return null;

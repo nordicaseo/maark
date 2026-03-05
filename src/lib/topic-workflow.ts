@@ -5,6 +5,9 @@ import { documents } from '@/db/schema';
 import type { AppUser } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
+import type { TopicStageKey } from '@/lib/content-workflow-taxonomy';
+
+export type { TopicStageKey } from '@/lib/content-workflow-taxonomy';
 
 export type TopicWorkflowEntryPoint =
   | 'mission_control'
@@ -12,15 +15,6 @@ export type TopicWorkflowEntryPoint =
   | 'keywords'
   | 'pages'
   | 'onboarding';
-
-export type TopicStageKey =
-  | 'research'
-  | 'outline_build'
-  | 'outline_review'
-  | 'prewrite_context'
-  | 'writing'
-  | 'final_review'
-  | 'complete';
 
 export type TopicApprovalGate = 'outline_human' | 'outline_seo' | 'seo_final';
 

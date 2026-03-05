@@ -29,17 +29,9 @@ import {
   SYNC_SOURCE_KEY,
   SYNC_SOURCE_CONVEX,
 } from '@/lib/sync/document-task-sync';
+import { TASK_STATUS_COLUMNS, type TaskStatus } from '@/lib/content-workflow-taxonomy';
 
 type Task = Doc<'tasks'>;
-
-const COLUMNS = [
-  { id: 'BACKLOG', label: 'Inbox', color: 'var(--mc-backlog)' },
-  { id: 'PENDING', label: 'Assigned', color: 'var(--mc-pending)' },
-  { id: 'IN_PROGRESS', label: 'Working', color: 'var(--mc-progress)' },
-  { id: 'IN_REVIEW', label: 'Review', color: 'var(--mc-review)' },
-  { id: 'ACCEPTED', label: 'Accepted', color: 'var(--mc-accepted)' },
-  { id: 'COMPLETED', label: 'Done', color: 'var(--mc-complete)' },
-];
 
 interface KanbanBoardProps {
   projectId?: number | null;
@@ -78,17 +70,17 @@ export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardPr
       const taskId = active.id as Id<'tasks'>;
 
       // Determine target column
-      let targetStatus: string | null = null;
+      let targetStatus: TaskStatus | null = null;
 
       // Check if dropped on a column droppable
       const overIdStr = String(over.id);
-      if (COLUMNS.some((c) => c.id === overIdStr)) {
-        targetStatus = overIdStr;
+      if (TASK_STATUS_COLUMNS.some((c) => c.id === overIdStr)) {
+        targetStatus = overIdStr as TaskStatus;
       } else {
         // Dropped on another task — find which column that task is in
         const overTask = tasks?.find((t) => t._id === over.id);
         if (overTask) {
-          targetStatus = overTask.status;
+          targetStatus = overTask.status as TaskStatus;
         }
       }
 
@@ -157,7 +149,7 @@ export function KanbanBoard({ projectId, onNewTask, onTaskClick }: KanbanBoardPr
       onDragCancel={handleDragCancel}
     >
       <div className="flex gap-4 overflow-x-auto pb-4">
-        {COLUMNS.map((col) => {
+        {TASK_STATUS_COLUMNS.map((col) => {
           const columnTasks = tasks.filter((t) => t.status === col.id);
           return (
             <KanbanColumn
@@ -199,7 +191,7 @@ function KanbanColumn({
   onNewTask,
   onTaskClick,
 }: {
-  id: string;
+  id: TaskStatus;
   label: string;
   color: string;
   count: number;

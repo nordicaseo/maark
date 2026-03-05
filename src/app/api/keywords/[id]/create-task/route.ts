@@ -7,6 +7,15 @@ import { userCanAccessKeyword } from '@/lib/access';
 import { dbNow } from '@/db/utils';
 import { logAuditEvent, logAlertEvent } from '@/lib/observability';
 import { createTopicWorkflow } from '@/lib/topic-workflow';
+import {
+  DEFAULT_BLOG_SUBTYPE,
+  DEFAULT_COLLECTION_SUBTYPE,
+  DEFAULT_PAGE_TYPE,
+  isBlogSubtype,
+  isCollectionSubtype,
+  isPageType,
+  resolveDefaultContentType,
+} from '@/lib/content-workflow-taxonomy';
 
 function parseId(id: string): number | null {
   const n = Number.parseInt(id, 10);
@@ -45,6 +54,14 @@ export async function POST(
     const title = typeof body.title === 'string' && body.title.trim()
       ? body.title.trim()
       : keyword.keyword;
+    const pageType = isPageType(body.pageType) ? body.pageType : DEFAULT_PAGE_TYPE;
+    const subtype =
+      pageType === 'blog'
+        ? (isBlogSubtype(body.subtype) ? body.subtype : DEFAULT_BLOG_SUBTYPE)
+        : pageType === 'collection'
+          ? (isCollectionSubtype(body.subtype) ? body.subtype : DEFAULT_COLLECTION_SUBTYPE)
+          : 'standard';
+    const contentType = resolveDefaultContentType(pageType, subtype);
 
     const created = await createTopicWorkflow({
       user: auth.user,
@@ -53,6 +70,7 @@ export async function POST(
       entryPoint: 'keywords',
       keywordId: keyword.id,
       targetKeyword: keyword.keyword,
+      contentType,
       options: {
         outlineReviewOptional: true,
         seoReviewRequired: true,
@@ -79,6 +97,9 @@ export async function POST(
         taskId: created.taskId,
         documentId: created.contentDocumentId ?? null,
         keyword: keyword.keyword,
+        pageType,
+        subtype,
+        contentType,
         reused: created.reused,
       },
     });
