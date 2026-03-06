@@ -1,19 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { and, eq } from 'drizzle-orm';
 import { db, ensureDb } from '@/db';
-import { pageIssues, pageSnapshots, pages } from '@/db/schema';
+import { pages } from '@/db/schema';
 import { requireRole } from '@/lib/auth';
 import { userCanAccessPage, userCanAccessProject } from '@/lib/access';
-import { dbNow } from '@/db/utils';
-import { crawlPage } from '@/lib/crawler/page-crawler';
-import { getConvexClient } from '@/lib/convex/server';
-import { api } from '../../../../../convex/_generated/api';
-import { logAlertEvent, logAuditEvent } from '@/lib/observability';
+import { logAuditEvent } from '@/lib/observability';
+import { classifyDiscoveredUrl, normalizeUrlForInventory } from '@/lib/discovery/url-policy';
+import { upsertDiscoveryUrl, upsertEligiblePage } from '@/lib/discovery/ledger';
+import { enqueueCrawlJob, processQueuedCrawlJob } from '@/lib/discovery/crawl-queue';
 
-function normalizeUrl(input: string): string {
-  const url = new URL(input.trim());
-  const path = url.pathname.replace(/\/+$/, '') || '/';
-  return `${url.origin}${path}${url.search}`;
+function parsePositiveInt(value: unknown): number | null {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parseBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+  }
+  return fallback;
 }
 
 export async function POST(req: NextRequest) {
@@ -21,205 +28,219 @@ export async function POST(req: NextRequest) {
   const auth = await requireRole('editor');
   if (auth.error) return auth.error;
 
+  const body = await req.json().catch(() => ({} as Record<string, unknown>));
+  const processImmediately = parseBoolean(body.processImmediately, true);
+
   try {
-    const body = await req.json();
-    const pageIdRaw = body.pageId;
-    const urlRaw = body.url;
-    const projectIdRaw = body.projectId;
+    const pageIdInput = parsePositiveInt(body.pageId);
+    let resolvedPageId: number;
+    let projectId: number;
+    let siteId: number | null;
+    let targetUrl: string;
+    let normalizedTargetUrl: string;
 
-    let pageId: number | null = null;
-    let projectId: number | null = null;
-    let targetUrl: string | null = null;
-
-    if (pageIdRaw !== undefined && pageIdRaw !== null) {
-      pageId = Number.parseInt(String(pageIdRaw), 10);
-      if (!Number.isFinite(pageId)) {
-        return NextResponse.json({ error: 'Invalid pageId' }, { status: 400 });
-      }
-      if (!(await userCanAccessPage(auth.user, pageId))) {
+    if (pageIdInput) {
+      if (!(await userCanAccessPage(auth.user, pageIdInput))) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
 
-      const [existingPage] = await db.select().from(pages).where(eq(pages.id, pageId)).limit(1);
+      const [existingPage] = await db
+        .select({
+          id: pages.id,
+          projectId: pages.projectId,
+          siteId: pages.siteId,
+          url: pages.url,
+          normalizedUrl: pages.normalizedUrl,
+        })
+        .from(pages)
+        .where(eq(pages.id, pageIdInput))
+        .limit(1);
+
       if (!existingPage) {
         return NextResponse.json({ error: 'Page not found' }, { status: 404 });
       }
+
+      resolvedPageId = existingPage.id;
       projectId = existingPage.projectId;
+      siteId = existingPage.siteId ?? null;
       targetUrl = existingPage.url;
+      normalizedTargetUrl = existingPage.normalizedUrl || normalizeUrlForInventory(existingPage.url);
     } else {
-      projectId = Number.parseInt(String(projectIdRaw ?? ''), 10);
-      if (!Number.isFinite(projectId)) {
+      const requestedProjectId = parsePositiveInt(body.projectId);
+      if (!requestedProjectId) {
         return NextResponse.json({ error: 'projectId is required when pageId is missing' }, { status: 400 });
       }
-      if (!(await userCanAccessProject(auth.user, projectId))) {
+      if (!(await userCanAccessProject(auth.user, requestedProjectId))) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
-      if (!urlRaw || typeof urlRaw !== 'string') {
+      if (!body.url || typeof body.url !== 'string') {
         return NextResponse.json({ error: 'url is required when pageId is missing' }, { status: 400 });
       }
-      targetUrl = normalizeUrl(urlRaw);
+
+      let classified;
+      try {
+        classified = classifyDiscoveredUrl({ rawUrl: body.url });
+      } catch {
+        return NextResponse.json({ error: 'Invalid url' }, { status: 400 });
+      }
+
+      projectId = requestedProjectId;
+      siteId = null;
+      targetUrl = body.url.trim();
+      normalizedTargetUrl = classified.normalizedUrl;
+
+      await upsertDiscoveryUrl({
+        projectId,
+        url: targetUrl,
+        normalizedUrl: normalizedTargetUrl,
+        source: 'crawl',
+        isCandidate: classified.isCandidate,
+        excludeReason: classified.excludeReason,
+        metadata: { trigger: 'crawl_by_url' },
+      });
+
+      if (!classified.isCandidate) {
+        return NextResponse.json(
+          {
+            excluded: true,
+            reason: classified.excludeReason,
+            normalizedUrl: normalizedTargetUrl,
+          },
+          { status: 202 }
+        );
+      }
 
       const [existingByUrl] = await db
-        .select()
+        .select({
+          id: pages.id,
+          projectId: pages.projectId,
+          siteId: pages.siteId,
+          url: pages.url,
+          normalizedUrl: pages.normalizedUrl,
+        })
         .from(pages)
-        .where(and(eq(pages.projectId, projectId), eq(pages.url, targetUrl)))
+        .where(and(eq(pages.projectId, projectId), eq(pages.normalizedUrl, normalizedTargetUrl)))
         .limit(1);
+
       if (existingByUrl) {
-        pageId = existingByUrl.id;
+        resolvedPageId = existingByUrl.id;
+        siteId = existingByUrl.siteId ?? null;
+        targetUrl = existingByUrl.url;
+        normalizedTargetUrl = existingByUrl.normalizedUrl;
       } else {
-        const [createdPage] = await db
-          .insert(pages)
-          .values({ projectId, url: targetUrl, title: null })
-          .returning();
-        pageId = createdPage.id;
+        const createdPage = await upsertEligiblePage({
+          projectId,
+          url: normalizedTargetUrl,
+          normalizedUrl: normalizedTargetUrl,
+          discoverySource: 'crawl',
+        });
+        if (!createdPage) {
+          return NextResponse.json({ error: 'Could not create page inventory row' }, { status: 500 });
+        }
+        resolvedPageId = createdPage.id;
+        siteId = createdPage.siteId ?? null;
+        targetUrl = createdPage.url;
+        normalizedTargetUrl = createdPage.normalizedUrl;
       }
     }
 
-    if (!pageId || !projectId || !targetUrl) {
-      return NextResponse.json({ error: 'Could not resolve crawl target' }, { status: 400 });
-    }
+    const enqueued = await enqueueCrawlJob({
+      projectId,
+      siteId,
+      pageId: resolvedPageId,
+      url: targetUrl,
+      normalizedUrl: normalizedTargetUrl,
+      runType: 'manual',
+      priority: 50,
+    });
 
-    const crawl = await crawlPage(targetUrl);
+    const queueMetadata = {
+      runId: enqueued.run.id,
+      queueId: enqueued.queue.id,
+      processImmediately,
+      pageId: resolvedPageId,
+      normalizedUrl: normalizedTargetUrl,
+    };
 
-    const [updatedPage] = await db
-      .update(pages)
-      .set({
-        url: crawl.finalUrl,
-        title: crawl.title,
-        canonicalUrl: crawl.canonicalUrl,
-        httpStatus: crawl.httpStatus,
-        isIndexable: crawl.isIndexable ? 1 : 0,
-        isVerified: crawl.isVerified ? 1 : 0,
-        responseTimeMs: crawl.responseTimeMs,
-        contentHash: crawl.contentHash,
-        lastCrawledAt: dbNow(),
-        updatedAt: dbNow(),
-      })
-      .where(eq(pages.id, pageId))
-      .returning();
+    if (!processImmediately) {
+      await logAuditEvent({
+        userId: auth.user.id,
+        action: 'page.crawl.enqueued',
+        resourceType: 'page',
+        resourceId: resolvedPageId,
+        projectId,
+        metadata: queueMetadata,
+      });
 
-    const [snapshot] = await db
-      .insert(pageSnapshots)
-      .values({
-        pageId,
-        httpStatus: crawl.httpStatus,
-        canonicalUrl: crawl.canonicalUrl,
-        metaRobots: crawl.metaRobots,
-        isIndexable: crawl.isIndexable ? 1 : 0,
-        isVerified: crawl.isVerified ? 1 : 0,
-        responseTimeMs: crawl.responseTimeMs,
-        seoScore: crawl.seoScore,
-        issuesCount: crawl.issues.length,
-        snapshotData: crawl.snapshotData,
-      })
-      .returning();
-
-    const openIssues = await db
-      .select()
-      .from(pageIssues)
-      .where(and(eq(pageIssues.pageId, pageId), eq(pageIssues.isOpen, 1)));
-    const hadOpenIssues = openIssues.length > 0;
-
-    if (openIssues.length > 0) {
-      await db
-        .update(pageIssues)
-        .set({
-          isOpen: 0,
-          resolvedAt: dbNow(),
-          lastSeenAt: dbNow(),
-        })
-        .where(and(eq(pageIssues.pageId, pageId), eq(pageIssues.isOpen, 1)));
-    }
-
-    for (const issue of crawl.issues) {
-      await db.insert(pageIssues).values({
-        pageId,
-        snapshotId: snapshot.id,
-        issueType: issue.issueType,
-        severity: issue.severity,
-        message: issue.message,
-        isOpen: 1,
-        metadata: issue.metadata || null,
-        firstSeenAt: dbNow(),
-        lastSeenAt: dbNow(),
+      return NextResponse.json({
+        success: true,
+        queued: true,
+        ...queueMetadata,
       });
     }
 
-    if (!hadOpenIssues && crawl.issues.length > 0) {
-      try {
-        const convex = getConvexClient();
-        if (convex) {
-          const existingTasks = await convex.query(api.tasks.list, {
-            projectId,
-            limit: 500,
-          });
-          const existingOpenIssueTask = existingTasks.find(
-            (task) =>
-              task.status !== 'COMPLETED' &&
-              task.tags?.includes('crawler_issue') &&
-              task.tags?.includes(`page:${pageId}`)
-          );
-
-          if (!existingOpenIssueTask) {
-            await convex.mutation(api.tasks.create, {
-              title: `Fix SEO issues: ${crawl.finalUrl}`,
-              description: `${crawl.issues.length} crawl issue(s) detected.`,
-              type: 'research',
-              status: 'BACKLOG',
-              priority: crawl.issues.some((i) => i.severity === 'critical' || i.severity === 'high')
-                ? 'HIGH'
-                : 'MEDIUM',
-              projectId,
-              tags: ['seo', 'crawler', 'page', 'crawler_issue', `page:${pageId}`],
-            });
-          }
-        }
-      } catch (error) {
-        await logAlertEvent({
-          source: 'crawler',
-          eventType: 'mission_control_task_create_failed',
-          severity: 'warning',
-          message: 'Crawler detected issues but failed to create a Mission Control task.',
-          projectId,
-          resourceId: pageId,
-          metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
-        });
-      }
-    }
+    const processed = await processQueuedCrawlJob(enqueued.queue.id);
 
     await logAuditEvent({
       userId: auth.user.id,
-      action: 'page.crawl',
+      action: 'page.crawl.enqueued',
       resourceType: 'page',
-      resourceId: pageId,
+      resourceId: resolvedPageId,
       projectId,
       metadata: {
-        url: crawl.finalUrl,
-        verified: crawl.isVerified,
-        indexable: crawl.isIndexable,
-        issues: crawl.issues.length,
-        seoScore: crawl.seoScore,
+        ...queueMetadata,
+        state: processed.state,
       },
+      severity: processed.state === 'failed' ? 'error' : 'info',
     });
 
-    return NextResponse.json({
-      success: true,
-      page: updatedPage,
-      crawl: {
-        ...crawl,
-        issuesCount: crawl.issues.length,
+    if (processed.state === 'done') {
+      return NextResponse.json({
+        success: true,
+        queued: true,
+        ...queueMetadata,
+        state: processed.state,
+        result: processed.result,
+      });
+    }
+
+    if (processed.state === 'queued' || processed.state === 'deferred') {
+      return NextResponse.json(
+        {
+          success: true,
+          queued: true,
+          ...queueMetadata,
+          state: processed.state,
+          detail: processed.message,
+        },
+        { status: 202 }
+      );
+    }
+
+    if (processed.state === 'missing') {
+      return NextResponse.json(
+        {
+          error: 'Queued crawl item not found',
+          ...queueMetadata,
+        },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json(
+      {
+        error: 'Crawler failed',
+        ...queueMetadata,
+        state: processed.state,
+        detail: processed.message,
       },
-    });
+      { status: 500 }
+    );
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown crawler error';
-    await logAlertEvent({
-      source: 'crawler',
-      eventType: 'crawl_failed',
-      severity: 'error',
-      message: 'Crawler run failed.',
-      metadata: { error: errorMessage },
-    });
-    console.error('Crawler error:', error);
-    return NextResponse.json({ error: 'Crawler failed', detail: errorMessage }, { status: 500 });
+    console.error('Crawler enqueue/process error:', error);
+    return NextResponse.json({
+      error: 'Crawler failed',
+      detail: error instanceof Error ? error.message : 'Unknown crawler error',
+    }, { status: 500 });
   }
 }

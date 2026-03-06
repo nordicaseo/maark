@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
-import { keywords } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { keywords, pages } from '@/db/schema';
+import { and, eq } from 'drizzle-orm';
 import { requireRole } from '@/lib/auth';
 import { userCanAccessKeyword } from '@/lib/access';
 import { dbNow } from '@/db/utils';
 import { logAuditEvent, logAlertEvent } from '@/lib/observability';
 import { createTopicWorkflow } from '@/lib/topic-workflow';
+import { normalizeUrlForInventory } from '@/lib/discovery/url-policy';
+import { linkDocumentToPage, linkTaskToPage } from '@/lib/pages/linking';
 import {
   DEFAULT_BLOG_SUBTYPE,
   DEFAULT_COLLECTION_SUBTYPE,
@@ -77,6 +79,38 @@ export async function POST(
       },
     });
 
+    let linkedPageId: number | null = null;
+    if (keyword.targetUrl) {
+      try {
+        const normalizedTarget = normalizeUrlForInventory(keyword.targetUrl);
+        const [page] = await db
+          .select({ id: pages.id })
+          .from(pages)
+          .where(and(eq(pages.projectId, keyword.projectId), eq(pages.normalizedUrl, normalizedTarget)))
+          .limit(1);
+        if (page?.id) {
+          linkedPageId = page.id;
+          await linkTaskToPage({
+            taskId: created.taskId,
+            projectId: keyword.projectId,
+            pageId: page.id,
+            keywordId: keyword.id,
+            linkType: 'keyword_topic',
+          });
+          if (created.contentDocumentId) {
+            await linkDocumentToPage({
+              documentId: created.contentDocumentId,
+              pageId: page.id,
+              relationType: 'secondary',
+              isPrimary: false,
+            });
+          }
+        }
+      } catch (error) {
+        console.warn('Keyword task link-to-page skipped:', error);
+      }
+    }
+
     await db
       .update(keywords)
       .set({
@@ -101,6 +135,7 @@ export async function POST(
         subtype,
         contentType,
         reused: created.reused,
+        linkedPageId,
       },
     });
 

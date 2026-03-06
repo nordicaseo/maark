@@ -243,29 +243,114 @@ export const keywords = pgTable('keywords', {
   uniqueIndex('keywords_project_keyword_unique').on(table.projectId, table.keyword),
 ]);
 
+// ── Sites ─────────────────────────────────────────────────────────
+
+export const sites = pgTable('sites', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  domain: text('domain').notNull(),
+  sitemapUrl: text('sitemap_url'),
+  gscProperty: text('gsc_property'),
+  isPrimary: integer('is_primary').notNull().default(1),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('sites_project_domain_unique').on(table.projectId, table.domain),
+]);
+
 // ── Pages & Crawls ────────────────────────────────────────────────
 
 export const pages = pgTable('pages', {
   id: serial('id').primaryKey(),
   projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
   url: text('url').notNull(),
+  normalizedUrl: text('normalized_url').notNull().default(''),
+  urlHash: text('url_hash'),
   title: text('title'),
   canonicalUrl: text('canonical_url'),
   httpStatus: integer('http_status'),
   isIndexable: integer('is_indexable').default(1),
   isVerified: integer('is_verified').default(0),
+  discoverySource: varchar('discovery_source', { length: 32 }).notNull().default('inventory'),
+  eligibilityState: varchar('eligibility_state', { length: 24 }).notNull().default('eligible'),
+  excludeReason: varchar('exclude_reason', { length: 120 }),
   responseTimeMs: integer('response_time_ms'),
   contentHash: text('content_hash'),
+  firstSeenAt: timestamp('first_seen_at'),
+  lastSeenAt: timestamp('last_seen_at'),
+  isActive: integer('is_active').notNull().default(1),
   lastCrawledAt: timestamp('last_crawled_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => [
   uniqueIndex('pages_project_url_unique').on(table.projectId, table.url),
+  uniqueIndex('pages_project_normalized_url_unique').on(table.projectId, table.normalizedUrl),
+]);
+
+export const siteDiscoveryUrls = pgTable('site_discovery_urls', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
+  pageId: integer('page_id').references(() => pages.id, { onDelete: 'set null' }),
+  url: text('url').notNull(),
+  normalizedUrl: text('normalized_url').notNull(),
+  source: varchar('source', { length: 24 }).notNull().default('inventory'),
+  isCandidate: integer('is_candidate').notNull().default(0),
+  excludeReason: varchar('exclude_reason', { length: 120 }),
+  canonicalTarget: text('canonical_target'),
+  httpStatus: integer('http_status'),
+  robots: text('robots'),
+  metadata: jsonb('metadata'),
+  seenAt: timestamp('seen_at').defaultNow().notNull(),
+  lastSeenAt: timestamp('last_seen_at').defaultNow().notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('site_discovery_urls_unique').on(table.projectId, table.normalizedUrl),
+]);
+
+export const crawlRuns = pgTable('crawl_runs', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
+  runType: varchar('run_type', { length: 40 }).notNull().default('manual'),
+  status: varchar('status', { length: 40 }).notNull().default('queued'),
+  totalUrls: integer('total_urls').notNull().default(0),
+  processedUrls: integer('processed_urls').notNull().default(0),
+  successUrls: integer('success_urls').notNull().default(0),
+  failedUrls: integer('failed_urls').notNull().default(0),
+  startedAt: timestamp('started_at'),
+  finishedAt: timestamp('finished_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const crawlQueue = pgTable('crawl_queue', {
+  id: serial('id').primaryKey(),
+  runId: integer('run_id').notNull().references(() => crawlRuns.id, { onDelete: 'cascade' }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
+  pageId: integer('page_id').references(() => pages.id, { onDelete: 'set null' }),
+  url: text('url').notNull(),
+  normalizedUrl: text('normalized_url').notNull(),
+  priority: integer('priority').notNull().default(50),
+  state: varchar('state', { length: 40 }).notNull().default('queued'),
+  attempts: integer('attempts').notNull().default(0),
+  maxAttempts: integer('max_attempts').notNull().default(3),
+  nextAttemptAt: timestamp('next_attempt_at'),
+  leaseUntil: timestamp('lease_until'),
+  lastError: text('last_error'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('crawl_queue_run_normalized_unique').on(table.runId, table.normalizedUrl),
 ]);
 
 export const pageSnapshots = pgTable('page_snapshots', {
   id: serial('id').primaryKey(),
   pageId: integer('page_id').notNull().references(() => pages.id, { onDelete: 'cascade' }),
+  runId: integer('run_id').references(() => crawlRuns.id, { onDelete: 'set null' }),
   httpStatus: integer('http_status'),
   canonicalUrl: text('canonical_url'),
   metaRobots: text('meta_robots'),
@@ -291,6 +376,32 @@ export const pageIssues = pgTable('page_issues', {
   lastSeenAt: timestamp('last_seen_at').defaultNow().notNull(),
   resolvedAt: timestamp('resolved_at'),
 });
+
+export const documentPageLinks = pgTable('document_page_links', {
+  id: serial('id').primaryKey(),
+  documentId: integer('document_id').notNull().references(() => documents.id, { onDelete: 'cascade' }),
+  pageId: integer('page_id').notNull().references(() => pages.id, { onDelete: 'cascade' }),
+  relationType: varchar('relation_type', { length: 40 }).notNull().default('primary'),
+  isPrimary: integer('is_primary').notNull().default(0),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('document_page_links_unique').on(table.documentId, table.pageId, table.relationType),
+]);
+
+export const taskPageLinks = pgTable('task_page_links', {
+  id: serial('id').primaryKey(),
+  taskId: text('task_id').notNull(),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  pageId: integer('page_id').references(() => pages.id, { onDelete: 'set null' }),
+  keywordId: integer('keyword_id').references(() => keywords.id, { onDelete: 'set null' }),
+  linkType: varchar('link_type', { length: 40 }).notNull().default('related'),
+  annotationDate: timestamp('annotation_date'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('task_page_links_unique').on(table.taskId, table.pageId, table.linkType),
+]);
 
 // ── Observability ─────────────────────────────────────────────────
 

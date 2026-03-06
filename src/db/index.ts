@@ -300,25 +300,52 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       ON keywords(project_id, keyword);
   `);
 
+  // ── Sites ──
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS sites (
+      id SERIAL PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      domain TEXT NOT NULL,
+      sitemap_url TEXT,
+      gsc_property TEXT,
+      is_primary INTEGER NOT NULL DEFAULT 1,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS sites_project_domain_unique
+      ON sites(project_id, domain);
+  `);
+
   // ── Pages & Crawl snapshots/issues ──
   await sql.query(`
     CREATE TABLE IF NOT EXISTS pages (
       id SERIAL PRIMARY KEY,
       project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL,
       url TEXT NOT NULL,
+      normalized_url TEXT NOT NULL DEFAULT '',
+      url_hash TEXT,
       title TEXT,
       canonical_url TEXT,
       http_status INTEGER,
       is_indexable INTEGER DEFAULT 1,
       is_verified INTEGER DEFAULT 0,
+      discovery_source VARCHAR(32) NOT NULL DEFAULT 'inventory',
+      eligibility_state VARCHAR(24) NOT NULL DEFAULT 'eligible',
+      exclude_reason VARCHAR(120),
       response_time_ms INTEGER,
       content_hash TEXT,
+      first_seen_at TIMESTAMP,
+      last_seen_at TIMESTAMP,
+      is_active INTEGER NOT NULL DEFAULT 1,
       last_crawled_at TIMESTAMP,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
     CREATE UNIQUE INDEX IF NOT EXISTS pages_project_url_unique
       ON pages(project_id, url);
+    CREATE UNIQUE INDEX IF NOT EXISTS pages_project_normalized_url_unique
+      ON pages(project_id, normalized_url);
 
     CREATE TABLE IF NOT EXISTS page_snapshots (
       id SERIAL PRIMARY KEY,
@@ -348,6 +375,122 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
       resolved_at TIMESTAMP
     );
+  `);
+
+  await sql.query(`
+    ALTER TABLE pages ADD COLUMN IF NOT EXISTS site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL;
+    ALTER TABLE pages ADD COLUMN IF NOT EXISTS normalized_url TEXT;
+    ALTER TABLE pages ADD COLUMN IF NOT EXISTS url_hash TEXT;
+    ALTER TABLE pages ADD COLUMN IF NOT EXISTS discovery_source VARCHAR(32) NOT NULL DEFAULT 'inventory';
+    ALTER TABLE pages ADD COLUMN IF NOT EXISTS eligibility_state VARCHAR(24) NOT NULL DEFAULT 'eligible';
+    ALTER TABLE pages ADD COLUMN IF NOT EXISTS exclude_reason VARCHAR(120);
+    ALTER TABLE pages ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMP;
+    ALTER TABLE pages ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP;
+    ALTER TABLE pages ADD COLUMN IF NOT EXISTS is_active INTEGER NOT NULL DEFAULT 1;
+  `);
+  await sql.query(`
+    UPDATE pages
+    SET normalized_url = lower(trim(url))
+    WHERE normalized_url IS NULL OR normalized_url = '';
+  `);
+  await sql.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS pages_project_normalized_url_unique
+      ON pages(project_id, normalized_url);
+  `);
+
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS site_discovery_urls (
+      id SERIAL PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+      page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
+      url TEXT NOT NULL,
+      normalized_url TEXT NOT NULL,
+      source VARCHAR(24) NOT NULL DEFAULT 'inventory',
+      is_candidate INTEGER NOT NULL DEFAULT 0,
+      exclude_reason VARCHAR(120),
+      canonical_target TEXT,
+      http_status INTEGER,
+      robots TEXT,
+      metadata JSONB,
+      seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS site_discovery_urls_unique
+      ON site_discovery_urls(project_id, normalized_url);
+  `);
+
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS crawl_runs (
+      id SERIAL PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+      run_type VARCHAR(40) NOT NULL DEFAULT 'manual',
+      status VARCHAR(40) NOT NULL DEFAULT 'queued',
+      total_urls INTEGER NOT NULL DEFAULT 0,
+      processed_urls INTEGER NOT NULL DEFAULT 0,
+      success_urls INTEGER NOT NULL DEFAULT 0,
+      failed_urls INTEGER NOT NULL DEFAULT 0,
+      started_at TIMESTAMP,
+      finished_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS crawl_queue (
+      id SERIAL PRIMARY KEY,
+      run_id INTEGER NOT NULL REFERENCES crawl_runs(id) ON DELETE CASCADE,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+      page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
+      url TEXT NOT NULL,
+      normalized_url TEXT NOT NULL,
+      priority INTEGER NOT NULL DEFAULT 50,
+      state VARCHAR(40) NOT NULL DEFAULT 'queued',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      next_attempt_at TIMESTAMP,
+      lease_until TIMESTAMP,
+      last_error TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS crawl_queue_run_normalized_unique
+      ON crawl_queue(run_id, normalized_url);
+  `);
+
+  await sql.query(`
+    ALTER TABLE page_snapshots ADD COLUMN IF NOT EXISTS run_id INTEGER REFERENCES crawl_runs(id) ON DELETE SET NULL;
+  `);
+
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS document_page_links (
+      id SERIAL PRIMARY KEY,
+      document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      relation_type VARCHAR(40) NOT NULL DEFAULT 'primary',
+      is_primary INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS document_page_links_unique
+      ON document_page_links(document_id, page_id, relation_type);
+
+    CREATE TABLE IF NOT EXISTS task_page_links (
+      id SERIAL PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
+      keyword_id INTEGER REFERENCES keywords(id) ON DELETE SET NULL,
+      link_type VARCHAR(40) NOT NULL DEFAULT 'related',
+      annotation_date TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS task_page_links_unique
+      ON task_page_links(task_id, page_id, link_type);
   `);
 
   // ── Observability tables ──
@@ -670,24 +813,49 @@ function createDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS keywords_project_keyword_unique ON keywords(project_id, keyword);
   `);
 
+  // ── Sites ──
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS sites (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      domain TEXT NOT NULL,
+      sitemap_url TEXT,
+      gsc_property TEXT,
+      is_primary INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS sites_project_domain_unique ON sites(project_id, domain);
+  `);
+
   // ── Pages & Crawl snapshots/issues ──
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS pages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL,
       url TEXT NOT NULL,
+      normalized_url TEXT NOT NULL DEFAULT '',
+      url_hash TEXT,
       title TEXT,
       canonical_url TEXT,
       http_status INTEGER,
       is_indexable INTEGER DEFAULT 1,
       is_verified INTEGER DEFAULT 0,
+      discovery_source TEXT NOT NULL DEFAULT 'inventory',
+      eligibility_state TEXT NOT NULL DEFAULT 'eligible',
+      exclude_reason TEXT,
       response_time_ms INTEGER,
       content_hash TEXT,
+      first_seen_at TEXT,
+      last_seen_at TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1,
       last_crawled_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE UNIQUE INDEX IF NOT EXISTS pages_project_url_unique ON pages(project_id, url);
+    CREATE UNIQUE INDEX IF NOT EXISTS pages_project_normalized_url_unique ON pages(project_id, normalized_url);
 
     CREATE TABLE IF NOT EXISTS page_snapshots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -717,6 +885,113 @@ function createDb() {
       last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
       resolved_at TEXT
     );
+  `);
+  addColumnSafe(sqlite, 'pages', 'site_id', "INTEGER REFERENCES sites(id) ON DELETE SET NULL");
+  addColumnSafe(sqlite, 'pages', 'normalized_url', "TEXT NOT NULL DEFAULT ''");
+  addColumnSafe(sqlite, 'pages', 'url_hash', "TEXT");
+  addColumnSafe(sqlite, 'pages', 'discovery_source', "TEXT NOT NULL DEFAULT 'inventory'");
+  addColumnSafe(sqlite, 'pages', 'eligibility_state', "TEXT NOT NULL DEFAULT 'eligible'");
+  addColumnSafe(sqlite, 'pages', 'exclude_reason', "TEXT");
+  addColumnSafe(sqlite, 'pages', 'first_seen_at', "TEXT");
+  addColumnSafe(sqlite, 'pages', 'last_seen_at', "TEXT");
+  addColumnSafe(sqlite, 'pages', 'is_active', "INTEGER NOT NULL DEFAULT 1");
+  sqlite.exec(`
+    UPDATE pages
+    SET normalized_url = lower(trim(url))
+    WHERE normalized_url IS NULL OR normalized_url = '';
+  `);
+  sqlite.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS pages_project_normalized_url_unique ON pages(project_id, normalized_url);
+  `);
+
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS site_discovery_urls (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+      page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
+      url TEXT NOT NULL,
+      normalized_url TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'inventory',
+      is_candidate INTEGER NOT NULL DEFAULT 0,
+      exclude_reason TEXT,
+      canonical_target TEXT,
+      http_status INTEGER,
+      robots TEXT,
+      metadata TEXT,
+      seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS site_discovery_urls_unique ON site_discovery_urls(project_id, normalized_url);
+  `);
+
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS crawl_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+      run_type TEXT NOT NULL DEFAULT 'manual',
+      status TEXT NOT NULL DEFAULT 'queued',
+      total_urls INTEGER NOT NULL DEFAULT 0,
+      processed_urls INTEGER NOT NULL DEFAULT 0,
+      success_urls INTEGER NOT NULL DEFAULT 0,
+      failed_urls INTEGER NOT NULL DEFAULT 0,
+      started_at TEXT,
+      finished_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS crawl_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id INTEGER NOT NULL REFERENCES crawl_runs(id) ON DELETE CASCADE,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+      page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
+      url TEXT NOT NULL,
+      normalized_url TEXT NOT NULL,
+      priority INTEGER NOT NULL DEFAULT 50,
+      state TEXT NOT NULL DEFAULT 'queued',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      next_attempt_at TEXT,
+      lease_until TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS crawl_queue_run_normalized_unique ON crawl_queue(run_id, normalized_url);
+  `);
+  addColumnSafe(sqlite, 'page_snapshots', 'run_id', 'INTEGER REFERENCES crawl_runs(id) ON DELETE SET NULL');
+
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS document_page_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      relation_type TEXT NOT NULL DEFAULT 'primary',
+      is_primary INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS document_page_links_unique
+      ON document_page_links(document_id, page_id, relation_type);
+
+    CREATE TABLE IF NOT EXISTS task_page_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
+      keyword_id INTEGER REFERENCES keywords(id) ON DELETE SET NULL,
+      link_type TEXT NOT NULL DEFAULT 'related',
+      annotation_date TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS task_page_links_unique
+      ON task_page_links(task_id, page_id, link_type);
   `);
 
   // ── Observability tables ──

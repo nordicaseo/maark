@@ -25,6 +25,23 @@ export type CrawlResult = {
   snapshotData: Record<string, unknown>;
 };
 
+type FirecrawlScrapeResponse = {
+  success?: boolean;
+  data?: {
+    html?: string;
+    markdown?: string;
+    metadata?: {
+      title?: string;
+      sourceURL?: string;
+      statusCode?: number;
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+  error?: string;
+  [key: string]: unknown;
+};
+
 function normalizeUrl(input: string): string {
   try {
     const u = new URL(input);
@@ -113,30 +130,74 @@ function computeSeoScore(issues: CrawlIssue[]): number {
   return Math.max(0, score);
 }
 
+async function scrapeWithFirecrawl(url: string): Promise<{
+  html: string;
+  finalUrl: string;
+  statusCode: number;
+  titleFromMetadata: string | null;
+}> {
+  const apiKey = process.env.FIRECRAWL_API_KEY;
+  if (!apiKey) {
+    throw new Error('FIRECRAWL_API_KEY is not configured.');
+  }
+
+  const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      url,
+      formats: ['html', 'markdown'],
+      onlyMainContent: false,
+      timeout: 30000,
+    }),
+  });
+
+  const json = (await response.json().catch(() => ({}))) as FirecrawlScrapeResponse;
+  if (!response.ok || !json.success) {
+    const reason = json.error || `HTTP ${response.status}`;
+    throw new Error(`Firecrawl scrape failed: ${reason}`);
+  }
+
+  const html = String(json.data?.html || '').trim();
+  if (!html) {
+    throw new Error('Firecrawl scrape returned empty HTML.');
+  }
+
+  const finalUrl = String(json.data?.metadata?.sourceURL || url).trim() || url;
+  const statusCode = Number(json.data?.metadata?.statusCode || 200);
+  const titleFromMetadata = String(json.data?.metadata?.title || '').trim() || null;
+
+  return {
+    html,
+    finalUrl,
+    statusCode: Number.isFinite(statusCode) ? statusCode : 200,
+    titleFromMetadata,
+  };
+}
+
 export async function crawlPage(url: string): Promise<CrawlResult> {
   const start = Date.now();
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': 'MaarkCrawler/1.0 (+https://maark.ai)',
-      Accept: 'text/html,application/xhtml+xml',
-    },
-    redirect: 'follow',
-  });
+  const scraped = await scrapeWithFirecrawl(url);
   const responseTimeMs = Date.now() - start;
-  const finalUrl = response.url || url;
-  const html = await response.text();
-  const $ = cheerio.load(html);
 
-  const title = $('title').first().text()?.trim() || null;
+  const $ = cheerio.load(scraped.html);
+  const title = $('title').first().text()?.trim() || scraped.titleFromMetadata || null;
   const canonicalUrl = $('link[rel="canonical"]').attr('href')?.trim() || null;
   const metaRobots = $('meta[name="robots"]').attr('content')?.trim() || null;
+  const finalUrl = scraped.finalUrl;
 
   const isCanonical = canonicalMatches(finalUrl, canonicalUrl);
-  const isIndexable = response.status >= 200 && response.status < 300 && !String(metaRobots || '').toLowerCase().includes('noindex');
-  const isVerified = response.status === 200 && isIndexable && isCanonical;
+  const isIndexable =
+    scraped.statusCode >= 200 &&
+    scraped.statusCode < 300 &&
+    !String(metaRobots || '').toLowerCase().includes('noindex');
+  const isVerified = scraped.statusCode === 200 && isIndexable && isCanonical;
 
   const issues = buildIssues({
-    httpStatus: response.status,
+    httpStatus: scraped.statusCode,
     canonicalUrl,
     metaRobots,
     finalUrl,
@@ -144,8 +205,8 @@ export async function crawlPage(url: string): Promise<CrawlResult> {
   });
   const seoScore = computeSeoScore(issues);
 
-  const contentHash = html
-    ? createHash('sha256').update(html).digest('hex')
+  const contentHash = scraped.html
+    ? createHash('sha256').update(scraped.html).digest('hex')
     : null;
 
   return {
@@ -154,7 +215,7 @@ export async function crawlPage(url: string): Promise<CrawlResult> {
     title,
     canonicalUrl,
     metaRobots,
-    httpStatus: response.status,
+    httpStatus: scraped.statusCode,
     responseTimeMs,
     contentHash,
     isIndexable,
@@ -168,6 +229,8 @@ export async function crawlPage(url: string): Promise<CrawlResult> {
       canonicalUrl,
       metaRobots,
       wordCountApprox: $('body').text().trim().split(/\s+/).filter(Boolean).length,
+      provider: 'firecrawl',
     },
   };
 }
+

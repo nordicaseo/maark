@@ -223,29 +223,114 @@ export const keywords = sqliteTable('keywords', {
   uniqueIndex('keywords_project_keyword_unique').on(table.projectId, table.keyword),
 ]);
 
+// ── Sites ─────────────────────────────────────────────────────────
+
+export const sites = sqliteTable('sites', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  domain: text('domain').notNull(),
+  sitemapUrl: text('sitemap_url'),
+  gscProperty: text('gsc_property'),
+  isPrimary: integer('is_primary').notNull().default(1),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('sites_project_domain_unique').on(table.projectId, table.domain),
+]);
+
 // ── Pages & Crawls ────────────────────────────────────────────────
 
 export const pages = sqliteTable('pages', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
   url: text('url').notNull(),
+  normalizedUrl: text('normalized_url').notNull().default(''),
+  urlHash: text('url_hash'),
   title: text('title'),
   canonicalUrl: text('canonical_url'),
   httpStatus: integer('http_status'),
   isIndexable: integer('is_indexable').default(1),
   isVerified: integer('is_verified').default(0),
+  discoverySource: text('discovery_source').notNull().default('inventory'),
+  eligibilityState: text('eligibility_state').notNull().default('eligible'),
+  excludeReason: text('exclude_reason'),
   responseTimeMs: integer('response_time_ms'),
   contentHash: text('content_hash'),
+  firstSeenAt: text('first_seen_at'),
+  lastSeenAt: text('last_seen_at'),
+  isActive: integer('is_active').notNull().default(1),
   lastCrawledAt: text('last_crawled_at'),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
 }, (table) => [
   uniqueIndex('pages_project_url_unique').on(table.projectId, table.url),
+  uniqueIndex('pages_project_normalized_url_unique').on(table.projectId, table.normalizedUrl),
+]);
+
+export const siteDiscoveryUrls = sqliteTable('site_discovery_urls', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
+  pageId: integer('page_id').references(() => pages.id, { onDelete: 'set null' }),
+  url: text('url').notNull(),
+  normalizedUrl: text('normalized_url').notNull(),
+  source: text('source').notNull().default('inventory'),
+  isCandidate: integer('is_candidate').notNull().default(0),
+  excludeReason: text('exclude_reason'),
+  canonicalTarget: text('canonical_target'),
+  httpStatus: integer('http_status'),
+  robots: text('robots'),
+  metadata: text('metadata', { mode: 'json' }),
+  seenAt: text('seen_at').notNull().$defaultFn(() => new Date().toISOString()),
+  lastSeenAt: text('last_seen_at').notNull().$defaultFn(() => new Date().toISOString()),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('site_discovery_urls_unique').on(table.projectId, table.normalizedUrl),
+]);
+
+export const crawlRuns = sqliteTable('crawl_runs', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
+  runType: text('run_type').notNull().default('manual'),
+  status: text('status').notNull().default('queued'),
+  totalUrls: integer('total_urls').notNull().default(0),
+  processedUrls: integer('processed_urls').notNull().default(0),
+  successUrls: integer('success_urls').notNull().default(0),
+  failedUrls: integer('failed_urls').notNull().default(0),
+  startedAt: text('started_at'),
+  finishedAt: text('finished_at'),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const crawlQueue = sqliteTable('crawl_queue', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  runId: integer('run_id').notNull().references(() => crawlRuns.id, { onDelete: 'cascade' }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
+  pageId: integer('page_id').references(() => pages.id, { onDelete: 'set null' }),
+  url: text('url').notNull(),
+  normalizedUrl: text('normalized_url').notNull(),
+  priority: integer('priority').notNull().default(50),
+  state: text('state').notNull().default('queued'),
+  attempts: integer('attempts').notNull().default(0),
+  maxAttempts: integer('max_attempts').notNull().default(3),
+  nextAttemptAt: text('next_attempt_at'),
+  leaseUntil: text('lease_until'),
+  lastError: text('last_error'),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('crawl_queue_run_normalized_unique').on(table.runId, table.normalizedUrl),
 ]);
 
 export const pageSnapshots = sqliteTable('page_snapshots', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   pageId: integer('page_id').notNull().references(() => pages.id, { onDelete: 'cascade' }),
+  runId: integer('run_id').references(() => crawlRuns.id, { onDelete: 'set null' }),
   httpStatus: integer('http_status'),
   canonicalUrl: text('canonical_url'),
   metaRobots: text('meta_robots'),
@@ -271,6 +356,32 @@ export const pageIssues = sqliteTable('page_issues', {
   lastSeenAt: text('last_seen_at').notNull().$defaultFn(() => new Date().toISOString()),
   resolvedAt: text('resolved_at'),
 });
+
+export const documentPageLinks = sqliteTable('document_page_links', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  documentId: integer('document_id').notNull().references(() => documents.id, { onDelete: 'cascade' }),
+  pageId: integer('page_id').notNull().references(() => pages.id, { onDelete: 'cascade' }),
+  relationType: text('relation_type').notNull().default('primary'),
+  isPrimary: integer('is_primary').notNull().default(0),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('document_page_links_unique').on(table.documentId, table.pageId, table.relationType),
+]);
+
+export const taskPageLinks = sqliteTable('task_page_links', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  taskId: text('task_id').notNull(),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  pageId: integer('page_id').references(() => pages.id, { onDelete: 'set null' }),
+  keywordId: integer('keyword_id').references(() => keywords.id, { onDelete: 'set null' }),
+  linkType: text('link_type').notNull().default('related'),
+  annotationDate: text('annotation_date'),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('task_page_links_unique').on(table.taskId, table.pageId, table.linkType),
+]);
 
 // ── Observability ─────────────────────────────────────────────────
 

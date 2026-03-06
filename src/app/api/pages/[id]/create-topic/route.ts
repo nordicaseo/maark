@@ -6,6 +6,7 @@ import { db, ensureDb } from '@/db';
 import { pages } from '@/db/schema';
 import { createTopicWorkflow } from '@/lib/topic-workflow';
 import { logAuditEvent, logAlertEvent } from '@/lib/observability';
+import { linkDocumentToPage, linkTaskToPage } from '@/lib/pages/linking';
 import {
   DEFAULT_BLOG_SUBTYPE,
   DEFAULT_COLLECTION_SUBTYPE,
@@ -82,6 +83,21 @@ export async function POST(
         outlineReviewOptional: true,
         seoReviewRequired: true,
       },
+    });
+
+    if (created.contentDocumentId) {
+      await linkDocumentToPage({
+        documentId: created.contentDocumentId,
+        pageId: page.id,
+        relationType: 'primary',
+        isPrimary: true,
+      });
+    }
+    await linkTaskToPage({
+      taskId: created.taskId,
+      projectId: page.projectId,
+      pageId: page.id,
+      linkType: 'content_topic',
     });
 
     await logAuditEvent({

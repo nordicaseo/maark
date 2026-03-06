@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
 import { pages } from '@/db/schema';
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { getRequestedProjectId, getAccessibleProjectIds, isAdminUser, userCanAccessProject } from '@/lib/access';
 import { getAuthUser, requireRole } from '@/lib/auth';
 import { logAuditEvent } from '@/lib/observability';
-
-function normalizeUrl(input: string): string {
-  const url = new URL(input.trim());
-  const path = url.pathname.replace(/\/+$/, '') || '/';
-  return `${url.origin}${path}${url.search}`;
-}
+import { classifyDiscoveredUrl } from '@/lib/discovery/url-policy';
+import { upsertDiscoveryUrl, upsertEligiblePage } from '@/lib/discovery/ledger';
 
 export async function GET(req: NextRequest) {
   await ensureDb();
@@ -33,7 +29,18 @@ export async function GET(req: NextRequest) {
       isVerified: pages.isVerified,
       responseTimeMs: pages.responseTimeMs,
       contentHash: pages.contentHash,
+      discoverySource: pages.discoverySource,
+      eligibilityState: pages.eligibilityState,
+      excludeReason: pages.excludeReason,
+      normalizedUrl: pages.normalizedUrl,
       lastCrawledAt: pages.lastCrawledAt,
+      firstSeenAt: pages.firstSeenAt,
+      lastSeenAt: pages.lastSeenAt,
+      linkedDocumentCount: sql<number>`(
+        SELECT CAST(COUNT(*) AS INTEGER)
+        FROM document_page_links
+        WHERE document_page_links.page_id = ${pages.id}
+      )`,
       createdAt: pages.createdAt,
       updatedAt: pages.updatedAt,
       openIssues: sql<number>`(
@@ -44,12 +51,23 @@ export async function GET(req: NextRequest) {
       )`,
     };
 
-    const base = db.select(selectFields).from(pages).orderBy(desc(pages.updatedAt));
+    const basePredicates = [
+      eq(pages.eligibilityState, 'eligible'),
+      eq(pages.isActive, 1),
+      eq(pages.isIndexable, 1),
+    ];
 
     if (isAdminUser(user)) {
-      const rows = requestedProjectId !== null
-        ? await base.where(eq(pages.projectId, requestedProjectId))
-        : await base;
+      const rows = await db
+        .select(selectFields)
+        .from(pages)
+        .where(
+          and(
+            ...basePredicates,
+            ...(requestedProjectId !== null ? [eq(pages.projectId, requestedProjectId)] : [])
+          )
+        )
+        .orderBy(desc(pages.updatedAt));
       return NextResponse.json(rows);
     }
 
@@ -58,16 +76,28 @@ export async function GET(req: NextRequest) {
       if (!accessibleProjectIds.includes(requestedProjectId)) {
         return NextResponse.json([]);
       }
-      return NextResponse.json(await base.where(eq(pages.projectId, requestedProjectId)));
+      const rows = await db
+        .select(selectFields)
+        .from(pages)
+        .where(and(...basePredicates, eq(pages.projectId, requestedProjectId)))
+        .orderBy(desc(pages.updatedAt));
+      return NextResponse.json(rows);
     }
 
     if (accessibleProjectIds.length === 0) {
       return NextResponse.json([]);
     }
 
-    const rows = await base.where(
-      sql`${pages.projectId} IN (${sql.join(accessibleProjectIds.map((id) => sql`${id}`), sql`, `)})`
-    );
+    const rows = await db
+      .select(selectFields)
+      .from(pages)
+      .where(
+        and(
+          ...basePredicates,
+          sql`${pages.projectId} IN (${sql.join(accessibleProjectIds.map((id) => sql`${id}`), sql`, `)})`
+        )
+      )
+      .orderBy(desc(pages.updatedAt));
     return NextResponse.json(rows);
   } catch (error) {
     console.error('Error fetching pages:', error);
@@ -96,24 +126,70 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'url is required' }, { status: 400 });
     }
 
-    const url = normalizeUrl(body.url);
+    const classified = (() => {
+      try {
+        return classifyDiscoveredUrl({ rawUrl: body.url });
+      } catch {
+        return null;
+      }
+    })();
+    if (!classified) {
+      return NextResponse.json({ error: 'Invalid url' }, { status: 400 });
+    }
+    const normalizedUrl = classified.normalizedUrl;
 
-    const [created] = await db
-      .insert(pages)
-      .values({
+    const discovery = await upsertDiscoveryUrl({
+      projectId,
+      url: body.url.trim(),
+      normalizedUrl,
+      source: 'inventory',
+      isCandidate: classified.isCandidate,
+      excludeReason: classified.excludeReason,
+      metadata: {
+        trigger: 'manual_add_page',
+      },
+    });
+
+    if (!classified.isCandidate) {
+      await logAuditEvent({
+        userId: auth.user.id,
+        action: 'page.discovery_excluded',
+        resourceType: 'page',
         projectId,
-        url,
-        title: body.title || null,
-      })
-      .returning();
+        severity: 'warning',
+        metadata: {
+          inputUrl: body.url,
+          normalizedUrl,
+          excludeReason: classified.excludeReason,
+          discoveryId: discovery?.id ?? null,
+        },
+      });
+
+      return NextResponse.json({
+        excluded: true,
+        reason: classified.excludeReason,
+        normalizedUrl,
+      }, { status: 202 });
+    }
+
+    const created = await upsertEligiblePage({
+      projectId,
+      url: normalizedUrl,
+      normalizedUrl,
+      title: body.title || null,
+      discoverySource: 'inventory',
+    });
+    if (!created) {
+      return NextResponse.json({ error: 'Failed to store page' }, { status: 500 });
+    }
 
     await logAuditEvent({
       userId: auth.user.id,
       action: 'page.create',
       resourceType: 'page',
-      resourceId: created.id,
+      resourceId: created?.id ?? null,
       projectId,
-      metadata: { url: created.url },
+      metadata: { url: created?.url ?? normalizedUrl, normalizedUrl },
     });
 
     return NextResponse.json(created);
