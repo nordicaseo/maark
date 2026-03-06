@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { and, desc, eq, gte, sql } from 'drizzle-orm';
 import { db, ensureDb } from '@/db';
-import { alertEvents, crawlQueue, crawlRuns, gscPageDailyMetrics, sites } from '@/db/schema';
+import {
+  alertEvents,
+  crawlQueue,
+  crawlRuns,
+  gscPageDailyMetrics,
+  pageArtifactJobs,
+  pageArtifacts,
+  sites,
+} from '@/db/schema';
 import { requireRole } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
 
@@ -47,7 +55,7 @@ export async function GET(req: NextRequest) {
     .orderBy(desc(sites.isPrimary), desc(sites.updatedAt))
     .limit(1);
 
-  const [runRows, queueStateRows, alerts, gscSummaryRows, gscLatestRows] = await Promise.all([
+  const [runRows, queueStateRows, artifactQueueRows, artifactRows, alerts, gscSummaryRows, gscLatestRows] = await Promise.all([
     db
       .select({
         id: crawlRuns.id,
@@ -73,6 +81,29 @@ export async function GET(req: NextRequest) {
       .from(crawlQueue)
       .where(eq(crawlQueue.projectId, projectId))
       .groupBy(crawlQueue.state),
+    db
+      .select({
+        state: pageArtifactJobs.state,
+        count: sql<number>`COUNT(*)`,
+      })
+      .from(pageArtifactJobs)
+      .where(eq(pageArtifactJobs.projectId, projectId))
+      .groupBy(pageArtifactJobs.state),
+    db
+      .select({
+        id: pageArtifacts.id,
+        snapshotId: pageArtifacts.snapshotId,
+        artifactType: pageArtifacts.artifactType,
+        status: pageArtifacts.status,
+        gradeScore: pageArtifacts.gradeScore,
+        readyAt: pageArtifacts.readyAt,
+        createdAt: pageArtifacts.createdAt,
+        lastError: pageArtifacts.lastError,
+      })
+      .from(pageArtifacts)
+      .where(eq(pageArtifacts.projectId, projectId))
+      .orderBy(desc(pageArtifacts.createdAt))
+      .limit(12),
     db
       .select({
         id: alertEvents.id,
@@ -124,6 +155,17 @@ export async function GET(req: NextRequest) {
     queueByState[String(row.state || 'unknown')] = Number(row.count || 0);
   }
 
+  const artifactQueueByState: Record<string, number> = {
+    queued: 0,
+    processing: 0,
+    done: 0,
+    failed: 0,
+    dead_letter: 0,
+  };
+  for (const row of artifactQueueRows) {
+    artifactQueueByState[String(row.state || 'unknown')] = Number(row.count || 0);
+  }
+
   const gscSummary = gscSummaryRows[0] || { totalClicks: 0, totalImpressions: 0 };
 
   return NextResponse.json({
@@ -147,6 +189,25 @@ export async function GET(req: NextRequest) {
       processing: queueByState.processing || 0,
       done: queueByState.done || 0,
       failed: queueByState.failed || 0,
+    },
+    artifacts: {
+      queue: {
+        queued: artifactQueueByState.queued || 0,
+        processing: artifactQueueByState.processing || 0,
+        done: artifactQueueByState.done || 0,
+        failed: artifactQueueByState.failed || 0,
+        deadLetter: artifactQueueByState.dead_letter || 0,
+      },
+      recent: artifactRows.map((row: (typeof artifactRows)[number]) => ({
+        id: Number(row.id),
+        snapshotId: Number(row.snapshotId),
+        artifactType: String(row.artifactType),
+        status: String(row.status || 'queued'),
+        gradeScore: row.gradeScore === null || row.gradeScore === undefined ? null : Number(row.gradeScore),
+        readyAt: row.readyAt ? String(row.readyAt) : null,
+        createdAt: row.createdAt ? String(row.createdAt) : null,
+        lastError: row.lastError ? String(row.lastError) : null,
+      })),
     },
     crawlRuns: runRows.map((row: (typeof runRows)[number]) => ({
       id: Number(row.id),

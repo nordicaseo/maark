@@ -24,6 +24,7 @@ import {
   extractOutlineHeadings,
   stripHtmlForCompleteness,
 } from '@/lib/workflow/writing-completeness';
+import { resolveTaskLinkedPageCleanContent } from '@/lib/pages/artifacts';
 
 /**
  * POST /api/agent/execute
@@ -236,7 +237,26 @@ export async function POST(req: NextRequest) {
     }
 
     // ─── Step 3: Build instruction and generate content ─────────────
-    const instruction = buildInstruction(title, description, targetKeyword, contentType);
+    const linkedPageContext = await resolveTaskLinkedPageCleanContent({
+      taskId: String(taskId),
+      projectId: effectiveProjectId ?? null,
+    }).catch(() => null);
+
+    const pageContextBlock = linkedPageContext
+      ? `Linked page clean HTML context:
+Headings:
+${linkedPageContext.headings.slice(0, 12).map((heading) => `- ${heading}`).join('\n') || '-'}
+
+Page text excerpt:
+${trimTo(linkedPageContext.text, 1500)}`
+      : '';
+
+    const instruction = [
+      buildInstruction(title, description, targetKeyword, contentType),
+      pageContextBlock,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
 
     let modelOverride: ModelOverride | undefined;
     if (agentId) {

@@ -33,6 +33,7 @@ import { useActiveProject } from '@/hooks/use-active-project';
 import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
 import { withProjectScope } from '@/lib/project-context';
 import type {
+  PageArtifactRecord,
   DiscoveryUrlRecord,
   ManagedPage,
   PageDataHealth,
@@ -123,6 +124,23 @@ interface PageKeywordsResponse {
   availableKeywords: PageKeywordOption[];
 }
 
+interface PageArtifactsResponse {
+  pageId: number;
+  snapshotId: number | null;
+  artifacts: PageArtifactRecord[];
+  jobs: Array<{
+    id: number;
+    snapshotId: number;
+    action: string;
+    state: string;
+    attempts: number;
+    maxAttempts: number;
+    nextAttemptAt: string | null;
+    lastError: string | null;
+    updatedAt: string | null;
+  }>;
+}
+
 export default function PagesPage() {
   const { user, isLoading: authLoading } = useAuth();
   const router = useRouter();
@@ -150,6 +168,8 @@ export default function PagesPage() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailData, setDetailData] = useState<PageInsightsResponse | null>(null);
   const [keywordData, setKeywordData] = useState<PageKeywordsResponse | null>(null);
+  const [artifactData, setArtifactData] = useState<PageArtifactsResponse | null>(null);
+  const [artifactBusyAction, setArtifactBusyAction] = useState<string | null>(null);
   const [keywordSearch, setKeywordSearch] = useState('');
   const [primaryKeywordId, setPrimaryKeywordId] = useState<number | null>(null);
   const [secondaryKeywordIds, setSecondaryKeywordIds] = useState<number[]>([]);
@@ -387,18 +407,21 @@ export default function PagesPage() {
     setDetailLoading(true);
     setDetailError(null);
     try {
-      const [insightsRes, keywordsRes] = await Promise.all([
+      const [insightsRes, keywordsRes, artifactsRes] = await Promise.all([
         fetch(`/api/pages/${pageId}/insights?days=180`),
         fetch(`/api/pages/${pageId}/keywords?limit=500`),
+        fetch(`/api/pages/${pageId}/artifacts?limit=40`),
       ]);
 
       const insightsPayload = await insightsRes.json().catch(() => null);
       const keywordsPayload = await keywordsRes.json().catch(() => null);
+      const artifactsPayload = await artifactsRes.json().catch(() => null);
 
       if (!insightsRes.ok) {
         setDetailError(insightsPayload?.error || 'Failed to load page insights.');
         setDetailData(null);
         setKeywordData(null);
+        setArtifactData(null);
         return;
       }
 
@@ -420,6 +443,12 @@ export default function PagesPage() {
       } else {
         setKeywordData(null);
       }
+
+      if (artifactsRes.ok && artifactsPayload && typeof artifactsPayload === 'object') {
+        setArtifactData(artifactsPayload as PageArtifactsResponse);
+      } else {
+        setArtifactData(null);
+      }
     } finally {
       setDetailLoading(false);
     }
@@ -435,10 +464,45 @@ export default function PagesPage() {
     setDetailPageId(null);
     setDetailData(null);
     setKeywordData(null);
+    setArtifactData(null);
     setDetailError(null);
     setKeywordSearch('');
     setPrimaryKeywordId(null);
     setSecondaryKeywordIds([]);
+  };
+
+  const handleArtifactAction = async (action: 'reclean' | 'regrade' | 'reprocess') => {
+    if (!detailPageId) return;
+    setArtifactBusyAction(action);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/pages/${detailPageId}/artifacts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          processNow: true,
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setNotice(payload?.error || `Failed to ${action} artifacts.`);
+        return;
+      }
+      if (payload?.success) {
+        setNotice(`${action} queued and processed.`);
+      } else {
+        setNotice(
+          payload?.processed?.message ||
+            payload?.processed?.state ||
+            `${action} queued but not completed.`
+        );
+      }
+      await loadPageDetails(detailPageId);
+      await fetchHealth();
+    } finally {
+      setArtifactBusyAction(null);
+    }
   };
 
   const toggleSecondaryKeyword = (keywordId: number) => {
@@ -536,6 +600,14 @@ export default function PagesPage() {
                       }`}
                     />
                     Crawl
+                  </Badge>
+                  <Badge variant="secondary" className="flex items-center gap-1.5">
+                    <Circle
+                      className={`h-2.5 w-2.5 fill-current ${
+                        health?.artifacts?.healthy ? 'text-green-500' : 'text-amber-500'
+                      }`}
+                    />
+                    Artifacts
                   </Badge>
                 </div>
                 <Button
@@ -823,6 +895,63 @@ export default function PagesPage() {
                 </div>
               ) : detailData ? (
                 <>
+                  <section className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-sm font-semibold">Artifacts</h4>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void handleArtifactAction('reclean')}
+                          disabled={artifactBusyAction !== null}
+                        >
+                          {artifactBusyAction === 'reclean' ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
+                          Reclean
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void handleArtifactAction('regrade')}
+                          disabled={artifactBusyAction !== null}
+                        >
+                          {artifactBusyAction === 'regrade' ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
+                          Regrade
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void handleArtifactAction('reprocess')}
+                          disabled={artifactBusyAction !== null}
+                        >
+                          {artifactBusyAction === 'reprocess' ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
+                          Reprocess snapshot
+                        </Button>
+                      </div>
+                    </div>
+                    {artifactData?.artifacts?.length ? (
+                      <div className="space-y-2">
+                        {artifactData.artifacts.slice(0, 8).map((artifact) => (
+                          <div key={artifact.id} className="rounded-md border border-border p-2 text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium">
+                                {artifact.artifactType} · v{artifact.version}
+                              </span>
+                              <Badge variant="outline">{artifact.status}</Badge>
+                            </div>
+                            <p className="text-muted-foreground mt-1">
+                              Snapshot {artifact.snapshotId} · Score {artifact.gradeScore ?? '—'} · {artifact.readyAt ? new Date(artifact.readyAt).toLocaleString() : 'Pending'}
+                            </p>
+                            {artifact.lastError && (
+                              <p className="text-amber-700 mt-1">{artifact.lastError}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">No artifacts yet for this page.</p>
+                    )}
+                  </section>
+
                   <section className="space-y-2">
                     <h4 className="text-sm font-semibold">Performance (180d)</h4>
                     {detailData.performance.length === 0 ? (

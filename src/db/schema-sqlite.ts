@@ -3,6 +3,7 @@ import {
   text,
   integer,
   real,
+  index,
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 
@@ -317,6 +318,9 @@ export const pages = sqliteTable('pages', {
   lastSeenAt: text('last_seen_at'),
   isActive: integer('is_active').notNull().default(1),
   lastCrawledAt: text('last_crawled_at'),
+  latestRawArtifactId: integer('latest_raw_artifact_id'),
+  latestCleanArtifactId: integer('latest_clean_artifact_id'),
+  latestGradeArtifactId: integer('latest_grade_artifact_id'),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
 }, (table) => [
@@ -396,8 +400,62 @@ export const pageSnapshots = sqliteTable('page_snapshots', {
   seoScore: real('seo_score'),
   issuesCount: integer('issues_count').default(0),
   snapshotData: text('snapshot_data', { mode: 'json' }),
+  rawArtifactId: integer('raw_artifact_id'),
+  cleanArtifactId: integer('clean_artifact_id'),
+  gradeArtifactId: integer('grade_artifact_id'),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
 });
+
+export const pageArtifacts = sqliteTable('page_artifacts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  pageId: integer('page_id').notNull().references(() => pages.id, { onDelete: 'cascade' }),
+  runId: integer('run_id').references(() => crawlRuns.id, { onDelete: 'set null' }),
+  snapshotId: integer('snapshot_id').notNull().references(() => pageSnapshots.id, { onDelete: 'cascade' }),
+  artifactType: text('artifact_type').notNull(),
+  status: text('status').notNull().default('queued'),
+  version: integer('version').notNull().default(1),
+  objectKey: text('object_key'),
+  checksum: text('checksum'),
+  sizeBytes: integer('size_bytes'),
+  mimeType: text('mime_type'),
+  gradeScore: real('grade_score'),
+  metadata: text('metadata', { mode: 'json' }),
+  lastError: text('last_error'),
+  attempts: integer('attempts').notNull().default(0),
+  maxAttempts: integer('max_attempts').notNull().default(3),
+  nextAttemptAt: text('next_attempt_at'),
+  readyAt: text('ready_at'),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  index('page_artifacts_project_page_idx').on(table.projectId, table.pageId, table.createdAt),
+  index('page_artifacts_snapshot_type_idx').on(table.snapshotId, table.artifactType, table.version),
+  index('page_artifacts_status_idx').on(table.status, table.nextAttemptAt),
+]);
+
+export const pageArtifactJobs = sqliteTable('page_artifact_jobs', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  pageId: integer('page_id').notNull().references(() => pages.id, { onDelete: 'cascade' }),
+  runId: integer('run_id').references(() => crawlRuns.id, { onDelete: 'set null' }),
+  snapshotId: integer('snapshot_id').notNull().references(() => pageSnapshots.id, { onDelete: 'cascade' }),
+  action: text('action').notNull().default('process'),
+  state: text('state').notNull().default('queued'),
+  attempts: integer('attempts').notNull().default(0),
+  maxAttempts: integer('max_attempts').notNull().default(3),
+  nextAttemptAt: text('next_attempt_at'),
+  leaseUntil: text('lease_until'),
+  lastError: text('last_error'),
+  payload: text('payload', { mode: 'json' }),
+  startedAt: text('started_at'),
+  finishedAt: text('finished_at'),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  index('page_artifact_jobs_state_idx').on(table.state, table.nextAttemptAt, table.createdAt),
+  index('page_artifact_jobs_snapshot_action_state_idx').on(table.snapshotId, table.action, table.state),
+]);
 
 export const pageIssues = sqliteTable('page_issues', {
   id: integer('id').primaryKey({ autoIncrement: true }),

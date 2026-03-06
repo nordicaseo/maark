@@ -26,6 +26,7 @@ import { getSerpIntelSnapshot } from '@/lib/serp/serp-intel';
 import { contentToHtml } from '@/lib/tiptap/to-html';
 import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
 import { getConvexClient } from '@/lib/convex/server';
+import { resolveTaskLinkedPageCleanContent } from '@/lib/pages/artifacts';
 import {
   buildEndingCompletionPrompt,
   buildContinuationPrompt,
@@ -563,6 +564,20 @@ async function runResearchStage(
     }
   );
 
+  const linkedPageContext = await resolveTaskLinkedPageCleanContent({
+    taskId: String(task._id),
+    projectId: task.projectId ?? null,
+  }).catch(() => null);
+
+  const pageContextBlock = linkedPageContext
+    ? `Linked page clean content context:
+Headings:
+${linkedPageContext.headings.slice(0, 14).map((heading) => `- ${heading}`).join('\n') || '-'}
+
+Page text excerpt:
+${trimTo(linkedPageContext.text, 1600)}`
+    : 'Linked page clean content context: unavailable.';
+
   const system = `You are a senior SEO researcher.
 Return strict JSON only with this shape:
 {
@@ -576,6 +591,7 @@ Keep facts specific, concise, and production-safe.`;
   const user = `Topic: ${task.title}
 Description: ${task.description || ''}
 Target keyword: ${task.title}
+${pageContextBlock}
 
 Produce a concise research brief for content production.`;
 

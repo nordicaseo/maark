@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { db, ensureDb } from '@/db';
-import { crawlQueue, sites } from '@/db/schema';
+import { crawlQueue, pageArtifactJobs, pageArtifacts, sites } from '@/db/schema';
 import { getAuthUser } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
 import type { PageDataHealth } from '@/types/page';
@@ -63,15 +63,44 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(empty);
   }
 
-  const pending = await db
-    .select({ id: crawlQueue.id })
-    .from(crawlQueue)
-    .where(
-      and(
-        eq(crawlQueue.projectId, projectId),
-        sql`${crawlQueue.state} IN ('queued', 'processing')`
-      )
-    );
+  const [pending, artifactPending, artifactFailed, latestArtifactReady] = await Promise.all([
+    db
+      .select({ id: crawlQueue.id })
+      .from(crawlQueue)
+      .where(
+        and(
+          eq(crawlQueue.projectId, projectId),
+          sql`${crawlQueue.state} IN ('queued', 'processing')`
+        )
+      ),
+    db
+      .select({ id: pageArtifactJobs.id })
+      .from(pageArtifactJobs)
+      .where(
+        and(
+          eq(pageArtifactJobs.projectId, projectId),
+          sql`${pageArtifactJobs.state} IN ('queued', 'processing')`
+        )
+      ),
+    db
+      .select({ id: pageArtifactJobs.id })
+      .from(pageArtifactJobs)
+      .where(
+        and(
+          eq(pageArtifactJobs.projectId, projectId),
+          sql`${pageArtifactJobs.state} IN ('dead_letter', 'failed')`
+        )
+      ),
+    db
+      .select({
+        readyAt: pageArtifacts.readyAt,
+        createdAt: pageArtifacts.createdAt,
+      })
+      .from(pageArtifacts)
+      .where(and(eq(pageArtifacts.projectId, projectId), eq(pageArtifacts.status, 'ready')))
+      .orderBy(desc(pageArtifacts.readyAt), desc(pageArtifacts.createdAt))
+      .limit(1),
+  ]);
 
   const gscConfigured = Boolean(site.gscProperty && String(site.gscProperty).trim().length > 0);
   const gscConnected = gscConfigured && Boolean(site.gscConnectedAt);
@@ -102,6 +131,29 @@ export async function GET(req: NextRequest) {
       lastRunAt: site.crawlLastRunAt ? String(site.crawlLastRunAt) : null,
       error: site.crawlLastError ? String(site.crawlLastError) : null,
       pendingQueue: pending.length,
+    },
+    artifacts: {
+      healthy: artifactFailed.length === 0,
+      status:
+        artifactFailed.length > 0
+          ? 'error'
+          : artifactPending.length > 0
+            ? 'processing'
+            : latestArtifactReady.length > 0
+              ? 'ready'
+              : 'never',
+      pendingQueue: artifactPending.length,
+      failedQueue: artifactFailed.length,
+      lastReadyAt:
+        latestArtifactReady[0]?.readyAt
+          ? String(latestArtifactReady[0].readyAt)
+          : latestArtifactReady[0]?.createdAt
+            ? String(latestArtifactReady[0].createdAt)
+            : null,
+      error:
+        artifactFailed.length > 0
+          ? `${artifactFailed.length} artifact jobs failed`
+          : null,
     },
   };
 

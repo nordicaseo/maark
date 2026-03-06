@@ -61,6 +61,25 @@ interface ObservabilityResponse {
     };
     latestMetricDate: string | null;
   };
+  artifacts: {
+    queue: {
+      queued: number;
+      processing: number;
+      done: number;
+      failed: number;
+      deadLetter: number;
+    };
+    recent: Array<{
+      id: number;
+      snapshotId: number;
+      artifactType: string;
+      status: string;
+      gradeScore: number | null;
+      readyAt: string | null;
+      createdAt: string | null;
+      lastError: string | null;
+    }>;
+  };
   crawlRuns: Array<{
     id: number;
     runType: string;
@@ -261,10 +280,11 @@ export default function AdminCrawlGscPage() {
       if (res.ok) {
         const discovered = payload?.discovery?.totals?.discovered ?? 0;
         const processed = payload?.worker?.processedCount ?? 0;
+        const artifactProcessed = payload?.artifactWorker?.processedCount ?? 0;
         const gscRows = payload?.gsc?.rowsUpserted ?? 0;
         const tasksCreated = payload?.trafficTasking?.created ?? 0;
         setNotice(
-          `Run complete: ${discovered} discovered, ${gscRows} GSC rows synced, ${processed} crawled, ${tasksCreated} traffic tasks created.`
+          `Run complete: ${discovered} discovered, ${gscRows} GSC rows synced, ${processed} crawled, ${artifactProcessed} artifacts processed, ${tasksCreated} traffic tasks created.`
         );
         await fetchSiteConfig(projectId);
         await fetchObservability(projectId);
@@ -382,6 +402,10 @@ export default function AdminCrawlGscPage() {
           <Badge variant="secondary" className="flex items-center gap-2">
             {statusDot(siteState?.crawlLastRunStatus === 'ok')}
             Crawl {siteState?.crawlLastRunStatus || 'never'}
+          </Badge>
+          <Badge variant="secondary" className="flex items-center gap-2">
+            {statusDot((observability?.artifacts.queue.failed ?? 0) + (observability?.artifacts.queue.deadLetter ?? 0) === 0)}
+            Artifacts {(observability?.artifacts.queue.processing ?? 0) > 0 ? 'processing' : 'ready'}
           </Badge>
           <Badge variant="outline" className="flex items-center gap-1">
             <ShieldCheck className="h-3 w-3" />
@@ -507,7 +531,7 @@ export default function AdminCrawlGscPage() {
           {loadingObservability && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
         </div>
 
-        <div className="grid gap-3 md:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           <div className="rounded-md border border-border p-3">
             <p className="text-xs text-muted-foreground">Queued</p>
             <p className="text-lg font-semibold">{observability?.queue.queued ?? 0}</p>
@@ -523,6 +547,16 @@ export default function AdminCrawlGscPage() {
           <div className="rounded-md border border-border p-3">
             <p className="text-xs text-muted-foreground">GSC Impressions (30d)</p>
             <p className="text-lg font-semibold">{Math.round(observability?.gsc.pointsLast30d.impressions ?? 0)}</p>
+          </div>
+          <div className="rounded-md border border-border p-3">
+            <p className="text-xs text-muted-foreground">Artifacts Queued</p>
+            <p className="text-lg font-semibold">{observability?.artifacts.queue.queued ?? 0}</p>
+          </div>
+          <div className="rounded-md border border-border p-3">
+            <p className="text-xs text-muted-foreground">Artifacts Failed</p>
+            <p className="text-lg font-semibold">
+              {(observability?.artifacts.queue.failed ?? 0) + (observability?.artifacts.queue.deadLetter ?? 0)}
+            </p>
           </div>
         </div>
 
@@ -545,6 +579,32 @@ export default function AdminCrawlGscPage() {
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">No crawl runs yet.</p>
+          )}
+        </div>
+
+        <div>
+          <p className="text-xs text-muted-foreground mb-2">Recent Artifacts</p>
+          {observability?.artifacts?.recent?.length ? (
+            <div className="space-y-2">
+              {observability.artifacts.recent.map((artifact) => (
+                <div key={artifact.id} className="rounded-md border border-border p-2 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-medium">
+                      #{artifact.id} · {artifact.artifactType} · snapshot {artifact.snapshotId}
+                    </div>
+                    <Badge variant="outline">{artifact.status}</Badge>
+                  </div>
+                  <div className="text-muted-foreground mt-1">
+                    Score {artifact.gradeScore ?? '—'} · Ready {formatDateTime(artifact.readyAt)}
+                  </div>
+                  {artifact.lastError && (
+                    <div className="text-amber-700 mt-1">{artifact.lastError}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">No artifact rows yet.</p>
           )}
         </div>
 

@@ -5,6 +5,7 @@ import { ensureDb } from '@/db';
 import { logAuditEvent } from '@/lib/observability';
 import { runDiscoveryForProject } from '@/lib/discovery/discovery-runner';
 import { enqueueProjectPagesForCrawl, processDueCrawlJobs } from '@/lib/discovery/crawl-queue';
+import { processDuePageArtifactJobs } from '@/lib/discovery/page-artifact-queue';
 import {
   markGscSyncFailure,
   resolveGscSyncDaysBack,
@@ -102,6 +103,10 @@ export async function POST(req: NextRequest) {
     projectId,
     limit: workerLimit,
   });
+  const artifactWorkerResult = await processDuePageArtifactJobs({
+    projectId,
+    limit: Math.min(workerLimit * 2, 50),
+  });
 
   await logAuditEvent({
     userId: auth.user.id,
@@ -129,8 +134,17 @@ export async function POST(req: NextRequest) {
         requestedLimit: workerResult.requestedLimit,
         processedCount: workerResult.processedCount,
       },
+      artifactWorkerResult: {
+        requestedLimit: artifactWorkerResult.requestedLimit,
+        processedCount: artifactWorkerResult.processedCount,
+        states: artifactWorkerResult.states,
+      },
     },
-    severity: workerResult.results.some((entry) => entry.state === 'failed') ? 'warning' : 'info',
+    severity:
+      workerResult.results.some((entry) => entry.state === 'failed') ||
+      artifactWorkerResult.states.deadLetter > 0
+        ? 'warning'
+        : 'info',
   });
 
   return NextResponse.json({
@@ -146,5 +160,6 @@ export async function POST(req: NextRequest) {
     trafficTasking: trafficTaskingResult,
     enqueue: enqueueResult,
     worker: workerResult,
+    artifactWorker: artifactWorkerResult,
   });
 }

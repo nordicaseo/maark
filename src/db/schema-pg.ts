@@ -9,6 +9,7 @@ import {
   varchar,
   pgEnum,
   boolean,
+  index,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 
@@ -337,6 +338,9 @@ export const pages = pgTable('pages', {
   lastSeenAt: timestamp('last_seen_at'),
   isActive: integer('is_active').notNull().default(1),
   lastCrawledAt: timestamp('last_crawled_at'),
+  latestRawArtifactId: integer('latest_raw_artifact_id'),
+  latestCleanArtifactId: integer('latest_clean_artifact_id'),
+  latestGradeArtifactId: integer('latest_grade_artifact_id'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => [
@@ -416,8 +420,62 @@ export const pageSnapshots = pgTable('page_snapshots', {
   seoScore: real('seo_score'),
   issuesCount: integer('issues_count').default(0),
   snapshotData: jsonb('snapshot_data'),
+  rawArtifactId: integer('raw_artifact_id'),
+  cleanArtifactId: integer('clean_artifact_id'),
+  gradeArtifactId: integer('grade_artifact_id'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
+
+export const pageArtifacts = pgTable('page_artifacts', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  pageId: integer('page_id').notNull().references(() => pages.id, { onDelete: 'cascade' }),
+  runId: integer('run_id').references(() => crawlRuns.id, { onDelete: 'set null' }),
+  snapshotId: integer('snapshot_id').notNull().references(() => pageSnapshots.id, { onDelete: 'cascade' }),
+  artifactType: varchar('artifact_type', { length: 32 }).notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('queued'),
+  version: integer('version').notNull().default(1),
+  objectKey: text('object_key'),
+  checksum: text('checksum'),
+  sizeBytes: integer('size_bytes'),
+  mimeType: varchar('mime_type', { length: 120 }),
+  gradeScore: real('grade_score'),
+  metadata: jsonb('metadata'),
+  lastError: text('last_error'),
+  attempts: integer('attempts').notNull().default(0),
+  maxAttempts: integer('max_attempts').notNull().default(3),
+  nextAttemptAt: timestamp('next_attempt_at'),
+  readyAt: timestamp('ready_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  index('page_artifacts_project_page_idx').on(table.projectId, table.pageId, table.createdAt),
+  index('page_artifacts_snapshot_type_idx').on(table.snapshotId, table.artifactType, table.version),
+  index('page_artifacts_status_idx').on(table.status, table.nextAttemptAt),
+]);
+
+export const pageArtifactJobs = pgTable('page_artifact_jobs', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  pageId: integer('page_id').notNull().references(() => pages.id, { onDelete: 'cascade' }),
+  runId: integer('run_id').references(() => crawlRuns.id, { onDelete: 'set null' }),
+  snapshotId: integer('snapshot_id').notNull().references(() => pageSnapshots.id, { onDelete: 'cascade' }),
+  action: varchar('action', { length: 32 }).notNull().default('process'),
+  state: varchar('state', { length: 32 }).notNull().default('queued'),
+  attempts: integer('attempts').notNull().default(0),
+  maxAttempts: integer('max_attempts').notNull().default(3),
+  nextAttemptAt: timestamp('next_attempt_at'),
+  leaseUntil: timestamp('lease_until'),
+  lastError: text('last_error'),
+  payload: jsonb('payload'),
+  startedAt: timestamp('started_at'),
+  finishedAt: timestamp('finished_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  index('page_artifact_jobs_state_idx').on(table.state, table.nextAttemptAt, table.createdAt),
+  index('page_artifact_jobs_snapshot_action_state_idx').on(table.snapshotId, table.action, table.state),
+]);
 
 export const pageIssues = pgTable('page_issues', {
   id: serial('id').primaryKey(),

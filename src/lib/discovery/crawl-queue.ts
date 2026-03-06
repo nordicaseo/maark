@@ -23,6 +23,7 @@ import { getConvexClient } from '@/lib/convex/server';
 import { api } from '../../../convex/_generated/api';
 import { logAlertEvent } from '@/lib/observability';
 import { linkTaskToPage } from '@/lib/pages/linking';
+import { enqueuePageArtifactJob } from '@/lib/discovery/page-artifact-queue';
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 
@@ -303,7 +304,11 @@ async function runSingleQueuedCrawl(queueItem: typeof crawlQueue.$inferSelect) {
       responseTimeMs: crawl.responseTimeMs,
       seoScore: crawl.seoScore,
       issuesCount: crawl.issues.length,
-      snapshotData: crawl.snapshotData,
+      snapshotData: {
+        ...crawl.snapshotData,
+        rawHtml: crawl.rawHtml,
+        rawMarkdown: crawl.rawMarkdown,
+      },
     })
     .returning();
 
@@ -355,13 +360,43 @@ async function runSingleQueuedCrawl(queueItem: typeof crawlQueue.$inferSelect) {
     severities: crawl.issues.map((issue) => issue.severity),
   });
 
+  const artifactJob = snapshot
+    ? await enqueuePageArtifactJob({
+        projectId: queueItem.projectId,
+        pageId: trackedPage.id,
+        runId: queueItem.runId,
+        snapshotId: snapshot.id,
+        action: 'process',
+        payload: {
+          trigger: 'crawl',
+        },
+      })
+    : null;
+
   return {
     pageId: trackedPage.id,
+    snapshotId: snapshot?.id ?? null,
     normalizedUrl: finalNormalizedUrl,
     candidate: eligibility.isCandidate,
     excludeReason: eligibility.excludeReason,
     linkedTaskId,
-    crawl,
+    artifactJobId: artifactJob?.job?.id ?? null,
+    crawl: {
+      requestedUrl: crawl.requestedUrl,
+      finalUrl: crawl.finalUrl,
+      title: crawl.title,
+      canonicalUrl: crawl.canonicalUrl,
+      metaRobots: crawl.metaRobots,
+      httpStatus: crawl.httpStatus,
+      responseTimeMs: crawl.responseTimeMs,
+      contentHash: crawl.contentHash,
+      isIndexable: crawl.isIndexable,
+      isCanonical: crawl.isCanonical,
+      isVerified: crawl.isVerified,
+      seoScore: crawl.seoScore,
+      issues: crawl.issues,
+      snapshotData: crawl.snapshotData,
+    },
   };
 }
 

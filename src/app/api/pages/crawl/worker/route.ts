@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
 import { ensureDb } from '@/db';
 import { processDueCrawlJobs } from '@/lib/discovery/crawl-queue';
+import { processDuePageArtifactJobs } from '@/lib/discovery/page-artifact-queue';
 import { logAuditEvent } from '@/lib/observability';
 
 function parseOptionalProjectId(value: unknown): number | null {
@@ -31,6 +32,10 @@ export async function POST(req: NextRequest) {
   }
 
   const result = await processDueCrawlJobs({ projectId: projectId ?? undefined, limit });
+  const artifacts = await processDuePageArtifactJobs({
+    projectId: projectId ?? undefined,
+    limit: Math.min(limit * 2, 50),
+  });
 
   await logAuditEvent({
     userId: auth.user.id,
@@ -41,8 +46,10 @@ export async function POST(req: NextRequest) {
     metadata: {
       limit,
       processedCount: result.processedCount,
+      artifactProcessedCount: artifacts.processedCount,
       queueIds: result.results.map((entry) => entry.queueId),
       states: result.results.map((entry) => entry.state),
+      artifactStates: artifacts.states,
     },
   });
 
@@ -50,6 +57,6 @@ export async function POST(req: NextRequest) {
     success: true,
     projectId,
     ...result,
+    artifacts,
   });
 }
-

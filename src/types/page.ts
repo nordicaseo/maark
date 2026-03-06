@@ -1,6 +1,13 @@
 export type PageIssueSeverity = 'low' | 'medium' | 'high' | 'critical';
 export type DiscoverySource = 'sitemap' | 'gsc' | 'inventory' | 'crawl';
 export type PageEligibilityState = 'eligible' | 'excluded' | 'retired';
+export type PageArtifactType = 'raw_html' | 'clean_html' | 'grade_report';
+export type PageArtifactStatus =
+  | 'queued'
+  | 'processing'
+  | 'ready'
+  | 'failed'
+  | 'dead_letter';
 export type DiscoveryExcludeReason =
   | 'query_variant'
   | 'faceted_variant'
@@ -105,6 +112,14 @@ export interface PageDataHealth {
     error: string | null;
     pendingQueue: number;
   };
+  artifacts?: {
+    healthy: boolean;
+    status: string;
+    pendingQueue: number;
+    failedQueue: number;
+    lastReadyAt: string | null;
+    error: string | null;
+  };
 }
 
 export interface PagePerformancePoint {
@@ -130,4 +145,39 @@ export interface PageKeywordMappingRecord {
   clusterKey: string | null;
   volume: number | null;
   difficulty: number | null;
+}
+
+export interface PageArtifactRecord {
+  id: number;
+  projectId: number;
+  pageId: number;
+  runId: number | null;
+  snapshotId: number;
+  artifactType: PageArtifactType | string;
+  status: PageArtifactStatus | string;
+  version: number;
+  objectKey: string | null;
+  checksum: string | null;
+  sizeBytes: number | null;
+  mimeType: string | null;
+  gradeScore: number | null;
+  metadata: unknown;
+  lastError: string | null;
+  attempts: number;
+  maxAttempts: number;
+  nextAttemptAt: string | null;
+  readyAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PageGradeSummary {
+  score: number;
+  dimensions: Record<string, number>;
+  issues: Array<{
+    issueType: string;
+    severity: PageIssueSeverity;
+    message: string;
+    metadata?: Record<string, unknown>;
+  }>;
 }

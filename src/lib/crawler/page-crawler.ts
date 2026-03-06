@@ -11,6 +11,8 @@ export type CrawlIssue = {
 export type CrawlResult = {
   requestedUrl: string;
   finalUrl: string;
+  rawHtml: string;
+  rawMarkdown: string | null;
   title: string | null;
   canonicalUrl: string | null;
   metaRobots: string | null;
@@ -132,6 +134,7 @@ function computeSeoScore(issues: CrawlIssue[]): number {
 
 async function scrapeWithFirecrawl(url: string): Promise<{
   html: string;
+  markdown: string | null;
   finalUrl: string;
   statusCode: number;
   titleFromMetadata: string | null;
@@ -165,6 +168,7 @@ async function scrapeWithFirecrawl(url: string): Promise<{
   if (!html) {
     throw new Error('Firecrawl scrape returned empty HTML.');
   }
+  const markdown = String(json.data?.markdown || '').trim() || null;
 
   const finalUrl = String(json.data?.metadata?.sourceURL || url).trim() || url;
   const statusCode = Number(json.data?.metadata?.statusCode || 200);
@@ -172,6 +176,7 @@ async function scrapeWithFirecrawl(url: string): Promise<{
 
   return {
     html,
+    markdown,
     finalUrl,
     statusCode: Number.isFinite(statusCode) ? statusCode : 200,
     titleFromMetadata,
@@ -212,6 +217,8 @@ export async function crawlPage(url: string): Promise<CrawlResult> {
   return {
     requestedUrl: url,
     finalUrl,
+    rawHtml: scraped.html,
+    rawMarkdown: scraped.markdown,
     title,
     canonicalUrl,
     metaRobots,
@@ -233,4 +240,3 @@ export async function crawlPage(url: string): Promise<CrawlResult> {
     },
   };
 }
-

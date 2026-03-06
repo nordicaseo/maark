@@ -517,6 +517,70 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
 
   await sql.query(`
     ALTER TABLE page_snapshots ADD COLUMN IF NOT EXISTS run_id INTEGER REFERENCES crawl_runs(id) ON DELETE SET NULL;
+    ALTER TABLE pages ADD COLUMN IF NOT EXISTS latest_raw_artifact_id INTEGER;
+    ALTER TABLE pages ADD COLUMN IF NOT EXISTS latest_clean_artifact_id INTEGER;
+    ALTER TABLE pages ADD COLUMN IF NOT EXISTS latest_grade_artifact_id INTEGER;
+    ALTER TABLE page_snapshots ADD COLUMN IF NOT EXISTS raw_artifact_id INTEGER;
+    ALTER TABLE page_snapshots ADD COLUMN IF NOT EXISTS clean_artifact_id INTEGER;
+    ALTER TABLE page_snapshots ADD COLUMN IF NOT EXISTS grade_artifact_id INTEGER;
+  `);
+
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS page_artifacts (
+      id SERIAL PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      run_id INTEGER REFERENCES crawl_runs(id) ON DELETE SET NULL,
+      snapshot_id INTEGER NOT NULL REFERENCES page_snapshots(id) ON DELETE CASCADE,
+      artifact_type VARCHAR(32) NOT NULL,
+      status VARCHAR(32) NOT NULL DEFAULT 'queued',
+      version INTEGER NOT NULL DEFAULT 1,
+      object_key TEXT,
+      checksum TEXT,
+      size_bytes INTEGER,
+      mime_type VARCHAR(120),
+      grade_score REAL,
+      metadata JSONB,
+      last_error TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      next_attempt_at TIMESTAMP,
+      ready_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS page_artifacts_project_page_idx
+      ON page_artifacts(project_id, page_id, created_at);
+    CREATE INDEX IF NOT EXISTS page_artifacts_snapshot_type_idx
+      ON page_artifacts(snapshot_id, artifact_type, version);
+    CREATE INDEX IF NOT EXISTS page_artifacts_status_idx
+      ON page_artifacts(status, next_attempt_at);
+  `);
+
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS page_artifact_jobs (
+      id SERIAL PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      run_id INTEGER REFERENCES crawl_runs(id) ON DELETE SET NULL,
+      snapshot_id INTEGER NOT NULL REFERENCES page_snapshots(id) ON DELETE CASCADE,
+      action VARCHAR(32) NOT NULL DEFAULT 'process',
+      state VARCHAR(32) NOT NULL DEFAULT 'queued',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      next_attempt_at TIMESTAMP,
+      lease_until TIMESTAMP,
+      last_error TEXT,
+      payload JSONB,
+      started_at TIMESTAMP,
+      finished_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS page_artifact_jobs_state_idx
+      ON page_artifact_jobs(state, next_attempt_at, created_at);
+    CREATE INDEX IF NOT EXISTS page_artifact_jobs_snapshot_action_state_idx
+      ON page_artifact_jobs(snapshot_id, action, state);
   `);
 
   await sql.query(`
@@ -1104,6 +1168,70 @@ function createDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS crawl_queue_run_normalized_unique ON crawl_queue(run_id, normalized_url);
   `);
   addColumnSafe(sqlite, 'page_snapshots', 'run_id', 'INTEGER REFERENCES crawl_runs(id) ON DELETE SET NULL');
+  addColumnSafe(sqlite, 'pages', 'latest_raw_artifact_id', 'INTEGER');
+  addColumnSafe(sqlite, 'pages', 'latest_clean_artifact_id', 'INTEGER');
+  addColumnSafe(sqlite, 'pages', 'latest_grade_artifact_id', 'INTEGER');
+  addColumnSafe(sqlite, 'page_snapshots', 'raw_artifact_id', 'INTEGER');
+  addColumnSafe(sqlite, 'page_snapshots', 'clean_artifact_id', 'INTEGER');
+  addColumnSafe(sqlite, 'page_snapshots', 'grade_artifact_id', 'INTEGER');
+
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS page_artifacts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      run_id INTEGER REFERENCES crawl_runs(id) ON DELETE SET NULL,
+      snapshot_id INTEGER NOT NULL REFERENCES page_snapshots(id) ON DELETE CASCADE,
+      artifact_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      version INTEGER NOT NULL DEFAULT 1,
+      object_key TEXT,
+      checksum TEXT,
+      size_bytes INTEGER,
+      mime_type TEXT,
+      grade_score REAL,
+      metadata TEXT,
+      last_error TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      next_attempt_at TEXT,
+      ready_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS page_artifacts_project_page_idx
+      ON page_artifacts(project_id, page_id, created_at);
+    CREATE INDEX IF NOT EXISTS page_artifacts_snapshot_type_idx
+      ON page_artifacts(snapshot_id, artifact_type, version);
+    CREATE INDEX IF NOT EXISTS page_artifacts_status_idx
+      ON page_artifacts(status, next_attempt_at);
+  `);
+
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS page_artifact_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      run_id INTEGER REFERENCES crawl_runs(id) ON DELETE SET NULL,
+      snapshot_id INTEGER NOT NULL REFERENCES page_snapshots(id) ON DELETE CASCADE,
+      action TEXT NOT NULL DEFAULT 'process',
+      state TEXT NOT NULL DEFAULT 'queued',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      next_attempt_at TEXT,
+      lease_until TEXT,
+      last_error TEXT,
+      payload TEXT,
+      started_at TEXT,
+      finished_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS page_artifact_jobs_state_idx
+      ON page_artifact_jobs(state, next_attempt_at, created_at);
+    CREATE INDEX IF NOT EXISTS page_artifact_jobs_snapshot_action_state_idx
+      ON page_artifact_jobs(snapshot_id, action, state);
+  `);
 
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS document_page_links (

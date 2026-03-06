@@ -7,6 +7,7 @@ import { isAdminUser } from '@/lib/access';
 import { dbNow } from '@/db/utils';
 import { runDiscoveryForProject } from '@/lib/discovery/discovery-runner';
 import { enqueueProjectPagesForCrawl, processDueCrawlJobs } from '@/lib/discovery/crawl-queue';
+import { processDuePageArtifactJobs } from '@/lib/discovery/page-artifact-queue';
 
 export async function GET(req: NextRequest) {
   await ensureDb();
@@ -162,6 +163,7 @@ export async function POST(req: NextRequest) {
           discovery: { discovered: number; candidates: number; excluded: number; warnings: number };
           enqueue: { enqueued: number; reused: number; discoveredPages: number };
           worker: { processedCount: number };
+          artifactWorker: { processedCount: number };
         }
       | null = null;
 
@@ -182,6 +184,10 @@ export async function POST(req: NextRequest) {
         projectId: project.id,
         limit: 8,
       });
+      const artifactWorker = await processDuePageArtifactJobs({
+        projectId: project.id,
+        limit: 16,
+      });
 
       bootstrap = {
         discovery: {
@@ -197,6 +203,9 @@ export async function POST(req: NextRequest) {
         },
         worker: {
           processedCount: worker.processedCount,
+        },
+        artifactWorker: {
+          processedCount: artifactWorker.processedCount,
         },
       };
     } catch (error) {
