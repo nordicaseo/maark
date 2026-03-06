@@ -17,13 +17,18 @@ import Link from 'next/link';
 import { CreateDialog } from './create-dialog';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { useAuth } from '@/components/auth/auth-provider';
-import type { Document, DocumentStatus } from '@/types/document';
+import type { DocumentStatus } from '@/types/document';
+import type { ContentItemCard } from '@/types/content-item';
 import { STATUS_LABELS } from '@/types/document';
 import { withProjectScope } from '@/lib/project-context';
 import { hasRole } from '@/lib/permissions';
+import {
+  WORKFLOW_RUNTIME_STATE_LABELS,
+  WORKFLOW_RUNTIME_STATE_STYLES,
+} from '@/lib/content-workflow-taxonomy';
 
 interface DocumentListProps {
-  documents: Document[];
+  documents: ContentItemCard[];
   activeId?: number;
   onRefresh: () => void;
   activeProjectId: number | null;
@@ -65,6 +70,21 @@ function ScoreBar({ label, score, max, invert }: { label: string; score: number 
       <span className="text-[9px] text-muted-foreground">{display}</span>
     </div>
   );
+}
+
+const PRIMARY_STATE_LABELS: Record<DocumentStatus, string> = {
+  draft: 'Active',
+  in_progress: 'Working',
+  review: 'Review',
+  accepted: 'Complete',
+  publish: 'Complete',
+  live: 'Complete',
+};
+
+function readinessChip(ready: boolean): string {
+  return ready
+    ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+    : 'bg-amber-100 text-amber-800 border-amber-200';
 }
 
 export function DocumentList({ documents, activeId, onRefresh, activeProjectId, onProjectChange }: DocumentListProps) {
@@ -134,24 +154,88 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
                   activeId === doc.id ? 'bg-accent' : ''
                 }`}
               >
-                <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-1.5 min-w-0 max-w-full">
-                  <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2 min-w-0 max-w-full">
+                  <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-1" />
                   <div className="min-w-0 max-w-full">
-                    <p className="text-sm font-medium leading-5 break-words [overflow-wrap:anywhere]">{doc.title}</p>
-                    <div className="mt-1 flex items-center gap-x-2 gap-y-1 flex-wrap text-[9px] text-muted-foreground">
-                      <Badge
-                        variant="secondary"
-                        className={`text-[9px] px-1 py-0 h-4 shrink-0 whitespace-nowrap ${statusColors[doc.status]}`}
-                      >
-                        {STATUS_LABELS[doc.status]}
-                      </Badge>
-                      <span>{doc.wordCount || 0}w</span>
-                      <span>{timeAgo(doc.updatedAt)}</span>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {doc.workflowStageLabel && (
+                          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4">
+                            {doc.workflowStageLabel}
+                          </Badge>
+                        )}
+                        {doc.workflowRuntimeState ? (
+                          <span
+                            className="inline-flex items-center rounded-full border px-1.5 py-0 text-[9px] h-4"
+                            style={{
+                              background: WORKFLOW_RUNTIME_STATE_STYLES[doc.workflowRuntimeState].background,
+                              color: WORKFLOW_RUNTIME_STATE_STYLES[doc.workflowRuntimeState].color,
+                              borderColor: WORKFLOW_RUNTIME_STATE_STYLES[doc.workflowRuntimeState].borderColor,
+                            }}
+                          >
+                            {WORKFLOW_RUNTIME_STATE_LABELS[doc.workflowRuntimeState]}
+                          </span>
+                        ) : (
+                          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 bg-stone-100 text-stone-700">
+                            {PRIMARY_STATE_LABELS[doc.status]}
+                          </Badge>
+                        )}
+                        <Badge
+                          variant="secondary"
+                          className={`text-[9px] px-1 py-0 h-4 shrink-0 whitespace-nowrap ${statusColors[doc.status]}`}
+                        >
+                          {STATUS_LABELS[doc.status]}
+                        </Badge>
+                      </div>
+
+                      <p className="text-sm font-medium leading-5 line-clamp-2 break-words [overflow-wrap:anywhere]">
+                        {doc.title}
+                      </p>
+
+                      <div className="flex items-center gap-x-2 gap-y-1 flex-wrap text-[10px] text-muted-foreground">
+                        <span>{doc.wordCount || 0}w</span>
+                        <span>{timeAgo(doc.updatedAt)}</span>
+                        {doc.authorName && <span>{doc.authorName}</span>}
+                      </div>
+
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`inline-flex items-center rounded border px-1.5 py-0 text-[9px] ${readinessChip(doc.deliverableReadiness.researchReady)}`}>
+                          Research {doc.deliverableReadiness.researchReady ? 'Ready' : 'Pending'}
+                        </span>
+                        <span className={`inline-flex items-center rounded border px-1.5 py-0 text-[9px] ${readinessChip(doc.deliverableReadiness.outlineReady)}`}>
+                          Outline {doc.deliverableReadiness.outlineReady ? 'Ready' : 'Pending'}
+                        </span>
+                        <span className={`inline-flex items-center rounded border px-1.5 py-0 text-[9px] ${readinessChip(doc.deliverableReadiness.prewriteReady)}`}>
+                          Prewrite {doc.deliverableReadiness.prewriteReady ? 'Ready' : 'Needs Input'}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-[10px]">
+                        <Link
+                          href={withProjectScope(`/documents/${doc.id}`, activeProjectId)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-amber-700 underline"
+                        >
+                          Open
+                        </Link>
+                        <Link
+                          href={withProjectScope('/review', activeProjectId)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-muted-foreground underline"
+                        >
+                          Quick Review
+                        </Link>
+                        {doc.task?.workflowLastEventText && (
+                          <span className="line-clamp-1 text-muted-foreground">
+                            {doc.task.workflowLastEventText}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                      <ScoreBar label="AI" score={doc.aiDetectionScore} max={5} invert />
-                      <ScoreBar label="SEO" score={doc.semanticScore} max={100} />
-                      <ScoreBar label="Q" score={doc.contentQualityScore} max={100} />
+                    <div className="mt-1 flex items-center gap-1.5 flex-wrap border-t border-border/70 pt-1">
+                      <ScoreBar label="AI" score={doc.aiDetectionScore ?? null} max={5} invert />
+                      <ScoreBar label="SEO" score={doc.semanticScore ?? null} max={100} />
+                      <ScoreBar label="Q" score={doc.contentQualityScore ?? null} max={100} />
                     </div>
                   </div>
                   <button

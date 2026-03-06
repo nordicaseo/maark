@@ -6,6 +6,7 @@ import { runDiscoveryForProject } from '@/lib/discovery/discovery-runner';
 import { enqueueCrawlJob, processDueCrawlJobs } from '@/lib/discovery/crawl-queue';
 import { processDuePageArtifactJobs } from '@/lib/discovery/page-artifact-queue';
 import { normalizeUrlForInventory } from '@/lib/discovery/url-policy';
+import { reconcileContentPipelineForProject } from '@/lib/content-pipeline/reconcile';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import { createTrafficDropTasksForProject } from '@/lib/gsc/task-generation';
 import {
@@ -52,6 +53,9 @@ export async function POST(req: NextRequest) {
     queued: number;
     processed: number;
     artifactProcessed: number;
+    reconcileOrphans: number;
+    reconcileBrokenLinks: number;
+    reconcileRemediated: number;
   }> = [];
 
   for (const site of allSites) {
@@ -163,6 +167,10 @@ export async function POST(req: NextRequest) {
         projectId: site.projectId,
         limit: 20,
       });
+      const reconcile = await reconcileContentPipelineForProject({
+        projectId: site.projectId,
+        autoRemediate: true,
+      });
 
       summary.push({
         projectId: site.projectId,
@@ -176,6 +184,10 @@ export async function POST(req: NextRequest) {
         queued,
         processed: worker.processedCount,
         artifactProcessed: artifactWorker.processedCount,
+        reconcileOrphans: reconcile.orphanDocuments,
+        reconcileBrokenLinks: reconcile.brokenTaskLinks,
+        reconcileRemediated:
+          reconcile.remediatedBrokenTasks + reconcile.remediatedOrphanDocuments,
       });
     } catch (error) {
       await logAlertEvent({

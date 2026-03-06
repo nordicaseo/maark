@@ -9,6 +9,7 @@ import { AnalysisSidebar } from '@/components/sidebar/analysis-sidebar';
 import { TopBar } from '@/components/layout/top-bar';
 import type { Editor } from '@tiptap/react';
 import type { Document } from '@/types/document';
+import type { ContentItemCard } from '@/types/content-item';
 import type { AiDetectionResult, ContentQualityResult, SemanticResult } from '@/types/analysis';
 import type { SerpData } from '@/types/serp';
 import { InlineCommentForm } from '@/components/editor/inline-comment-form';
@@ -24,7 +25,7 @@ export function AppShell({ documentId }: AppShellProps) {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   const [document, setDocument] = useState<Document | null>(null);
-  const [documents, setDocuments] = useState<Document[]>([]);
+  const [documents, setDocuments] = useState<ContentItemCard[]>([]);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [analyzing, setAnalyzing] = useState(false);
   const [aiResult, setAiResult] = useState<AiDetectionResult | null>(null);
@@ -67,8 +68,8 @@ export function AppShell({ documentId }: AppShellProps) {
   const fetchDocuments = useCallback(async () => {
     try {
       const url = activeProjectId
-        ? `/api/documents?projectId=${activeProjectId}`
-        : '/api/documents';
+        ? `/api/content-items?projectId=${activeProjectId}`
+        : '/api/content-items';
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();

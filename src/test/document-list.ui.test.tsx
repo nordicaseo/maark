@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { DocumentList } from '@/components/documents/document-list';
-import type { Document } from '@/types/document';
+import type { ContentItemCard } from '@/types/content-item';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -23,7 +23,7 @@ vi.mock('@/components/documents/create-dialog', () => ({
   CreateDialog: () => null,
 }));
 
-const baseDoc: Document = {
+const baseDoc: ContentItemCard = {
   id: 1,
   projectId: 1,
   authorId: 'u1',
@@ -39,6 +39,24 @@ const baseDoc: Document = {
   aiRiskLevel: 'Low',
   semanticScore: 71,
   contentQualityScore: 82,
+  task: {
+    id: 'task_1',
+    status: 'IN_PROGRESS',
+    workflowTemplateKey: 'topic_production_v1',
+    workflowCurrentStageKey: 'outline_build',
+    workflowStageStatus: 'active',
+    workflowLastEventText: 'Outline draft ready for review.',
+    workflowLastEventAt: Date.now(),
+    deliverables: [],
+  },
+  workflowRuntimeState: 'working',
+  workflowStageLabel: 'Outline',
+  deliverableReadiness: {
+    researchReady: true,
+    outlineReady: true,
+    prewriteReady: false,
+    writingReady: false,
+  },
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
@@ -52,7 +70,7 @@ function makeDoc(id: number): Document {
 }
 
 describe('DocumentList sidebar cards', () => {
-  it('renders long title/status cards with a non-overlay action layout', () => {
+  it('renders long title/status cards with sectioned workflow/readiness layout', () => {
     render(
       <DocumentList
         documents={[baseDoc]}
@@ -65,10 +83,13 @@ describe('DocumentList sidebar cards', () => {
 
     const title = screen.getByText(/Very long SEO title/);
     expect(title).toBeInTheDocument();
-    expect(title.className).toContain('break-words');
+    expect(title.className).toContain('line-clamp-2');
 
-    const status = screen.getByText('Working');
-    expect(status).toBeInTheDocument();
+    const statuses = screen.getAllByText('Working');
+    expect(statuses.length).toBeGreaterThan(0);
+    expect(screen.getByText('Outline')).toBeInTheDocument();
+    expect(screen.getByText(/Prewrite Needs Input/)).toBeInTheDocument();
+    expect(screen.getByText('Quick Review')).toBeInTheDocument();
 
     const card = title.closest('[role="button"]');
     expect(card).toBeInTheDocument();

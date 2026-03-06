@@ -4,7 +4,8 @@ import { api } from '../../../../../../convex/_generated/api';
 import { requireRole } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
 import { getConvexClient } from '@/lib/convex/server';
-import { logAuditEvent } from '@/lib/observability';
+import { deleteContentItemByTaskId } from '@/lib/content-pipeline/delete-content-item';
+import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 
 function parseTaskId(value: string): Id<'tasks'> {
   return value as Id<'tasks'>;
@@ -117,17 +118,36 @@ export async function DELETE(
 
   const task = await convex.query(api.tasks.get, { id: taskId });
   if (!task) {
-    return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+    return NextResponse.json({ ok: true, alreadyDeleted: true });
   }
   if (!(await userCanAccessProject(auth.user, task.projectId ?? null))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   try {
-    await convex.mutation(api.tasks.remove, {
-      id: taskId,
+    const result = await deleteContentItemByTaskId({
+      taskId,
       expectedProjectId: task.projectId ?? undefined,
     });
+
+    if (!result.ok) {
+      await logAlertEvent({
+        source: 'mission_control',
+        eventType: 'content_item_delete_failed',
+        severity: 'error',
+        message: result.errorMessage || 'Failed to delete mission control content item.',
+        projectId: task.projectId ?? null,
+        resourceId: String(taskId),
+        metadata: {
+          errorCode: result.errorCode,
+          failedTaskIds: result.failedTaskIds || [],
+        },
+      });
+      return NextResponse.json(
+        { error: result.errorMessage || 'Failed to delete content item' },
+        { status: 503 }
+      );
+    }
 
     await logAuditEvent({
       userId: auth.user.id,
@@ -135,9 +155,21 @@ export async function DELETE(
       resourceType: 'task',
       resourceId: String(taskId),
       projectId: task.projectId ?? null,
+      metadata: {
+        mode: result.mode,
+        removedTaskCount: result.removedTaskCount,
+        deletedDocument: result.deletedDocument,
+        alreadyDeleted: result.alreadyDeleted,
+      },
     });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      mode: result.mode,
+      removedTaskCount: result.removedTaskCount,
+      deletedDocument: result.deletedDocument,
+      alreadyDeleted: result.alreadyDeleted,
+    });
   } catch (error) {
     console.error('Task delete failed:', error);
     return NextResponse.json({ error: 'Failed to delete task' }, { status: 500 });

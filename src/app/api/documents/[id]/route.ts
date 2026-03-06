@@ -12,6 +12,8 @@ import {
 } from '@/lib/sync/document-task-sync';
 import { getAuthUser, requireRole } from '@/lib/auth';
 import { userCanAccessDocument, userCanAccessProject } from '@/lib/access';
+import { deleteContentItemByDocumentId } from '@/lib/content-pipeline/delete-content-item';
+import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 
 export async function GET(
   req: NextRequest,
@@ -142,7 +144,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   await ensureDb();
@@ -168,29 +170,50 @@ export async function DELETE(
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
-    const convex = getConvexClient();
-    if (!convex) {
+    const deleteResult = await deleteContentItemByDocumentId({
+      documentId,
+      expectedProjectId: existingDoc.projectId ?? undefined,
+    });
+
+    if (!deleteResult.ok) {
+      await logAlertEvent({
+        source: 'content_engine',
+        eventType: 'content_item_delete_failed',
+        severity: 'error',
+        message: deleteResult.errorMessage || 'Document delete orchestration failed.',
+        projectId: existingDoc.projectId ?? null,
+        resourceId: documentId,
+        metadata: {
+          errorCode: deleteResult.errorCode,
+          failedTaskIds: deleteResult.failedTaskIds || [],
+        },
+      });
       return NextResponse.json(
-        { error: 'Task sync unavailable. Document delete blocked to prevent editor/mission-control drift.' },
+        { error: deleteResult.errorMessage || 'Failed to delete content item' },
         { status: 503 }
       );
     }
 
-    // Delete all linked Convex tasks first. If this fails, do not delete SQL document.
-    const linkedTasks = await convex.query(api.tasks.getByDocument, {
-      documentId,
-      projectId: existingDoc.projectId ?? undefined,
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'content_engine.document.delete',
+      resourceType: 'document',
+      resourceId: documentId,
+      projectId: existingDoc.projectId ?? null,
+      metadata: {
+        mode: deleteResult.mode,
+        removedTaskCount: deleteResult.removedTaskCount,
+        deletedDocument: deleteResult.deletedDocument,
+      },
     });
 
-    for (const task of linkedTasks) {
-      await convex.mutation(api.tasks.remove, {
-        id: task._id,
-        expectedProjectId: task.projectId ?? existingDoc.projectId ?? undefined,
-      });
-    }
-
-    await db.delete(documents).where(eq(documents.id, documentId));
-    return NextResponse.json({ success: true, removedTaskCount: linkedTasks.length });
+    return NextResponse.json({
+      success: true,
+      mode: deleteResult.mode,
+      removedTaskCount: deleteResult.removedTaskCount,
+      deletedDocument: deleteResult.deletedDocument,
+      alreadyDeleted: deleteResult.alreadyDeleted,
+    });
   } catch {
     return NextResponse.json({ error: 'Failed to delete' }, { status: 500 });
   }
