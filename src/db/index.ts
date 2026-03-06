@@ -344,8 +344,6 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
     );
     CREATE UNIQUE INDEX IF NOT EXISTS pages_project_url_unique
       ON pages(project_id, url);
-    CREATE UNIQUE INDEX IF NOT EXISTS pages_project_normalized_url_unique
-      ON pages(project_id, normalized_url);
 
     CREATE TABLE IF NOT EXISTS page_snapshots (
       id SERIAL PRIMARY KEY,
