@@ -73,6 +73,9 @@ export default function AdminProjectsPage() {
   const [form, setForm] = useState({
     name: '',
     description: '',
+    domain: '',
+    sitemapUrl: '',
+    gscProperty: '',
   });
 
   /* ── Fetching ───────────────────────────────────────────────────── */
@@ -132,13 +135,13 @@ export default function AdminProjectsPage() {
 
   function openNew() {
     setEditing(null);
-    setForm({ name: '', description: '' });
+    setForm({ name: '', description: '', domain: '', sitemapUrl: '', gscProperty: '' });
     setDialogOpen(true);
   }
 
   function openEdit(p: Project) {
     setEditing(p);
-    setForm({ name: p.name, description: p.description || '' });
+    setForm({ name: p.name, description: p.description || '', domain: '', sitemapUrl: '', gscProperty: '' });
     setDialogOpen(true);
   }
 
@@ -146,17 +149,36 @@ export default function AdminProjectsPage() {
     if (!form.name.trim()) return;
 
     if (editing) {
-      await fetch(`/api/projects/${editing.id}`, {
+      const res = await fetch(`/api/projects/${editing.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          name: form.name,
+          description: form.description,
+        }),
       });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        alert(payload?.error || 'Failed to update project');
+        return;
+      }
     } else {
-      await fetch('/api/projects', {
+      const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          name: form.name,
+          description: form.description,
+          domain: form.domain,
+          sitemapUrl: form.sitemapUrl || undefined,
+          gscProperty: form.gscProperty || undefined,
+        }),
       });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        alert(payload?.error || 'Failed to create project');
+        return;
+      }
     }
     setDialogOpen(false);
     fetchProjects();
@@ -441,13 +463,50 @@ export default function AdminProjectsPage() {
                 placeholder="Brief description (optional)"
               />
             </div>
+            {!editing && (
+              <>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Domain</label>
+                  <Input
+                    value={form.domain}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, domain: e.target.value }))
+                    }
+                    placeholder="example.com"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Required. Project discovery + crawl bootstrap starts automatically after create.
+                  </p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Sitemap URL (optional)</label>
+                  <Input
+                    value={form.sitemapUrl}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, sitemapUrl: e.target.value }))
+                    }
+                    placeholder="https://example.com/sitemap.xml"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">GSC Property (optional)</label>
+                  <Input
+                    value={form.gscProperty}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, gscProperty: e.target.value }))
+                    }
+                    placeholder="sc-domain:example.com"
+                  />
+                </div>
+              </>
+            )}
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={save} disabled={!form.name.trim()}>
+            <Button onClick={save} disabled={!form.name.trim() || (!editing && !form.domain.trim())}>
               {editing ? 'Update' : 'Create'}
             </Button>
           </DialogFooter>

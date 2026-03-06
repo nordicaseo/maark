@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
   ArrowLeft,
+  Circle,
   FileText,
   Globe,
   Loader2,
@@ -21,7 +22,7 @@ import { Input } from '@/components/ui/input';
 import { useActiveProject } from '@/hooks/use-active-project';
 import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
 import { withProjectScope } from '@/lib/project-context';
-import type { DiscoveryUrlRecord, ManagedPage } from '@/types/page';
+import type { DiscoveryUrlRecord, ManagedPage, PageDataHealth } from '@/types/page';
 import { OperationsSidebar } from '@/components/layout/operations-sidebar';
 
 type PagesViewMode = 'inventory' | 'discovery';
@@ -90,6 +91,7 @@ export default function PagesPage() {
   const [topicBusyId, setTopicBusyId] = useState<number | null>(null);
   const [runningDiscovery, setRunningDiscovery] = useState(false);
   const [reconciling, setReconciling] = useState(false);
+  const [health, setHealth] = useState<PageDataHealth | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -128,9 +130,25 @@ export default function PagesPage() {
     }
   };
 
+  const fetchHealth = async () => {
+    if (!activeProjectId) {
+      setHealth(null);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/pages/health?projectId=${activeProjectId}`);
+      if (res.ok) {
+        setHealth(await res.json());
+      }
+    } catch {
+      setHealth(null);
+    }
+  };
+
   useEffect(() => {
     if (!authLoading && user) {
       void fetchPages();
+      void fetchHealth();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user, activeProjectId]);
@@ -186,6 +204,7 @@ export default function PagesPage() {
       }
 
       await fetchPages();
+      await fetchHealth();
       if (viewMode === 'discovery') await fetchDiscovery();
     } finally {
       setSaving(false);
@@ -212,6 +231,7 @@ export default function PagesPage() {
         setNotice(payload?.detail || payload?.error || 'Crawl failed.');
       }
       await fetchPages();
+      await fetchHealth();
       if (viewMode === 'discovery') await fetchDiscovery();
     } finally {
       setCrawlingId(null);
@@ -265,6 +285,7 @@ export default function PagesPage() {
       if (res.ok) {
         setNotice(`Discovery completed: ${payload?.totals?.discovered ?? 0} URLs scanned.`);
         await fetchPages();
+        await fetchHealth();
         if (viewMode === 'discovery') await fetchDiscovery();
       } else {
         setNotice(payload?.error || 'Discovery failed.');
@@ -288,6 +309,7 @@ export default function PagesPage() {
       if (res.ok) {
         setNotice(`Reconciliation complete: ${payload?.retired ?? 0} pages retired.`);
         await fetchPages();
+        await fetchHealth();
         if (viewMode === 'discovery') await fetchDiscovery();
       } else {
         setNotice(payload?.error || 'Reconciliation failed.');
@@ -325,6 +347,24 @@ export default function PagesPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <div className="hidden sm:flex items-center gap-2 mr-2">
+                  <Badge variant="secondary" className="flex items-center gap-1.5">
+                    <Circle
+                      className={`h-2.5 w-2.5 fill-current ${
+                        health?.gsc?.healthy ? 'text-green-500' : 'text-amber-500'
+                      }`}
+                    />
+                    GSC
+                  </Badge>
+                  <Badge variant="secondary" className="flex items-center gap-1.5">
+                    <Circle
+                      className={`h-2.5 w-2.5 fill-current ${
+                        health?.crawl?.healthy ? 'text-green-500' : 'text-amber-500'
+                      }`}
+                    />
+                    Crawl
+                  </Badge>
+                </div>
                 <Button
                   variant={viewMode === 'inventory' ? 'default' : 'outline'}
                   size="sm"

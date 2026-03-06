@@ -308,12 +308,36 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       domain TEXT NOT NULL,
       sitemap_url TEXT,
       gsc_property TEXT,
+      gsc_connected_at TIMESTAMP,
+      gsc_last_sync_at TIMESTAMP,
+      gsc_last_sync_status VARCHAR(24) NOT NULL DEFAULT 'never',
+      gsc_last_error TEXT,
+      crawl_last_run_at TIMESTAMP,
+      crawl_last_run_status VARCHAR(24) NOT NULL DEFAULT 'never',
+      crawl_last_error TEXT,
+      auto_crawl_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      auto_gsc_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      crawl_frequency_hours INTEGER NOT NULL DEFAULT 24,
       is_primary INTEGER NOT NULL DEFAULT 1,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
     CREATE UNIQUE INDEX IF NOT EXISTS sites_project_domain_unique
       ON sites(project_id, domain);
+  `);
+  await sql.query(`
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS sitemap_url TEXT;
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS gsc_property TEXT;
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS gsc_connected_at TIMESTAMP;
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS gsc_last_sync_at TIMESTAMP;
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS gsc_last_sync_status VARCHAR(24) NOT NULL DEFAULT 'never';
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS gsc_last_error TEXT;
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS crawl_last_run_at TIMESTAMP;
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS crawl_last_run_status VARCHAR(24) NOT NULL DEFAULT 'never';
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS crawl_last_error TEXT;
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS auto_crawl_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS auto_gsc_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS crawl_frequency_hours INTEGER NOT NULL DEFAULT 24;
   `);
 
   // ── Pages & Crawl snapshots/issues ──
@@ -819,12 +843,34 @@ function createDb() {
       domain TEXT NOT NULL,
       sitemap_url TEXT,
       gsc_property TEXT,
+      gsc_connected_at TEXT,
+      gsc_last_sync_at TEXT,
+      gsc_last_sync_status TEXT NOT NULL DEFAULT 'never',
+      gsc_last_error TEXT,
+      crawl_last_run_at TEXT,
+      crawl_last_run_status TEXT NOT NULL DEFAULT 'never',
+      crawl_last_error TEXT,
+      auto_crawl_enabled INTEGER NOT NULL DEFAULT 1,
+      auto_gsc_enabled INTEGER NOT NULL DEFAULT 1,
+      crawl_frequency_hours INTEGER NOT NULL DEFAULT 24,
       is_primary INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE UNIQUE INDEX IF NOT EXISTS sites_project_domain_unique ON sites(project_id, domain);
   `);
+  addColumnSafe(sqlite, 'sites', 'sitemap_url', 'TEXT');
+  addColumnSafe(sqlite, 'sites', 'gsc_property', 'TEXT');
+  addColumnSafe(sqlite, 'sites', 'gsc_connected_at', 'TEXT');
+  addColumnSafe(sqlite, 'sites', 'gsc_last_sync_at', 'TEXT');
+  addColumnSafe(sqlite, 'sites', "gsc_last_sync_status", "TEXT NOT NULL DEFAULT 'never'");
+  addColumnSafe(sqlite, 'sites', 'gsc_last_error', 'TEXT');
+  addColumnSafe(sqlite, 'sites', 'crawl_last_run_at', 'TEXT');
+  addColumnSafe(sqlite, 'sites', "crawl_last_run_status", "TEXT NOT NULL DEFAULT 'never'");
+  addColumnSafe(sqlite, 'sites', 'crawl_last_error', 'TEXT');
+  addColumnSafe(sqlite, 'sites', 'auto_crawl_enabled', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnSafe(sqlite, 'sites', 'auto_gsc_enabled', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnSafe(sqlite, 'sites', 'crawl_frequency_hours', 'INTEGER NOT NULL DEFAULT 24');
 
   // ── Pages & Crawl snapshots/issues ──
   sqlite.exec(`

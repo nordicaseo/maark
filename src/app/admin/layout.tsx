@@ -10,6 +10,7 @@ import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
 import { withProjectScope } from '@/lib/project-context';
 import {
   FolderOpen,
+  Globe,
   Sparkles,
   Users,
   LayoutDashboard,
@@ -21,6 +22,7 @@ import {
 const PROJECT_ADMIN_ITEMS = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/admin/projects', label: 'Projects', icon: FolderOpen },
+  { href: '/admin/crawl-gsc', label: 'Crawl & GSC', icon: Globe },
   { href: '/admin/skills', label: 'Skills', icon: Sparkles },
   { href: '/admin/users', label: 'Users', icon: Users },
 ];

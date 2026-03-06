@@ -5,6 +5,7 @@ import { classifyDiscoveredUrl } from '@/lib/discovery/url-policy';
 import { upsertDiscoveryUrl, upsertEligiblePage } from '@/lib/discovery/ledger';
 import { fetchSitemapUrls } from '@/lib/discovery/sitemap';
 import { fetchGscTopPages } from '@/lib/discovery/gsc';
+import { dbNow } from '@/db/utils';
 
 export interface DiscoveryRunInput {
   projectId: number;
@@ -51,6 +52,9 @@ export async function runDiscoveryForProject(input: DiscoveryRunInput): Promise<
   const sitemapUrl = input.sitemapUrl || primarySite?.sitemapUrl || null;
   const gscProperty = input.gscProperty || primarySite?.gscProperty || null;
   const gscAccessToken = input.gscAccessToken || process.env.GOOGLE_SEARCH_CONSOLE_ACCESS_TOKEN || null;
+  let gscSucceeded = false;
+  let gscAttempted = false;
+  let gscError: string | null = null;
 
   const discoveredUrls = new Map<string, { rawUrl: string; source: 'sitemap' | 'gsc' | 'inventory' }>();
 
@@ -73,6 +77,7 @@ export async function runDiscoveryForProject(input: DiscoveryRunInput): Promise<
   }
 
   if (gscProperty && gscAccessToken) {
+    gscAttempted = true;
     try {
       const gscPages = await fetchGscTopPages({
         property: gscProperty,
@@ -80,6 +85,7 @@ export async function runDiscoveryForProject(input: DiscoveryRunInput): Promise<
         maxPages: input.gscTopPagesLimit ?? 2000,
         daysBack: 90,
       });
+      gscSucceeded = true;
       for (const row of gscPages) {
         const key = row.url.trim();
         if (!key) continue;
@@ -89,7 +95,8 @@ export async function runDiscoveryForProject(input: DiscoveryRunInput): Promise<
         }
       }
     } catch (error) {
-      warnings.push(`GSC discovery failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      gscError = error instanceof Error ? error.message : 'unknown error';
+      warnings.push(`GSC discovery failed: ${gscError}`);
     }
   } else {
     warnings.push('GSC property or access token missing; skipping GSC discovery.');
@@ -161,6 +168,20 @@ export async function runDiscoveryForProject(input: DiscoveryRunInput): Promise<
     if (page) upsertedPages += 1;
   }
 
+  if (siteId) {
+    const now = dbNow();
+    await db
+      .update(sites)
+      .set({
+        gscConnectedAt: gscProperty ? (primarySite?.gscConnectedAt ?? now) : null,
+        gscLastSyncAt: gscAttempted ? now : primarySite?.gscLastSyncAt ?? null,
+        gscLastSyncStatus: gscAttempted ? (gscSucceeded ? 'ok' : 'error') : 'never',
+        gscLastError: gscAttempted ? (gscSucceeded ? null : gscError) : null,
+        updatedAt: now,
+      })
+      .where(eq(sites.id, siteId));
+  }
+
   return {
     projectId: input.projectId,
     siteId,
@@ -174,4 +195,3 @@ export async function runDiscoveryForProject(input: DiscoveryRunInput): Promise<
     warnings,
   };
 }
-

@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { db } from '@/db';
 import { dbNow } from '@/db/utils';
 import { crawlPage } from '@/lib/crawler/page-crawler';
@@ -6,7 +6,9 @@ import {
   crawlQueue,
   crawlRuns,
   pageIssues,
+  pages,
   pageSnapshots,
+  sites,
 } from '@/db/schema';
 import {
   normalizeUrlForInventory,
@@ -23,6 +25,33 @@ import { logAlertEvent } from '@/lib/observability';
 import { linkTaskToPage } from '@/lib/pages/linking';
 
 const DEFAULT_MAX_ATTEMPTS = 3;
+
+async function updateSiteCrawlStatus(args: {
+  siteId: number | null | undefined;
+  status: 'never' | 'queued' | 'running' | 'ok' | 'error';
+  error?: string | null;
+}) {
+  if (!args.siteId) return;
+  await db
+    .update(sites)
+    .set({
+      crawlLastRunAt: dbNow(),
+      crawlLastRunStatus: args.status,
+      crawlLastError: args.error ?? null,
+      updatedAt: dbNow(),
+    })
+    .where(eq(sites.id, args.siteId));
+}
+
+async function resolvePrimarySiteId(projectId: number): Promise<number | null> {
+  const [site] = await db
+    .select({ id: sites.id })
+    .from(sites)
+    .where(eq(sites.projectId, projectId))
+    .orderBy(desc(sites.isPrimary), desc(sites.updatedAt))
+    .limit(1);
+  return site?.id ?? null;
+}
 
 function toDbTime(ms: number): Date | string {
   return process.env.POSTGRES_URL ? new Date(ms) : new Date(ms).toISOString();
@@ -287,6 +316,49 @@ export async function enqueueCrawlJob(args: {
   runType?: string;
   maxAttempts?: number;
 }) {
+  const [existingQueue] = await db
+    .select()
+    .from(crawlQueue)
+    .where(
+      and(
+        eq(crawlQueue.projectId, args.projectId),
+        eq(crawlQueue.normalizedUrl, args.normalizedUrl),
+        sql`${crawlQueue.state} IN ('queued', 'processing')`
+      )
+    )
+    .orderBy(desc(crawlQueue.updatedAt))
+    .limit(1);
+
+  if (existingQueue) {
+    let [existingRun] = await db
+      .select()
+      .from(crawlRuns)
+      .where(eq(crawlRuns.id, existingQueue.runId))
+      .limit(1);
+    if (!existingRun) {
+      [existingRun] = await db
+        .insert(crawlRuns)
+        .values({
+          projectId: args.projectId,
+          siteId: args.siteId ?? null,
+          runType: args.runType || 'manual',
+          status: 'queued',
+          totalUrls: 1,
+          processedUrls: 0,
+          successUrls: 0,
+          failedUrls: 0,
+          createdAt: dbNow(),
+          updatedAt: dbNow(),
+        })
+        .returning();
+    }
+    return {
+      run: existingRun,
+      queue: existingQueue,
+      reused: true,
+    };
+  }
+
   const [run] = await db
     .insert(crawlRuns)
     .values({
@@ -324,9 +396,67 @@ export async function enqueueCrawlJob(args: {
     })
     .returning();
 
+  await updateSiteCrawlStatus({
+    siteId: args.siteId ?? null,
+    status: 'queued',
+  });
+
   return {
     run,
     queue,
+    reused: false,
+  };
+}
+
+export async function enqueueProjectPagesForCrawl(args: {
+  projectId: number;
+  limit?: number;
+  runType?: string;
+}) {
+  const limit = Math.max(1, Math.min(200, args.limit ?? 30));
+  const primarySiteId = await resolvePrimarySiteId(args.projectId);
+
+  const stalePages = await db
+    .select({
+      id: pages.id,
+      siteId: pages.siteId,
+      url: pages.url,
+      normalizedUrl: pages.normalizedUrl,
+      lastCrawledAt: pages.lastCrawledAt,
+    })
+    .from(pages)
+    .where(
+      and(
+        eq(pages.projectId, args.projectId),
+        eq(pages.eligibilityState, 'eligible'),
+        eq(pages.isActive, 1),
+        eq(pages.isIndexable, 1)
+      )
+    )
+    .orderBy(asc(pages.lastCrawledAt), desc(pages.updatedAt))
+    .limit(limit);
+
+  let enqueued = 0;
+  let reused = 0;
+  for (const page of stalePages) {
+    const result = await enqueueCrawlJob({
+      projectId: args.projectId,
+      siteId: page.siteId ?? primarySiteId,
+      pageId: page.id,
+      url: page.url,
+      normalizedUrl: page.normalizedUrl || normalizeUrlForInventory(page.url),
+      runType: args.runType || 'scheduled',
+      priority: 40,
+    });
+    if (result.reused) reused += 1;
+    else enqueued += 1;
+  }
+
+  return {
+    requestedLimit: limit,
+    discoveredPages: stalePages.length,
+    enqueued,
+    reused,
   };
 }
 
@@ -360,6 +490,7 @@ export async function processQueuedCrawlJob(queueId: number) {
       message: 'Queue item is not due yet',
     };
   }
+  const effectiveSiteId = queueItem.siteId ?? (await resolvePrimarySiteId(queueItem.projectId));
 
   const nextAttempt = (queueItem.attempts ?? 0) + 1;
   await db
@@ -374,6 +505,10 @@ export async function processQueuedCrawlJob(queueId: number) {
 
   await updateRunStatus({
     runId: queueItem.runId,
+    status: 'running',
+  });
+  await updateSiteCrawlStatus({
+    siteId: effectiveSiteId,
     status: 'running',
   });
 
@@ -397,6 +532,11 @@ export async function processQueuedCrawlJob(queueId: number) {
       processedDelta: 1,
       successDelta: 1,
       finish: true,
+    });
+    await updateSiteCrawlStatus({
+      siteId: effectiveSiteId,
+      status: 'ok',
+      error: null,
     });
 
     return {
@@ -424,6 +564,11 @@ export async function processQueuedCrawlJob(queueId: number) {
       await updateRunStatus({
         runId: queueItem.runId,
         status: 'running',
+      });
+      await updateSiteCrawlStatus({
+        siteId: effectiveSiteId,
+        status: 'running',
+        error: errorMessage,
       });
 
       await logAlertEvent({
@@ -468,6 +613,11 @@ export async function processQueuedCrawlJob(queueId: number) {
       processedDelta: 1,
       failedDelta: 1,
       finish: true,
+    });
+    await updateSiteCrawlStatus({
+      siteId: effectiveSiteId,
+      status: 'error',
+      error: errorMessage,
     });
 
     await logAlertEvent({

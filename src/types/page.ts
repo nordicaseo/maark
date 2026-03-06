@@ -85,3 +85,24 @@ export interface PageIssue {
   lastSeenAt: string;
   resolvedAt: string | null;
 }
+
+export interface PageDataHealth {
+  projectId: number;
+  siteId: number | null;
+  siteDomain: string | null;
+  gsc: {
+    configured: boolean;
+    connected: boolean;
+    healthy: boolean;
+    status: string;
+    lastSyncAt: string | null;
+    error: string | null;
+  };
+  crawl: {
+    healthy: boolean;
+    status: string;
+    lastRunAt: string | null;
+    error: string | null;
+    pendingQueue: number;
+  };
+}
