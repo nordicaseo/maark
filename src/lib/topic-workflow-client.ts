@@ -9,7 +9,7 @@ const DEFAULT_PLANNING_DELAY_MS = 22_000;
 
 export function triggerTopicWorkflowRun(taskId: string, options: TriggerTopicWorkflowOptions = {}) {
   const autoContinue = options.autoContinue ?? true;
-  const maxStages = options.maxStages ?? 6;
+  const maxStages = options.maxStages ?? 10;
   const planningDelayMs = options.planningDelayMs ?? DEFAULT_PLANNING_DELAY_MS;
   const logLabel = options.logLabel || 'topic workflow';
 

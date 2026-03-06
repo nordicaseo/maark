@@ -25,6 +25,9 @@ import {
   stripHtmlForCompleteness,
 } from '@/lib/workflow/writing-completeness';
 import { resolveTaskLinkedPageCleanContent } from '@/lib/pages/artifacts';
+import { applyStyleGuard, styleGuardPassed } from '@/lib/workflow/style-guard';
+import { resolveTemplatePolicy } from '@/lib/workflow/content-templates';
+import type { ContentFormat } from '@/types/document';
 
 /**
  * POST /api/agent/execute
@@ -175,6 +178,7 @@ export async function POST(req: NextRequest) {
         writerRolePromptContext = writerContext.promptContext;
         writerRoleProfileName = writerContext.profile.displayName || writerRoleProfileName;
         projectRoleOverride = resolveProjectRoleModelOverride(writerContext.profile, [
+          'workflow_writing',
           'writing',
           'writing_stage',
           'workflow',
@@ -207,6 +211,14 @@ export async function POST(req: NextRequest) {
         { status: 409 }
       );
     }
+
+    const normalizedContentType = normalizeContentFormat(
+      (doc as { contentType?: string | null }).contentType || contentType
+    );
+    const templatePolicy = await resolveTemplatePolicy({
+      projectId: effectiveProjectId ?? null,
+      contentFormat: normalizedContentType,
+    });
 
     // ─── Step 2: Load Skill (if provided or auto-resolved) ──────────
     let skillContent = '';
@@ -252,7 +264,14 @@ ${trimTo(linkedPageContext.text, 1500)}`
       : '';
 
     const instruction = [
-      buildInstruction(title, description, targetKeyword, contentType),
+      buildInstruction(
+        title,
+        description,
+        targetKeyword,
+        normalizedContentType,
+        templatePolicy.wordRange.min,
+        templatePolicy.wordRange.max
+      ),
       pageContextBlock,
     ]
       .filter(Boolean)
@@ -264,7 +283,9 @@ ${trimTo(linkedPageContext.text, 1500)}`
         const convex = getConvexClient();
         if (convex) {
           const agent = await convex.query(api.agents.get, { id: agentId });
-          modelOverride = agent?.modelOverrides?.writing;
+          modelOverride =
+            agent?.modelOverrides?.workflow_writing ||
+            agent?.modelOverrides?.writing;
         }
       } catch (error) {
         console.error('Failed to resolve agent model override:', error);
@@ -282,9 +303,10 @@ ${trimTo(linkedPageContext.text, 1500)}`
 
     const systemPrompt = buildSystemPrompt(
       skillContent,
-      contentType,
+      normalizedContentType,
       targetKeyword,
-      writerRolePromptContext
+      writerRolePromptContext,
+      templatePolicy.styleGuard
     );
 
     if (effectiveProjectId) {
@@ -328,17 +350,21 @@ ${trimTo(linkedPageContext.text, 1500)}`
       );
     }
 
-    const normalizedHtml = normalizeGeneratedHtml(generatedContent);
-    let plainText = stripHtmlForCompleteness(normalizedHtml);
+    let finalHtml = normalizeGeneratedHtml(generatedContent);
+    let plainText = stripHtmlForCompleteness(finalHtml);
     let completion = evaluateWritingCompleteness({
-      html: normalizedHtml,
+      html: finalHtml,
       plainText,
       outlineHeadings,
+      minimumWords: templatePolicy.wordRange.min,
+      maximumWords: templatePolicy.wordRange.max,
     });
-    let finalHtml = normalizedHtml;
     const MAX_CONTINUATION_ATTEMPTS = 3;
     let continuationAttempts = 0;
     let endingCompletionAttempted = false;
+    let compressionAttempts = 0;
+    let styleAdjusted = false;
+    let styleFixAttempts = 0;
 
     while (!completion.complete && continuationAttempts < MAX_CONTINUATION_ATTEMPTS) {
       continuationAttempts += 1;
@@ -371,6 +397,8 @@ ${trimTo(linkedPageContext.text, 1500)}`
         html: finalHtml,
         plainText,
         outlineHeadings,
+        minimumWords: templatePolicy.wordRange.min,
+        maximumWords: templatePolicy.wordRange.max,
       });
     }
 
@@ -404,8 +432,120 @@ ${trimTo(linkedPageContext.text, 1500)}`
           html: finalHtml,
           plainText,
           outlineHeadings,
+          minimumWords: templatePolicy.wordRange.min,
+          maximumWords: templatePolicy.wordRange.max,
         });
       }
+    }
+
+    while (
+      !completion.complete &&
+      completion.wordOverflow > 0 &&
+      compressionAttempts < 2
+    ) {
+      compressionAttempts += 1;
+      const compressionPrompt = buildCompressionPrompt({
+        currentHtml: trimTo(finalHtml, 9000),
+        minimumWords: templatePolicy.wordRange.min,
+        maximumWords: templatePolicy.wordRange.max,
+        missingHeadings: completion.missingHeadings,
+      });
+      const compressionStream = provider.stream({
+        model,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: compressionPrompt }],
+        maxTokens,
+        temperature,
+      });
+      const compressionReader = (compressionStream as ReadableStream).getReader();
+      let compressed = '';
+      while (true) {
+        const { done, value } = await compressionReader.read();
+        if (done) break;
+        compressed += decoder.decode(value, { stream: true });
+      }
+      if (!compressed.trim()) break;
+      finalHtml = normalizeGeneratedHtml(compressed);
+      plainText = stripHtmlForCompleteness(finalHtml);
+      completion = evaluateWritingCompleteness({
+        html: finalHtml,
+        plainText,
+        outlineHeadings,
+        minimumWords: templatePolicy.wordRange.min,
+        maximumWords: templatePolicy.wordRange.max,
+      });
+    }
+
+    let styleResult = applyStyleGuard(finalHtml, templatePolicy.styleGuard);
+    if (styleResult.changed) {
+      styleAdjusted = true;
+      finalHtml = normalizeGeneratedHtml(styleResult.html);
+      plainText = stripHtmlForCompleteness(finalHtml);
+      completion = evaluateWritingCompleteness({
+        html: finalHtml,
+        plainText,
+        outlineHeadings,
+        minimumWords: templatePolicy.wordRange.min,
+        maximumWords: templatePolicy.wordRange.max,
+      });
+      styleResult = applyStyleGuard(finalHtml, templatePolicy.styleGuard);
+    }
+
+    while (
+      !styleGuardPassed(styleResult.metrics, templatePolicy.styleGuard) &&
+      styleFixAttempts < 1
+    ) {
+      styleFixAttempts += 1;
+      const styleFixPrompt = buildStyleFixPrompt({
+        currentHtml: trimTo(finalHtml, 9000),
+        emDash: templatePolicy.styleGuard.emDash,
+        colon: templatePolicy.styleGuard.colon,
+        maxNarrativeColons: templatePolicy.styleGuard.maxNarrativeColons || 0,
+      });
+      const styleFixStream = provider.stream({
+        model,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: styleFixPrompt }],
+        maxTokens,
+        temperature,
+      });
+      const styleFixReader = (styleFixStream as ReadableStream).getReader();
+      let fixed = '';
+      while (true) {
+        const { done, value } = await styleFixReader.read();
+        if (done) break;
+        fixed += decoder.decode(value, { stream: true });
+      }
+      if (!fixed.trim()) break;
+      finalHtml = normalizeGeneratedHtml(fixed);
+      styleResult = applyStyleGuard(finalHtml, templatePolicy.styleGuard);
+      styleAdjusted = styleAdjusted || styleResult.changed;
+      finalHtml = normalizeGeneratedHtml(styleResult.html);
+      plainText = stripHtmlForCompleteness(finalHtml);
+      completion = evaluateWritingCompleteness({
+        html: finalHtml,
+        plainText,
+        outlineHeadings,
+        minimumWords: templatePolicy.wordRange.min,
+        maximumWords: templatePolicy.wordRange.max,
+      });
+      styleResult = applyStyleGuard(finalHtml, templatePolicy.styleGuard);
+    }
+
+    if (!styleGuardPassed(styleResult.metrics, templatePolicy.styleGuard)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: 'STYLE_GUARD_FAILED',
+          error:
+            'Generated draft violates style guard policy after automated fix attempts and was not saved.',
+          diagnostics: {
+            styleMetrics: styleResult.metrics,
+            stylePolicy: templatePolicy.styleGuard,
+          },
+        },
+        { status: 422 }
+      );
     }
 
     if (!completion.complete) {
@@ -438,10 +578,15 @@ ${trimTo(linkedPageContext.text, 1500)}`
             headingCoverage: completion.headingCoverage,
             wordCount: completion.wordCount,
             minWords: completion.minWords,
+            maxWords: completion.maxWords,
             wordGap: completion.wordGap,
+            wordOverflow: completion.wordOverflow,
             abruptEnding: completion.abruptEnding,
             continuationAttempts,
             endingCompletionAttempted,
+            compressionAttempts,
+            styleAdjusted,
+            styleFixAttempts,
           },
           partialDraft: {
             preview: trimTo(plainText, 1200),
@@ -489,7 +634,7 @@ ${trimTo(linkedPageContext.text, 1500)}`
       // Content quality
       if (plainText.length >= 20) {
         const { analyzeContentQuality } = await import('@/lib/analyzers/content-quality');
-        const qualityResult = analyzeContentQuality(plainText, contentType);
+        const qualityResult = analyzeContentQuality(plainText, normalizedContentType);
         contentQualityScore = qualityResult.score;
 
         await db
@@ -562,9 +707,13 @@ ${trimTo(linkedPageContext.text, 1500)}`
       continuationAttempts,
       completeness: {
         minWords: completion.minWords,
+        maxWords: completion.maxWords,
         headingCoverage: completion.headingCoverage,
       },
       endingCompletionAttempted,
+      compressionAttempts,
+      styleAdjusted,
+      styleFixAttempts,
       deliverable: {
         id: `del_${Date.now()}`,
         type: 'preview_link',
@@ -595,7 +744,9 @@ function buildInstruction(
   title: string,
   description: string | undefined,
   targetKeyword: string | undefined,
-  contentType: string
+  contentType: string,
+  minimumWords: number,
+  maximumWords: number
 ): string {
   const parts = [`Write a complete ${contentType.replace(/_/g, ' ')} titled: "${title}"`];
 
@@ -614,7 +765,7 @@ function buildInstruction(
   parts.push('- Substantive, detailed content in each section');
   parts.push('- Data, examples, or expert insights where appropriate');
   parts.push('- A concise conclusion');
-  parts.push('\nAim for 1500-2500 words. Output clean HTML format.');
+  parts.push(`\nTarget ${minimumWords}-${maximumWords} words. Output clean HTML format.`);
 
   return parts.join('\n');
 }
@@ -623,7 +774,12 @@ function buildSystemPrompt(
   skillContent: string,
   contentType: string,
   targetKeyword: string | undefined,
-  rolePromptContext?: string
+  rolePromptContext?: string,
+  stylePolicy?: {
+    emDash?: string;
+    colon?: string;
+    maxNarrativeColons?: number;
+  }
 ): string {
   const keywordStr = targetKeyword
     ? `The target keyword is "${targetKeyword}". Naturally incorporate it and related terms.`
@@ -631,6 +787,16 @@ function buildSystemPrompt(
   const roleContext = rolePromptContext?.trim()
     ? `\n\nRole profile context:\n${rolePromptContext.trim()}`
     : '';
+  const styleRules = [
+    stylePolicy?.emDash === 'forbid'
+      ? '- Do not use em dash or en dash punctuation.'
+      : '- Em dash usage is allowed.',
+    stylePolicy?.colon === 'forbid'
+      ? '- Avoid colons entirely.'
+      : stylePolicy?.colon === 'structural_only'
+        ? `- Use colons only in structural contexts (headings/labels). Narrative colons max ${Math.max(0, stylePolicy?.maxNarrativeColons || 0)}.`
+        : '- Colon usage is allowed.',
+  ].join('\n');
 
   if (skillContent) {
     return `${skillContent}\n\n${keywordStr}
@@ -643,6 +809,8 @@ Additional writing guidelines:
 - Use contractions naturally (don't, can't, won't)
 - Avoid excessive adverbs (significantly, effectively, ultimately)
 - When presenting comparative data, specs, pricing, or pros/cons, use HTML tables
+- Prefer natural transitions without formulaic punctuation.
+${styleRules}
 - Output clean HTML. No meta-commentary about the writing task.`;
   }
 
@@ -656,10 +824,76 @@ Important writing guidelines:
 - Avoid excessive adverbs (significantly, effectively, ultimately)
 - Don't start with "In today's..." or "In this article..."
 - When presenting comparative data, specs, pricing, or pros/cons, use HTML tables
+- Prefer natural transitions without formulaic punctuation.
+${styleRules}
 - Output clean, well-structured HTML. No meta-commentary about the writing task.`;
 }
 
 function trimTo(input: string, maxChars: number): string {
   if (input.length <= maxChars) return input;
   return `${input.slice(0, maxChars).trimEnd()}…`;
+}
+
+function normalizeContentFormat(value: string | null | undefined): ContentFormat {
+  const allowed = new Set<ContentFormat>([
+    'blog_post',
+    'blog_listicle',
+    'blog_buying_guide',
+    'blog_how_to',
+    'blog_review',
+    'product_category',
+    'product_description',
+    'comparison',
+    'news_article',
+  ]);
+  const normalized = String(value || '').trim();
+  return allowed.has(normalized as ContentFormat)
+    ? (normalized as ContentFormat)
+    : 'blog_post';
+}
+
+function buildCompressionPrompt(args: {
+  currentHtml: string;
+  minimumWords: number;
+  maximumWords: number;
+  missingHeadings: string[];
+}): string {
+  return `Compress and refine this article to fit strict length constraints.
+
+Constraints:
+- Keep all required headings and section intent.
+- Target total words between ${args.minimumWords} and ${args.maximumWords}.
+- Remove repetition and filler transitions.
+- Return clean HTML only.
+
+Missing headings to preserve:
+${args.missingHeadings.slice(0, 10).join(', ') || 'none'}
+
+Current article HTML:
+${args.currentHtml}
+
+Return full revised article HTML.`;
+}
+
+function buildStyleFixPrompt(args: {
+  currentHtml: string;
+  emDash: string;
+  colon: string;
+  maxNarrativeColons: number;
+}): string {
+  const colonInstruction =
+    args.colon === 'forbid'
+      ? 'Remove all colons from both headings and narrative.'
+      : args.colon === 'structural_only'
+        ? `Keep colons only in structural heading/list-label contexts. Narrative colons max ${Math.max(0, args.maxNarrativeColons)}.`
+        : 'Colon usage is allowed.';
+
+  return `Rewrite this article HTML for style compliance.
+- Replace every em dash and en dash with natural punctuation.
+- ${colonInstruction}
+- Preserve meaning and heading structure.
+- Return clean HTML only.
+
+Article HTML:
+${args.currentHtml}`;
 }

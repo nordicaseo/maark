@@ -140,7 +140,7 @@ export function resolveWorkflowRuntimeState(task: {
   }
   if (stageStatus === 'blocked') return 'blocked';
   if (stageStatus === 'queued') return 'queued';
-  if (stage === 'outline_review' || stage === 'prewrite_context' || stage === 'final_review') {
+  if (stage === 'outline_review') {
     return 'needs_input';
   }
   if (taskStatus === 'IN_PROGRESS' || stageStatus === 'in_progress') return 'working';

@@ -225,6 +225,40 @@ export const aiModelConfig = pgTable('ai_model_config', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+// ── Content Templates ─────────────────────────────────────────────
+
+export const contentTemplates = pgTable('content_templates', {
+  id: serial('id').primaryKey(),
+  key: varchar('key', { length: 120 }).notNull().unique(),
+  name: varchar('name', { length: 200 }).notNull(),
+  description: text('description'),
+  contentFormats: jsonb('content_formats'),
+  structure: jsonb('structure'),
+  wordRange: jsonb('word_range'),
+  outlineConstraints: jsonb('outline_constraints'),
+  styleGuard: jsonb('style_guard'),
+  isSystem: boolean('is_system').notNull().default(true),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const contentTemplateAssignments = pgTable('content_template_assignments', {
+  id: serial('id').primaryKey(),
+  scope: varchar('scope', { length: 24 }).notNull().default('global'),
+  scopeKey: varchar('scope_key', { length: 64 }).notNull().default('global'),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+  contentFormat: varchar('content_format', { length: 60 }).notNull(),
+  templateKey: varchar('template_key', { length: 120 }).notNull().references(() => contentTemplates.key, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('content_template_assignments_scope_key_format_unique').on(
+    table.scopeKey,
+    table.contentFormat
+  ),
+]);
+
 // ── Invitations ──────────────────────────────────────────────────
 
 export const invitations = pgTable('invitations', {

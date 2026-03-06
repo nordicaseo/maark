@@ -230,7 +230,7 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
           if (!missingSkill) {
             triggerTopicWorkflowRun(created.taskId, {
               autoContinue: true,
-              maxStages: 6,
+              maxStages: 10,
               logLabel: 'topic workflow',
             });
           }

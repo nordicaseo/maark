@@ -1,9 +1,12 @@
 {
   "crons": [
     {
+      "path": "/api/topic-workflow/auto-resume",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/admin/crawl-gsc/cron",
       "schedule": "0 */6 * * *"
     }
   ]
 }
-

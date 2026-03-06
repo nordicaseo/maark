@@ -181,7 +181,7 @@ export async function POST(req: NextRequest) {
       user: auth.user,
       taskId,
       autoContinue: true,
-      maxStages: fromStage === 'research' ? 4 : fromStage === 'outline_build' ? 3 : 2,
+      maxStages: fromStage === 'research' ? 10 : fromStage === 'outline_build' ? 8 : 6,
     });
 
     await logAuditEvent({

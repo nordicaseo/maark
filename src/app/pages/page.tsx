@@ -335,7 +335,7 @@ export default function PagesPage() {
         if (created?.taskId) {
           triggerTopicWorkflowRun(created.taskId, {
             autoContinue: true,
-            maxStages: 6,
+            maxStages: 10,
             logLabel: 'topic workflow',
           });
         }

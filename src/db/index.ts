@@ -292,6 +292,177 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
     );
   `);
 
+  // ── Content Templates ──
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS content_templates (
+      id SERIAL PRIMARY KEY,
+      key VARCHAR(120) NOT NULL UNIQUE,
+      name VARCHAR(200) NOT NULL,
+      description TEXT,
+      content_formats JSONB,
+      structure JSONB,
+      word_range JSONB,
+      outline_constraints JSONB,
+      style_guard JSONB,
+      is_system BOOLEAN NOT NULL DEFAULT TRUE,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS content_template_assignments (
+      id SERIAL PRIMARY KEY,
+      scope VARCHAR(24) NOT NULL DEFAULT 'global',
+      scope_key VARCHAR(64) NOT NULL DEFAULT 'global',
+      project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+      content_format VARCHAR(60) NOT NULL,
+      template_key VARCHAR(120) NOT NULL REFERENCES content_templates(key) ON DELETE CASCADE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS content_template_assignments_scope_key_format_unique
+      ON content_template_assignments(scope_key, content_format);
+  `);
+  await sql.query(`
+    ALTER TABLE content_templates ADD COLUMN IF NOT EXISTS content_formats JSONB;
+    ALTER TABLE content_templates ADD COLUMN IF NOT EXISTS structure JSONB;
+    ALTER TABLE content_templates ADD COLUMN IF NOT EXISTS word_range JSONB;
+    ALTER TABLE content_templates ADD COLUMN IF NOT EXISTS outline_constraints JSONB;
+    ALTER TABLE content_templates ADD COLUMN IF NOT EXISTS style_guard JSONB;
+    ALTER TABLE content_templates ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE content_templates ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE content_template_assignments ADD COLUMN IF NOT EXISTS scope VARCHAR(24) NOT NULL DEFAULT 'global';
+    ALTER TABLE content_template_assignments ADD COLUMN IF NOT EXISTS scope_key VARCHAR(64) NOT NULL DEFAULT 'global';
+  `);
+  await sql.query(`
+    INSERT INTO content_templates (
+      key, name, description, content_formats, structure, word_range, outline_constraints, style_guard, is_system, is_active
+    ) VALUES
+      (
+        'blog_standard',
+        'Blog Standard',
+        'Balanced blog template for evergreen SEO content.',
+        '["blog_post"]'::jsonb,
+        '{"sections":[{"heading":"Introduction","level":2},{"heading":"Main Sections","level":2},{"heading":"Conclusion","level":2}]}'::jsonb,
+        '{"min":1800,"max":3000}'::jsonb,
+        '{"maxH2":8,"maxH3PerH2":3}'::jsonb,
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}'::jsonb,
+        TRUE,
+        TRUE
+      ),
+      (
+        'blog_how_to',
+        'How-To Guide',
+        'Step-by-step instructional template.',
+        '["blog_how_to"]'::jsonb,
+        '{"sections":[{"heading":"What You Need","level":2},{"heading":"Step-by-Step","level":2},{"heading":"Conclusion","level":2}]}'::jsonb,
+        '{"min":1800,"max":3000}'::jsonb,
+        '{"maxH2":9,"maxH3PerH2":3}'::jsonb,
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}'::jsonb,
+        TRUE,
+        TRUE
+      ),
+      (
+        'blog_listicle',
+        'Listicle / Best Of',
+        'List-focused template for ranked or grouped recommendations.',
+        '["blog_listicle"]'::jsonb,
+        '{"sections":[{"heading":"Introduction","level":2},{"heading":"List Items","level":2},{"heading":"Wrap-Up","level":2}]}'::jsonb,
+        '{"min":1700,"max":2900}'::jsonb,
+        '{"maxH2":10,"maxH3PerH2":2}'::jsonb,
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}'::jsonb,
+        TRUE,
+        TRUE
+      ),
+      (
+        'blog_buying_guide',
+        'Buying Guide',
+        'Commercial-intent buying guide template.',
+        '["blog_buying_guide"]'::jsonb,
+        '{"sections":[{"heading":"Buyer Criteria","level":2},{"heading":"Options","level":2},{"heading":"Recommendations","level":2}]}'::jsonb,
+        '{"min":2200,"max":3200}'::jsonb,
+        '{"maxH2":10,"maxH3PerH2":3}'::jsonb,
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}'::jsonb,
+        TRUE,
+        TRUE
+      ),
+      (
+        'blog_review',
+        'Review Article',
+        'Review-driven editorial template.',
+        '["blog_review"]'::jsonb,
+        '{"sections":[{"heading":"Verdict","level":2},{"heading":"Pros and Cons","level":2},{"heading":"Who It Is For","level":2}]}'::jsonb,
+        '{"min":1500,"max":2600}'::jsonb,
+        '{"maxH2":8,"maxH3PerH2":3}'::jsonb,
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}'::jsonb,
+        TRUE,
+        TRUE
+      ),
+      (
+        'product_collection',
+        'Collection Page',
+        'Collection/category page optimization template.',
+        '["product_category"]'::jsonb,
+        '{"sections":[{"heading":"Collection Overview","level":2},{"heading":"Category Highlights","level":2},{"heading":"FAQ","level":2}]}'::jsonb,
+        '{"min":900,"max":1800}'::jsonb,
+        '{"maxH2":6,"maxH3PerH2":2}'::jsonb,
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}'::jsonb,
+        TRUE,
+        TRUE
+      ),
+      (
+        'product_landing',
+        'Product / Landing Page',
+        'Product detail and landing page copy template.',
+        '["product_description"]'::jsonb,
+        '{"sections":[{"heading":"Value Proposition","level":2},{"heading":"Key Features","level":2},{"heading":"CTA","level":2}]}'::jsonb,
+        '{"min":900,"max":1600}'::jsonb,
+        '{"maxH2":6,"maxH3PerH2":2}'::jsonb,
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}'::jsonb,
+        TRUE,
+        TRUE
+      ),
+      (
+        'comparison',
+        'Comparison',
+        'Comparison article template.',
+        '["comparison"]'::jsonb,
+        '{"sections":[{"heading":"Comparison Criteria","level":2},{"heading":"Head-to-Head","level":2},{"heading":"Recommendation","level":2}]}'::jsonb,
+        '{"min":1600,"max":2800}'::jsonb,
+        '{"maxH2":8,"maxH3PerH2":3}'::jsonb,
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}'::jsonb,
+        TRUE,
+        TRUE
+      ),
+      (
+        'news',
+        'News Article',
+        'Concise, factual news template.',
+        '["news_article"]'::jsonb,
+        '{"sections":[{"heading":"Lead","level":2},{"heading":"Details","level":2},{"heading":"What''s Next","level":2}]}'::jsonb,
+        '{"min":600,"max":1400}'::jsonb,
+        '{"maxH2":5,"maxH3PerH2":2}'::jsonb,
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}'::jsonb,
+        TRUE,
+        TRUE
+      )
+    ON CONFLICT (key) DO NOTHING;
+  `);
+  await sql.query(`
+    INSERT INTO content_template_assignments (scope, scope_key, project_id, content_format, template_key)
+    VALUES
+      ('global', 'global', NULL, 'blog_post', 'blog_standard'),
+      ('global', 'global', NULL, 'blog_how_to', 'blog_how_to'),
+      ('global', 'global', NULL, 'blog_listicle', 'blog_listicle'),
+      ('global', 'global', NULL, 'blog_buying_guide', 'blog_buying_guide'),
+      ('global', 'global', NULL, 'blog_review', 'blog_review'),
+      ('global', 'global', NULL, 'product_category', 'product_collection'),
+      ('global', 'global', NULL, 'product_description', 'product_landing'),
+      ('global', 'global', NULL, 'comparison', 'comparison'),
+      ('global', 'global', NULL, 'news_article', 'news')
+    ON CONFLICT (scope_key, content_format) DO NOTHING;
+  `);
+
   // ── Invitations ──
   await sql.query(`
     CREATE TABLE IF NOT EXISTS invitations (
@@ -984,6 +1155,174 @@ function createDb() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+  `);
+
+  // ── Content Templates ──
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS content_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      description TEXT,
+      content_formats TEXT,
+      structure TEXT,
+      word_range TEXT,
+      outline_constraints TEXT,
+      style_guard TEXT,
+      is_system INTEGER NOT NULL DEFAULT 1,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS content_template_assignments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope TEXT NOT NULL DEFAULT 'global',
+      scope_key TEXT NOT NULL DEFAULT 'global',
+      project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+      content_format TEXT NOT NULL,
+      template_key TEXT NOT NULL REFERENCES content_templates(key) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS content_template_assignments_scope_key_format_unique
+      ON content_template_assignments(scope_key, content_format);
+  `);
+  addColumnSafe(sqlite, 'content_templates', 'content_formats', 'TEXT');
+  addColumnSafe(sqlite, 'content_templates', 'structure', 'TEXT');
+  addColumnSafe(sqlite, 'content_templates', 'word_range', 'TEXT');
+  addColumnSafe(sqlite, 'content_templates', 'outline_constraints', 'TEXT');
+  addColumnSafe(sqlite, 'content_templates', 'style_guard', 'TEXT');
+  addColumnSafe(sqlite, 'content_templates', 'is_system', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnSafe(sqlite, 'content_templates', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnSafe(sqlite, 'content_template_assignments', 'scope', "TEXT NOT NULL DEFAULT 'global'");
+  addColumnSafe(sqlite, 'content_template_assignments', 'scope_key', "TEXT NOT NULL DEFAULT 'global'");
+  sqlite.exec(`
+    INSERT OR IGNORE INTO content_templates (
+      key, name, description, content_formats, structure, word_range, outline_constraints, style_guard, is_system, is_active
+    ) VALUES
+      (
+        'blog_standard',
+        'Blog Standard',
+        'Balanced blog template for evergreen SEO content.',
+        '["blog_post"]',
+        '{"sections":[{"heading":"Introduction","level":2},{"heading":"Main Sections","level":2},{"heading":"Conclusion","level":2}]}',
+        '{"min":1800,"max":3000}',
+        '{"maxH2":8,"maxH3PerH2":3}',
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}',
+        1,
+        1
+      ),
+      (
+        'blog_how_to',
+        'How-To Guide',
+        'Step-by-step instructional template.',
+        '["blog_how_to"]',
+        '{"sections":[{"heading":"What You Need","level":2},{"heading":"Step-by-Step","level":2},{"heading":"Conclusion","level":2}]}',
+        '{"min":1800,"max":3000}',
+        '{"maxH2":9,"maxH3PerH2":3}',
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}',
+        1,
+        1
+      ),
+      (
+        'blog_listicle',
+        'Listicle / Best Of',
+        'List-focused template for ranked or grouped recommendations.',
+        '["blog_listicle"]',
+        '{"sections":[{"heading":"Introduction","level":2},{"heading":"List Items","level":2},{"heading":"Wrap-Up","level":2}]}',
+        '{"min":1700,"max":2900}',
+        '{"maxH2":10,"maxH3PerH2":2}',
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}',
+        1,
+        1
+      ),
+      (
+        'blog_buying_guide',
+        'Buying Guide',
+        'Commercial-intent buying guide template.',
+        '["blog_buying_guide"]',
+        '{"sections":[{"heading":"Buyer Criteria","level":2},{"heading":"Options","level":2},{"heading":"Recommendations","level":2}]}',
+        '{"min":2200,"max":3200}',
+        '{"maxH2":10,"maxH3PerH2":3}',
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}',
+        1,
+        1
+      ),
+      (
+        'blog_review',
+        'Review Article',
+        'Review-driven editorial template.',
+        '["blog_review"]',
+        '{"sections":[{"heading":"Verdict","level":2},{"heading":"Pros and Cons","level":2},{"heading":"Who It Is For","level":2}]}',
+        '{"min":1500,"max":2600}',
+        '{"maxH2":8,"maxH3PerH2":3}',
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}',
+        1,
+        1
+      ),
+      (
+        'product_collection',
+        'Collection Page',
+        'Collection/category page optimization template.',
+        '["product_category"]',
+        '{"sections":[{"heading":"Collection Overview","level":2},{"heading":"Category Highlights","level":2},{"heading":"FAQ","level":2}]}',
+        '{"min":900,"max":1800}',
+        '{"maxH2":6,"maxH3PerH2":2}',
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}',
+        1,
+        1
+      ),
+      (
+        'product_landing',
+        'Product / Landing Page',
+        'Product detail and landing page copy template.',
+        '["product_description"]',
+        '{"sections":[{"heading":"Value Proposition","level":2},{"heading":"Key Features","level":2},{"heading":"CTA","level":2}]}',
+        '{"min":900,"max":1600}',
+        '{"maxH2":6,"maxH3PerH2":2}',
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}',
+        1,
+        1
+      ),
+      (
+        'comparison',
+        'Comparison',
+        'Comparison article template.',
+        '["comparison"]',
+        '{"sections":[{"heading":"Comparison Criteria","level":2},{"heading":"Head-to-Head","level":2},{"heading":"Recommendation","level":2}]}',
+        '{"min":1600,"max":2800}',
+        '{"maxH2":8,"maxH3PerH2":3}',
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}',
+        1,
+        1
+      ),
+      (
+        'news',
+        'News Article',
+        'Concise, factual news template.',
+        '["news_article"]',
+        '{"sections":[{"heading":"Lead","level":2},{"heading":"Details","level":2},{"heading":"Whats Next","level":2}]}',
+        '{"min":600,"max":1400}',
+        '{"maxH2":5,"maxH3PerH2":2}',
+        '{"emDash":"forbid","colon":"structural_only","maxNarrativeColons":0}',
+        1,
+        1
+      );
+  `);
+  sqlite.exec(`
+    INSERT OR IGNORE INTO content_template_assignments (
+      scope, scope_key, project_id, content_format, template_key
+    ) VALUES
+      ('global', 'global', NULL, 'blog_post', 'blog_standard'),
+      ('global', 'global', NULL, 'blog_how_to', 'blog_how_to'),
+      ('global', 'global', NULL, 'blog_listicle', 'blog_listicle'),
+      ('global', 'global', NULL, 'blog_buying_guide', 'blog_buying_guide'),
+      ('global', 'global', NULL, 'blog_review', 'blog_review'),
+      ('global', 'global', NULL, 'product_category', 'product_collection'),
+      ('global', 'global', NULL, 'product_description', 'product_landing'),
+      ('global', 'global', NULL, 'comparison', 'comparison'),
+      ('global', 'global', NULL, 'news_article', 'news');
   `);
 
   // ── Invitations ──

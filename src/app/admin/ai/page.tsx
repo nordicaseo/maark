@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Plus, Pencil, Trash2, Cpu, Settings2 } from 'lucide-react';
+import { AI_ACTIONS, AI_ACTION_LABELS, type AIAction } from '@/types/ai';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -46,14 +47,12 @@ interface ModelConfig {
   providerDisplayName: string;
 }
 
-const PROVIDER_NAMES = ['anthropic', 'openai'] as const;
+const PROVIDER_NAMES = ['anthropic', 'openai', 'perplexity'] as const;
 
-const ACTIONS = [
-  { value: 'writing', label: 'Writing' },
-  { value: 'rewriting', label: 'Rewriting' },
-  { value: 'formatting', label: 'Formatting' },
-  { value: 'skill_generation', label: 'Skill Generation' },
-];
+const ACTIONS = AI_ACTIONS.map((value) => ({
+  value,
+  label: AI_ACTION_LABELS[value as AIAction],
+}));
 
 const MODEL_OPTIONS: Record<string, string[]> = {
   anthropic: [
@@ -78,6 +77,10 @@ const MODEL_OPTIONS: Record<string, string[]> = {
     'gpt-4o',
     'gpt-4o-mini',
     'gpt-4-turbo',
+  ],
+  perplexity: [
+    'sonar-pro',
+    'sonar',
   ],
 };
 

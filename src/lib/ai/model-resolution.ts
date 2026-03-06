@@ -27,6 +27,15 @@ export interface ResolvedModelConfig {
   temperature: number;
 }
 
+const LEGACY_ACTION_FALLBACK: Partial<Record<AIAction, AIAction>> = {
+  workflow_research: 'research',
+  workflow_outline: 'research',
+  workflow_prewrite: 'research',
+  workflow_pm: 'workflow_prewrite',
+  workflow_writing: 'writing',
+  workflow_final_review: 'writing',
+};
+
 function createProvider(name: string, apiKey: string): AIProviderInterface {
   switch (name) {
     case 'anthropic':
@@ -53,18 +62,7 @@ function mergeModelOverrides(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-export async function resolveProviderForAction(
-  action: AIAction,
-  override?: ModelOverride,
-  priority?: ResolveModelPriorityInput
-): Promise<ResolvedModelConfig> {
-  await ensureDb();
-  const effectiveOverride = mergeModelOverrides(
-    priority?.projectRoleOverride,
-    priority?.agentOverride,
-    override
-  );
-
+async function fetchConfiguredAction(action: AIAction) {
   const [baseConfig] = await db
     .select({
       model: aiModelConfig.model,
@@ -77,6 +75,44 @@ export async function resolveProviderForAction(
     .innerJoin(aiProviders, eq(aiModelConfig.providerId, aiProviders.id))
     .where(eq(aiModelConfig.action, action))
     .limit(1);
+  return baseConfig;
+}
+
+export async function resolveProviderForAction(
+  action: AIAction,
+  override?: ModelOverride,
+  priority?: ResolveModelPriorityInput
+): Promise<ResolvedModelConfig> {
+  await ensureDb();
+  const effectiveOverride = mergeModelOverrides(
+    priority?.agentOverride,
+    override,
+    priority?.projectRoleOverride
+  );
+
+  const actionCandidates: AIAction[] = [action];
+  let fallback = LEGACY_ACTION_FALLBACK[action];
+  while (fallback && !actionCandidates.includes(fallback)) {
+    actionCandidates.push(fallback);
+    fallback = LEGACY_ACTION_FALLBACK[fallback];
+  }
+
+  let baseConfig:
+    | {
+        model: string;
+        maxTokens: number | null;
+        temperature: number | null;
+        providerName: string;
+        providerApiKey: string;
+      }
+    | undefined;
+  for (const candidate of actionCandidates) {
+    const hit = await fetchConfiguredAction(candidate);
+    if (hit) {
+      baseConfig = hit;
+      break;
+    }
+  }
 
   if (!baseConfig) {
     const fallback = await getProviderForAction(action);

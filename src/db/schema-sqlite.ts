@@ -205,6 +205,40 @@ export const aiModelConfig = sqliteTable('ai_model_config', {
   updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
 });
 
+// ── Content Templates ─────────────────────────────────────────────
+
+export const contentTemplates = sqliteTable('content_templates', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  key: text('key').notNull().unique(),
+  name: text('name').notNull(),
+  description: text('description'),
+  contentFormats: text('content_formats', { mode: 'json' }),
+  structure: text('structure', { mode: 'json' }),
+  wordRange: text('word_range', { mode: 'json' }),
+  outlineConstraints: text('outline_constraints', { mode: 'json' }),
+  styleGuard: text('style_guard', { mode: 'json' }),
+  isSystem: integer('is_system').notNull().default(1),
+  isActive: integer('is_active').notNull().default(1),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const contentTemplateAssignments = sqliteTable('content_template_assignments', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  scope: text('scope').notNull().default('global'),
+  scopeKey: text('scope_key').notNull().default('global'),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+  contentFormat: text('content_format').notNull(),
+  templateKey: text('template_key').notNull().references(() => contentTemplates.key, { onDelete: 'cascade' }),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('content_template_assignments_scope_key_format_unique').on(
+    table.scopeKey,
+    table.contentFormat
+  ),
+]);
+
 // ── Invitations ──────────────────────────────────────────────────
 
 export const invitations = sqliteTable('invitations', {

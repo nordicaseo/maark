@@ -3,7 +3,7 @@ import { api } from '../../../../../convex/_generated/api';
 import type { Id } from '../../../../../convex/_generated/dataModel';
 import { db, ensureDb } from '@/db';
 import { projects } from '@/db/schema';
-import { requireRole } from '@/lib/auth';
+import { requireRole, type AppUser } from '@/lib/auth';
 import {
   getAccessibleProjectIds,
   getRequestedProjectId,
@@ -32,6 +32,14 @@ type WorkflowTask = {
   status: string;
 };
 
+function isCronAuthorized(req: NextRequest): boolean {
+  if (req.headers.get('x-vercel-cron')) return true;
+  const secret = process.env.WORKFLOW_CRON_SECRET || process.env.CRAWL_CRON_SECRET;
+  if (!secret) return false;
+  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
+  return Boolean(token && token === secret);
+}
+
 function parseOptionalNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number.parseInt(String(value), 10);
@@ -44,8 +52,22 @@ function clamp(value: number, min: number, max: number): number {
 
 export async function POST(req: NextRequest) {
   await ensureDb();
-  const auth = await requireRole('editor');
-  if (auth.error) return auth.error;
+  const cronAuthorized = isCronAuthorized(req);
+  let actorUser: AppUser;
+
+  if (cronAuthorized) {
+    actorUser = {
+      id: 'system:workflow-cron',
+      email: 'workflow-cron@system.local',
+      name: 'Workflow Cron',
+      image: null,
+      role: 'owner',
+    };
+  } else {
+    const auth = await requireRole('editor');
+    if (auth.error) return auth.error;
+    actorUser = auth.user;
+  }
 
   try {
     const convex = getConvexClient();
@@ -58,8 +80,10 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
     const requestedProjectId =
-      parseOptionalNumber((body as { projectId?: unknown }).projectId) ??
-      getRequestedProjectId(req);
+      cronAuthorized
+        ? null
+        : parseOptionalNumber((body as { projectId?: unknown }).projectId) ??
+          getRequestedProjectId(req);
     const maxResumes = clamp(
       Number((body as { maxResumes?: unknown }).maxResumes) || DEFAULT_MAX_RESUMES,
       1,
@@ -68,15 +92,15 @@ export async function POST(req: NextRequest) {
 
     let projectIds: number[] = [];
     if (requestedProjectId !== null) {
-      if (!(await userCanAccessProject(auth.user, requestedProjectId))) {
+      if (!(await userCanAccessProject(actorUser, requestedProjectId))) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
       projectIds = [requestedProjectId];
-    } else if (isAdminUser(auth.user)) {
+    } else if (cronAuthorized || isAdminUser(actorUser)) {
       const rows = await db.select({ id: projects.id }).from(projects);
       projectIds = rows.map((row: (typeof rows)[number]) => row.id);
     } else {
-      projectIds = await getAccessibleProjectIds(auth.user);
+      projectIds = await getAccessibleProjectIds(actorUser);
     }
 
     if (projectIds.length === 0) {
@@ -158,7 +182,7 @@ export async function POST(req: NextRequest) {
         stageKey: stage,
         summary,
         actorType: 'system',
-        actorId: auth.user.id,
+        actorId: actorUser.id,
         actorName: 'Workflow Watchdog',
         payload: {
           status: 'blocked',
@@ -178,10 +202,10 @@ export async function POST(req: NextRequest) {
     for (const task of toResume) {
       try {
         const result = await runTopicWorkflow({
-          user: auth.user,
+          user: actorUser,
           taskId: task._id,
           autoContinue: true,
-          maxStages: 4,
+          maxStages: 10,
         });
         if (result.runs.length > 0) {
           resumed += 1;
@@ -195,7 +219,7 @@ export async function POST(req: NextRequest) {
     }
 
     await logAuditEvent({
-      userId: auth.user.id,
+      userId: cronAuthorized ? null : actorUser.id,
       action: 'topic_workflow.auto_resume',
       resourceType: 'task',
       severity: failures.length > 0 ? 'warning' : 'info',

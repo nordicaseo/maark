@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
         user: auth.user,
         taskId,
         autoContinue: true,
-        maxStages: 4,
+        maxStages: 10,
       });
       autoRunResult = {
         taskId: runResult.taskId,

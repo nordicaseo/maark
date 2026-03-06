@@ -35,7 +35,15 @@ import {
   stripHtmlForCompleteness,
   type WritingCompletenessResult,
 } from '@/lib/workflow/writing-completeness';
+import { applyStyleGuard, styleGuardPassed } from '@/lib/workflow/style-guard';
+import { resolveTemplatePolicy } from '@/lib/workflow/content-templates';
 import type { AgentRole } from '@/types/agent-profile';
+import type { AIAction } from '@/types/ai';
+import type {
+  OutlineConstraintPolicy,
+  StyleGuardPolicy,
+} from '@/types/content-template-config';
+import type { ContentFormat } from '@/types/document';
 
 interface StageRunResult {
   summary: string;
@@ -52,6 +60,11 @@ interface StageRunResult {
     type: string;
     title: string;
     url?: string;
+  };
+  control?: {
+    approved?: boolean;
+    revisionBrief?: string;
+    styleAdjusted?: boolean;
   };
 }
 
@@ -100,6 +113,7 @@ const RUNNABLE_STAGES = new Set<TopicStageKey>([
   'outline_build',
   'prewrite_context',
   'writing',
+  'final_review',
 ]);
 
 const ROLE_ALIASES: Record<string, string[]> = {
@@ -123,6 +137,22 @@ const STAGE_PRIMARY_ROLE: Record<TopicStageKey, AgentRole> = {
   final_review: 'seo-reviewer',
   complete: 'lead',
 };
+
+const SUPPORTED_CONTENT_FORMATS: ContentFormat[] = [
+  'blog_post',
+  'blog_listicle',
+  'blog_buying_guide',
+  'blog_how_to',
+  'blog_review',
+  'product_category',
+  'product_description',
+  'comparison',
+  'news_article',
+];
+
+const FINAL_REVIEW_MAX_REVISIONS = 2;
+const STYLE_FIX_MAX_ATTEMPTS = 1;
+const MAX_COMPRESSION_ATTEMPTS = 2;
 
 function stripCodeFences(input: string): string {
   return input
@@ -226,6 +256,144 @@ function parseTermArray(value: unknown, limit = 10): string[] {
 function trimTo(input: string, maxChars: number): string {
   if (input.length <= maxChars) return input;
   return `${input.slice(0, maxChars).trimEnd()}…`;
+}
+
+function normalizeContentFormat(value: unknown): ContentFormat {
+  if (typeof value !== 'string') return 'blog_post';
+  return (SUPPORTED_CONTENT_FORMATS.find((format) => format === value) || 'blog_post') as ContentFormat;
+}
+
+function legacyActionKeyForStage(stage: TopicStageKey): AIAction {
+  if (stage === 'writing' || stage === 'final_review') return 'writing';
+  return 'research';
+}
+
+function enforceOutlineConstraints(
+  markdown: string,
+  policy: OutlineConstraintPolicy
+): { markdown: string; trimmed: boolean; h2Count: number } {
+  const lines = markdown.split('\n');
+  const out: string[] = [];
+  const maxH2 = Math.max(2, policy.maxH2 || 8);
+  const maxH3PerH2 = Math.max(1, policy.maxH3PerH2 || 3);
+  let h2Count = 0;
+  let h3CountCurrentH2 = 0;
+  let skipH2Section = false;
+  let skipH3Section = false;
+  let trimmed = false;
+
+  for (const line of lines) {
+    const heading2 = /^##\s+/.test(line);
+    const heading3 = /^###\s+/.test(line);
+
+    if (heading2) {
+      h2Count += 1;
+      h3CountCurrentH2 = 0;
+      skipH3Section = false;
+      if (h2Count > maxH2) {
+        skipH2Section = true;
+        trimmed = true;
+        continue;
+      }
+      skipH2Section = false;
+      out.push(line);
+      continue;
+    }
+
+    if (skipH2Section) {
+      continue;
+    }
+
+    if (heading3) {
+      h3CountCurrentH2 += 1;
+      if (h3CountCurrentH2 > maxH3PerH2) {
+        skipH3Section = true;
+        trimmed = true;
+        continue;
+      }
+      skipH3Section = false;
+      out.push(line);
+      continue;
+    }
+
+    if (skipH3Section) {
+      continue;
+    }
+
+    out.push(line);
+  }
+
+  return {
+    markdown: out.join('\n').trim(),
+    trimmed,
+    h2Count: Math.min(h2Count, maxH2),
+  };
+}
+
+function buildCompressionPrompt(args: {
+  currentHtml: string;
+  minimumWords: number;
+  maximumWords: number;
+  missingHeadings: string[];
+}): string {
+  return `Compress and refine this article to fit strict length constraints without losing structure.
+
+Constraints:
+- Keep all required headings and section intent.
+- Target total words between ${args.minimumWords} and ${args.maximumWords}.
+- Remove repetition, filler transitions, and redundant examples.
+- Keep clean HTML output only.
+- Do not include markdown or code fences.
+
+Missing headings to preserve:
+${args.missingHeadings.slice(0, 10).join(', ') || 'none'}
+
+Current article HTML:
+${args.currentHtml}
+
+Return the full revised article HTML.`;
+}
+
+function buildStyleFixPrompt(args: {
+  currentHtml: string;
+  policy: StyleGuardPolicy;
+}): string {
+  const colonInstruction =
+    args.policy.colon === 'forbid'
+      ? 'Remove all colons from narrative and headings.'
+      : args.policy.colon === 'structural_only'
+        ? `Only keep colons in structural headings/labels. Narrative colons max ${Math.max(
+            0,
+            args.policy.maxNarrativeColons || 0
+          )}.`
+        : 'Colon usage is allowed.';
+
+  return `Rewrite this HTML article with style normalization:
+- Replace every em dash and en dash with natural punctuation or sentence split.
+- ${colonInstruction}
+- Preserve article meaning, headings, and SEO intent.
+- Return clean HTML only.
+
+Article HTML:
+${args.currentHtml}`;
+}
+
+async function countFinalReviewAutoRevisionAttempts(
+  convex: NonNullable<ReturnType<typeof getConvexClient>>,
+  taskId: Id<'tasks'>
+): Promise<number> {
+  const history = await convex.query(api.topicWorkflow.listWorkflowHistory, {
+    taskId,
+    limit: 120,
+  });
+  return (history.events || []).filter((event) => {
+    const payload = (event.payload as { meta?: { reasonCode?: string } } | undefined)?.meta;
+    return (
+      event.stageKey === 'final_review' &&
+      event.eventType === 'stage_progress' &&
+      payload?.reasonCode === 'final_review_auto_revision'
+    );
+  }).length;
 }
 
 function composeStageUserPrompt(
@@ -475,8 +643,7 @@ async function ensureTaskDocument(
 
 async function resolveAgentStageModelOverride(
   task: Doc<'tasks'>,
-  stage: TopicStageKey,
-  action: 'research' | 'writing'
+  stage: TopicStageKey
 ): Promise<ModelOverride | undefined> {
   if (!task.assignedAgentId) return undefined;
 
@@ -487,12 +654,40 @@ async function resolveAgentStageModelOverride(
   const overrides = agent?.modelOverrides;
   if (!overrides) return undefined;
 
-  return (
-    overrides[stage] ||
-    overrides[action] ||
-    overrides[`${stage}_stage`] ||
-    overrides.workflow
-  );
+  const keys: string[] = [
+    stage,
+    stageActionKey(stage),
+    legacyActionKeyForStage(stage),
+    `${stage}_stage`,
+    'workflow',
+  ];
+  if (stage === 'prewrite_context') {
+    keys.unshift('workflow_pm', 'workflow_prewrite');
+  }
+
+  for (const key of keys) {
+    const hit = overrides[key];
+    if (hit) return hit;
+  }
+
+  return undefined;
+}
+
+function stageActionKey(stage: TopicStageKey): AIAction {
+  switch (stage) {
+    case 'research':
+      return 'workflow_research';
+    case 'outline_build':
+      return 'workflow_outline';
+    case 'prewrite_context':
+      return 'workflow_pm';
+    case 'writing':
+      return 'workflow_writing';
+    case 'final_review':
+      return 'workflow_final_review';
+    default:
+      return 'research';
+  }
 }
 
 function resolveAutoAdvance(
@@ -518,7 +713,37 @@ function resolveAutoAdvance(
     return { toStage: 'final_review' };
   }
 
+  if (stage === 'prewrite_context') {
+    return { toStage: 'writing' };
+  }
+
+  if (stage === 'final_review') {
+    return { toStage: 'complete' };
+  }
+
   return null;
+}
+
+async function resolveProviderForStage(
+  stage: TopicStageKey,
+  stageProfileContext: StageProfileContext,
+  agentOverride?: ModelOverride
+) {
+  const stageAction = stageActionKey(stage);
+  const legacyAction = legacyActionKeyForStage(stage);
+
+  try {
+    return await resolveProviderForAction(stageAction, undefined, {
+      projectRoleOverride: stageProfileContext.projectRoleModelOverride,
+      agentOverride,
+    });
+  } catch (error) {
+    if (legacyAction === stageAction) throw error;
+    return await resolveProviderForAction(legacyAction, undefined, {
+      projectRoleOverride: stageProfileContext.projectRoleModelOverride,
+      agentOverride,
+    });
+  }
 }
 
 async function setAgentWorking(
@@ -554,14 +779,11 @@ async function runResearchStage(
   skillContext: SkillContext,
   stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
-  const modelOverride = await resolveAgentStageModelOverride(task, 'research', 'research');
-  const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForAction(
+  const modelOverride = await resolveAgentStageModelOverride(task, 'research');
+  const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForStage(
     'research',
-    undefined,
-    {
-      projectRoleOverride: stageProfileContext.projectRoleModelOverride,
-      agentOverride: modelOverride,
-    }
+    stageProfileContext,
+    modelOverride
   );
 
   const linkedPageContext = await resolveTaskLinkedPageCleanContent({
@@ -791,15 +1013,17 @@ async function runOutlineStage(
   skillContext: SkillContext,
   stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
-  const modelOverride = await resolveAgentStageModelOverride(task, 'outline_build', 'research');
-  const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForAction(
-    'research',
-    undefined,
-    {
-      projectRoleOverride: stageProfileContext.projectRoleModelOverride,
-      agentOverride: modelOverride,
-    }
+  const modelOverride = await resolveAgentStageModelOverride(task, 'outline_build');
+  const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForStage(
+    'outline_build',
+    stageProfileContext,
+    modelOverride
   );
+  const contentFormat = normalizeContentFormat(document.contentType);
+  const templatePolicy = await resolveTemplatePolicy({
+    projectId: task.projectId ?? null,
+    contentFormat,
+  });
 
   const researchSummary = document.researchSnapshot?.summary || 'No research summary provided.';
   const researchFacts = parseStringArray(document.researchSnapshot?.facts, 8);
@@ -827,7 +1051,10 @@ Requirements:
 - Start with an H1 title line.
 - Provide H2 and H3 sections for a complete article.
 - Include bullet goals under each major section.
-- Keep it actionable for a writer.`;
+- Keep it actionable for a writer.
+- Use at most ${templatePolicy.outlineConstraints.maxH2} H2 sections.
+- Use at most ${templatePolicy.outlineConstraints.maxH3PerH2} H3 sections under each H2.
+- Keep outline sized for a final article target of ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.max} words.`;
 
   const user = `Topic: ${task.title}
 Description: ${task.description || ''}
@@ -844,7 +1071,13 @@ ${competitorDomains.map((domain) => `- ${domain}`).join('\n') || '- (none)'}
 SEO recommendations:
 ${seoSuggestions.map((item) => `- ${item}`).join('\n') || '- (none)'}
 
-Generate the production outline now.`;
+Generate the production outline now.
+
+Template policy:
+- Template: ${templatePolicy.name} (${templatePolicy.key})
+- Word range: ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.max}
+- Max H2: ${templatePolicy.outlineConstraints.maxH2}
+- Max H3 per H2: ${templatePolicy.outlineConstraints.maxH3PerH2}`;
 
   const fullUserPrompt = composeStageUserPrompt(
     user,
@@ -862,7 +1095,13 @@ Generate the production outline now.`;
     })
   );
 
-  const outlineMarkdown = stripCodeFences(outlineRaw) || `# ${task.title}\n\n## Introduction\n- Add key context`;
+  const generatedOutline =
+    stripCodeFences(outlineRaw) || `# ${task.title}\n\n## Introduction\n- Add key context`;
+  const constrained = enforceOutlineConstraints(
+    generatedOutline,
+    templatePolicy.outlineConstraints
+  );
+  const outlineMarkdown = constrained.markdown;
   const outlineHtml = normalizeGeneratedHtml(marked.parse(outlineMarkdown, { async: false }) as string);
   const sectionCount = (outlineMarkdown.match(/^##\s+/gm) || []).length;
   const headingList = extractOutlineHeadings(outlineMarkdown);
@@ -872,6 +1111,9 @@ Generate the production outline now.`;
     headingCount: sectionCount,
     headings: headingList,
     generatedAt: Date.now(),
+    templateKey: templatePolicy.key,
+    templateName: templatePolicy.name,
+    outlineConstraints: templatePolicy.outlineConstraints,
   };
 
   await db
@@ -884,13 +1126,20 @@ Generate the production outline now.`;
     .where(eq(documents.id, document.id));
 
   return {
-    summary: `Outline completed (${sectionCount} sections).`,
+    summary: `Outline completed (${sectionCount} sections).${constrained.trimmed ? ' Trimmed to template section caps.' : ''}`,
     artifactTitle: 'Outline Draft',
     artifactBody: trimTo(outlineMarkdown, 4000),
     artifactData: {
       sections: sectionCount,
       headings: headingList,
       outlineSnapshot,
+      template: {
+        key: templatePolicy.key,
+        name: templatePolicy.name,
+        wordRange: templatePolicy.wordRange,
+        outlineConstraints: templatePolicy.outlineConstraints,
+      },
+      constrained: constrained.trimmed,
     },
     model: {
       providerName,
@@ -911,15 +1160,17 @@ async function runPrewriteStage(
   skillContext: SkillContext,
   stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
-  const modelOverride = await resolveAgentStageModelOverride(task, 'prewrite_context', 'research');
-  const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForAction(
-    'research',
-    undefined,
-    {
-      projectRoleOverride: stageProfileContext.projectRoleModelOverride,
-      agentOverride: modelOverride,
-    }
+  const modelOverride = await resolveAgentStageModelOverride(task, 'prewrite_context');
+  const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForStage(
+    'prewrite_context',
+    stageProfileContext,
+    modelOverride
   );
+  const contentFormat = normalizeContentFormat(document.contentType);
+  const templatePolicy = await resolveTemplatePolicy({
+    projectId: task.projectId ?? null,
+    contentFormat,
+  });
 
   const outlineText =
     String(document.outlineSnapshot?.markdown || '').trim() ||
@@ -938,6 +1189,8 @@ Return strict JSON only with this shape:
 Description: ${task.description || ''}
 Research summary: ${document.researchSnapshot?.summary || ''}
 Outline excerpt: ${trimTo(outlineText, 1200)}
+Template: ${templatePolicy.name} (${templatePolicy.key})
+Target word range: ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.max}
 
 Produce prewrite readiness and open questions.`;
 
@@ -1029,15 +1282,17 @@ async function runWritingStage(
   skillContext: SkillContext,
   stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
-  const modelOverride = await resolveAgentStageModelOverride(task, 'writing', 'writing');
-  const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForAction(
+  const modelOverride = await resolveAgentStageModelOverride(task, 'writing');
+  const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForStage(
     'writing',
-    undefined,
-    {
-      projectRoleOverride: stageProfileContext.projectRoleModelOverride,
-      agentOverride: modelOverride,
-    }
+    stageProfileContext,
+    modelOverride
   );
+  const contentFormat = normalizeContentFormat(document.contentType);
+  const templatePolicy = await resolveTemplatePolicy({
+    projectId: task.projectId ?? null,
+    contentFormat,
+  });
 
   const research = document.researchSnapshot?.summary || '';
   const facts = parseStringArray(document.researchSnapshot?.facts, 8);
@@ -1089,7 +1344,10 @@ Requirements:
 - Respect heading hierarchy.
 - Use short paragraphs and clear transitions.
 - Incorporate research facts and statistics naturally.
-- Do not truncate; finish the full article.`;
+- Do not truncate; finish the full article.
+- Keep final word count between ${templatePolicy.wordRange.min} and ${templatePolicy.wordRange.max}.
+- Do not use em dashes.
+- Use colon only for structural heading/list label contexts.`;
 
   const user = `Topic: ${task.title}
 Description: ${task.description || ''}
@@ -1114,6 +1372,11 @@ ${seoSuggestions.map((item) => `- ${item}`).join('\n') || '-'}
 
 Outline to follow:
 ${trimTo(outlineMarkdown, 2500)}
+
+Template policy:
+- Template: ${templatePolicy.name} (${templatePolicy.key})
+- Word range: ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.max}
+- Style: em dash ${templatePolicy.styleGuard.emDash}, colon ${templatePolicy.styleGuard.colon}
 
 Write the final article now.`;
 
@@ -1143,6 +1406,8 @@ Write the final article now.`;
     html: normalizedHtml,
     plainText,
     outlineHeadings,
+    minimumWords: templatePolicy.wordRange.min,
+    maximumWords: templatePolicy.wordRange.max,
   });
 
   const MAX_CONTINUATION_ATTEMPTS = 3;
@@ -1175,6 +1440,8 @@ Write the final article now.`;
       html: normalizedHtml,
       plainText,
       outlineHeadings,
+      minimumWords: templatePolicy.wordRange.min,
+      maximumWords: templatePolicy.wordRange.max,
     });
   }
 
@@ -1205,15 +1472,116 @@ Write the final article now.`;
         html: normalizedHtml,
         plainText,
         outlineHeadings,
+        minimumWords: templatePolicy.wordRange.min,
+        maximumWords: templatePolicy.wordRange.max,
       });
     }
+  }
+
+  let compressionAttempts = 0;
+  while (
+    !completion.complete &&
+    completion.wordOverflow > 0 &&
+    compressionAttempts < MAX_COMPRESSION_ATTEMPTS
+  ) {
+    compressionAttempts += 1;
+    const compressionPrompt = buildCompressionPrompt({
+      currentHtml: trimTo(normalizedHtml, 9000),
+      minimumWords: templatePolicy.wordRange.min,
+      maximumWords: templatePolicy.wordRange.max,
+      missingHeadings: completion.missingHeadings,
+    });
+
+    const compressedRaw = await collectStreamText(
+      provider.stream({
+        model,
+        system,
+        messages: [{ role: 'user', content: compressionPrompt }],
+        maxTokens,
+        temperature,
+      })
+    );
+
+    if (!compressedRaw.trim()) {
+      break;
+    }
+
+    normalizedHtml = normalizeGeneratedHtml(compressedRaw);
+    plainText = stripHtmlForCompleteness(normalizedHtml);
+    completion = evaluateWritingCompleteness({
+      html: normalizedHtml,
+      plainText,
+      outlineHeadings,
+      minimumWords: templatePolicy.wordRange.min,
+      maximumWords: templatePolicy.wordRange.max,
+    });
+  }
+
+  let styleAdjusted = false;
+  let styleFixAttempts = 0;
+  let styleGuardResult = applyStyleGuard(normalizedHtml, templatePolicy.styleGuard);
+  if (styleGuardResult.changed) {
+    styleAdjusted = true;
+    normalizedHtml = normalizeGeneratedHtml(styleGuardResult.html);
+    plainText = stripHtmlForCompleteness(normalizedHtml);
+    completion = evaluateWritingCompleteness({
+      html: normalizedHtml,
+      plainText,
+      outlineHeadings,
+      minimumWords: templatePolicy.wordRange.min,
+      maximumWords: templatePolicy.wordRange.max,
+    });
+    styleGuardResult = applyStyleGuard(normalizedHtml, templatePolicy.styleGuard);
+  }
+
+  while (
+    !styleGuardPassed(styleGuardResult.metrics, templatePolicy.styleGuard) &&
+    styleFixAttempts < STYLE_FIX_MAX_ATTEMPTS
+  ) {
+    styleFixAttempts += 1;
+    const styleFixPrompt = buildStyleFixPrompt({
+      currentHtml: trimTo(normalizedHtml, 9000),
+      policy: templatePolicy.styleGuard,
+    });
+    const styleFixRaw = await collectStreamText(
+      provider.stream({
+        model,
+        system,
+        messages: [{ role: 'user', content: styleFixPrompt }],
+        maxTokens,
+        temperature,
+      })
+    );
+    if (!styleFixRaw.trim()) {
+      break;
+    }
+    normalizedHtml = normalizeGeneratedHtml(styleFixRaw);
+    const adjusted = applyStyleGuard(normalizedHtml, templatePolicy.styleGuard);
+    styleAdjusted = styleAdjusted || adjusted.changed;
+    normalizedHtml = normalizeGeneratedHtml(adjusted.html);
+    plainText = stripHtmlForCompleteness(normalizedHtml);
+    completion = evaluateWritingCompleteness({
+      html: normalizedHtml,
+      plainText,
+      outlineHeadings,
+      minimumWords: templatePolicy.wordRange.min,
+      maximumWords: templatePolicy.wordRange.max,
+    });
+    styleGuardResult = applyStyleGuard(normalizedHtml, templatePolicy.styleGuard);
+  }
+
+  if (!styleGuardPassed(styleGuardResult.metrics, templatePolicy.styleGuard)) {
+    throw new Error(
+      'Writing output failed style guard validation (em dash / colon policy) after automated fix pass.'
+    );
   }
 
   if (!completion.complete) {
     throw new IncompleteDraftError({
       message:
         `Writing output incomplete after ${continuationAttempts} continuation attempt(s)` +
-        `${endingCompletionAttempted ? ' + ending recovery pass' : ''}: ` +
+        `${endingCompletionAttempted ? ' + ending recovery pass' : ''}` +
+        `${compressionAttempts > 0 ? ` + compression ${compressionAttempts} attempt(s)` : ''}: ` +
         `${completion.reasons.join('; ')}`,
       completion,
       partialHtml: normalizedHtml,
@@ -1270,9 +1638,18 @@ Write the final article now.`;
     artifactData: {
       wordCount,
       minWordTarget: completion.minWords,
+      maxWordTarget: completion.maxWords,
       headingCoverage: completion.headingCoverage,
       continuationAttempts,
       endingCompletionAttempted,
+      compressionAttempts,
+      styleAdjusted,
+      styleMetrics: styleGuardResult.metrics,
+      styleFixAttempts,
+      template: {
+        key: templatePolicy.key,
+        name: templatePolicy.name,
+      },
       aiDetectionScore,
       contentQualityScore,
       previewToken,
@@ -1287,6 +1664,169 @@ Write the final article now.`;
       type: 'preview_link',
       title: `Preview: ${task.title}`,
       url: `/preview/${previewToken}`,
+    },
+    control: {
+      styleAdjusted,
+    },
+  };
+}
+
+async function runFinalReviewStage(
+  task: Doc<'tasks'>,
+  document: Awaited<ReturnType<typeof getDocumentById>>,
+  skillContext: SkillContext,
+  stageProfileContext: StageProfileContext
+): Promise<StageRunResult> {
+  const modelOverride = await resolveAgentStageModelOverride(task, 'final_review');
+  const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForStage(
+    'final_review',
+    stageProfileContext,
+    modelOverride
+  );
+  const contentFormat = normalizeContentFormat(document.contentType);
+  const templatePolicy = await resolveTemplatePolicy({
+    projectId: task.projectId ?? null,
+    contentFormat,
+  });
+
+  const draftHtml =
+    typeof document.content === 'string'
+      ? document.content
+      : contentToHtml(document.content, document.plainText);
+  const draftText = stripHtmlForCompleteness(draftHtml || document.plainText || '');
+  if (!draftText || draftText.length < 240) {
+    throw new Error('Final review blocked: draft article is missing or too short.');
+  }
+
+  const outlineMarkdown = String(document.outlineSnapshot?.markdown || '').trim();
+  const outlineHeadings = extractOutlineHeadings(outlineMarkdown);
+  const completeness = evaluateWritingCompleteness({
+    html: draftHtml,
+    plainText: draftText,
+    outlineHeadings,
+    minimumWords: templatePolicy.wordRange.min,
+    maximumWords: templatePolicy.wordRange.max,
+  });
+
+  const system = `You are a strict SEO final reviewer.
+Return JSON only:
+{
+  "approved": boolean,
+  "score": number,
+  "summary": string,
+  "issues": string[],
+  "revisionBrief": string
+}
+Rules:
+- Approve only if article is publish-ready.
+- Validate SEO intent, heading coverage, factual clarity, and style policy compliance.
+- If not approved, provide a concise revision brief focused on actionable fixes.
+- Keep issue strings short and specific.`;
+
+  const user = `Task title: ${task.title}
+Target keyword: ${document.targetKeyword || task.title}
+Template: ${templatePolicy.name} (${templatePolicy.key})
+Expected word range: ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.max}
+Style policy: emDash=${templatePolicy.styleGuard.emDash}, colon=${templatePolicy.styleGuard.colon}
+
+Automated completeness diagnostics:
+- complete: ${completeness.complete ? 'yes' : 'no'}
+- word count: ${completeness.wordCount}
+- heading coverage: ${(completeness.headingCoverage * 100).toFixed(0)}%
+- reasons: ${completeness.reasons.join('; ') || 'none'}
+
+Research summary:
+${document.researchSnapshot?.summary || '-'}
+
+Draft excerpt:
+${trimTo(draftText, 5500)}
+
+Return your final review decision now.`;
+
+  const fullUserPrompt = composeStageUserPrompt(
+    user,
+    stageProfileContext.promptText,
+    skillContext.promptText
+  );
+
+  const raw = await collectStreamText(
+    provider.stream({
+      model,
+      system,
+      messages: [{ role: 'user', content: fullUserPrompt }],
+      maxTokens,
+      temperature,
+    })
+  );
+
+  const parsed = parseJsonObject<{
+    approved?: unknown;
+    score?: unknown;
+    summary?: unknown;
+    issues?: unknown;
+    revisionBrief?: unknown;
+  }>(raw);
+
+  const approved = Boolean(parsed.approved);
+  const score = Number(parsed.score ?? 0);
+  const issues = parseStringArray(parsed.issues, 12);
+  const revisionBrief = String(parsed.revisionBrief ?? '').trim();
+  const summaryText =
+    String(parsed.summary ?? '').trim() ||
+    (approved ? 'Final SEO review approved.' : 'Final SEO review requires revisions.');
+
+  if (approved) {
+    await db
+      .update(documents)
+      .set({
+        status: 'accepted',
+        updatedAt: dbNow(),
+      })
+      .where(eq(documents.id, document.id));
+  }
+
+  return {
+    summary: approved
+      ? `${summaryText}${Number.isFinite(score) && score > 0 ? ` Score ${Math.round(score)}.` : ''}`
+      : `${summaryText}${issues.length > 0 ? ` Issues: ${issues.slice(0, 3).join('; ')}.` : ''}`,
+    artifactTitle: approved ? 'Final Review: Approved' : 'Final Review: Revisions Needed',
+    artifactBody: trimTo(
+      [
+        summaryText,
+        Number.isFinite(score) && score > 0 ? `Score: ${Math.round(score)}` : null,
+        issues.length > 0 ? `Issues:\n${issues.map((issue) => `- ${issue}`).join('\n')}` : null,
+        revisionBrief ? `Revision brief:\n${revisionBrief}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+      4200
+    ),
+    artifactData: {
+      approved,
+      score: Number.isFinite(score) ? score : null,
+      issues,
+      revisionBrief,
+      completeness: {
+        wordCount: completeness.wordCount,
+        minWords: completeness.minWords,
+        maxWords: completeness.maxWords,
+        headingCoverage: completeness.headingCoverage,
+        reasons: completeness.reasons,
+      },
+      template: {
+        key: templatePolicy.key,
+        name: templatePolicy.name,
+      },
+    },
+    model: {
+      providerName,
+      model,
+      maxTokens,
+      temperature,
+    },
+    control: {
+      approved,
+      revisionBrief,
     },
   };
 }
@@ -1318,6 +1858,10 @@ async function runStage(
     return runWritingStage(task, document, skillContext, stageProfileContext);
   }
 
+  if (stage === 'final_review') {
+    return runFinalReviewStage(task, document, skillContext, stageProfileContext);
+  }
+
   throw new Error(`Stage ${stage} is not runnable.`);
 }
 
@@ -1337,12 +1881,21 @@ async function resolveStageProfileContext(
 
   try {
     const context = await buildRolePromptContext(task.projectId, role);
-    const actionKey = stage === 'writing' ? 'writing' : 'research';
+    const stageAction = stageActionKey(stage);
+    const legacyAction = legacyActionKeyForStage(stage);
+    const actionKeys = Array.from(
+      new Set([
+        stage,
+        stageAction,
+        stage === 'prewrite_context' ? 'workflow_prewrite' : '',
+        stage === 'prewrite_context' ? 'workflow_pm' : '',
+        `${stage}_stage`,
+        legacyAction,
+        'workflow',
+      ].filter(Boolean))
+    );
     const projectRoleModelOverride = resolveProjectRoleModelOverride(context.profile, [
-      stage,
-      `${stage}_stage`,
-      actionKey,
-      'workflow',
+      ...actionKeys,
     ]);
 
     return {
@@ -1387,7 +1940,7 @@ export async function runTopicWorkflow(
   await ensureDb();
 
   const autoContinue = input.autoContinue ?? true;
-  const maxStages = clamp(input.maxStages ?? 6, 1, 10);
+  const maxStages = clamp(input.maxStages ?? 10, 1, 16);
 
   const { convex } = await getWorkflowTaskForUser(input.user, input.taskId);
 
@@ -1493,13 +2046,40 @@ export async function runTopicWorkflow(
     }
 
     if (stage === 'outline_review') {
-      stoppedReason = 'Waiting for outline approvals.';
-      break;
-    }
-
-    if (stage === 'final_review') {
-      stoppedReason = 'Waiting for final SEO review.';
-      break;
+      const autoApproveSummary =
+        'Outline review auto-approved (fully automated mode). Moving to prewrite_context.';
+      await convex.mutation(api.topicWorkflow.recordApproval, {
+        taskId: currentTask._id,
+        gate: 'outline_human',
+        approved: true,
+        actorType: 'agent',
+        actorId: 'workflow-pm',
+        actorName: 'Workflow PM',
+        note: autoApproveSummary,
+      });
+      await convex.mutation(api.topicWorkflow.recordApproval, {
+        taskId: currentTask._id,
+        gate: 'outline_seo',
+        approved: true,
+        actorType: 'agent',
+        actorId: 'workflow-pm',
+        actorName: 'Workflow PM',
+        note: autoApproveSummary,
+      });
+      runs.push({
+        stage: 'outline_review',
+        summary: autoApproveSummary,
+        nextStage: 'prewrite_context',
+      });
+      const refreshedOutlineReview = await convex.query(api.tasks.get, {
+        id: currentTask._id,
+        projectId: currentTask.projectId ?? undefined,
+      });
+      if (!refreshedOutlineReview) {
+        throw new Error('Task not found after automated outline approvals.');
+      }
+      currentTask = refreshedOutlineReview;
+      continue;
     }
 
     if (!RUNNABLE_STAGES.has(stage)) {
@@ -1710,7 +2290,9 @@ export async function runTopicWorkflow(
       const failedSummary = `Stage ${stage} failed: ${errorMessage}`;
       const blockedBySafety =
         stage === 'writing' &&
-        /incomplete|truncat|abrupt|minimum|coverage/i.test(errorMessage);
+        /incomplete|truncat|abrupt|minimum|maximum|overflow|coverage|style guard|outlineSnapshot/i.test(
+          errorMessage
+        );
       if (incompleteDraftError) {
         const { completion } = incompleteDraftError;
         await convex.mutation(api.topicWorkflow.recordStageArtifact, {
@@ -1860,6 +2442,106 @@ export async function runTopicWorkflow(
       summary: stageSummary,
     };
 
+    if (stage === 'final_review') {
+      if (stageResult.control?.approved) {
+        await convex.mutation(api.topicWorkflow.recordApproval, {
+          taskId: currentTask._id,
+          gate: 'seo_final',
+          approved: true,
+          actorType: 'agent',
+          actorId: currentTask.assignedAgentId ? String(currentTask.assignedAgentId) : 'workflow-pm',
+          actorName: agent?.name || 'Workflow PM',
+          note: `Automated final SEO approval. ${stageSummary}`,
+        });
+      } else {
+        if (!autoContinue) {
+          runs.push(runRecord);
+          stoppedReason = 'Final review requested revisions.';
+          break;
+        }
+
+        const revisionAttempts = await countFinalReviewAutoRevisionAttempts(
+          convex,
+          currentTask._id
+        );
+        const revisionBrief =
+          stageResult.control?.revisionBrief?.trim() ||
+          'Final review requested improvements. Revise clarity, SEO alignment, and completeness.';
+
+        if (revisionAttempts >= FINAL_REVIEW_MAX_REVISIONS) {
+          const blockedSummary =
+            `Final review retry limit reached (${FINAL_REVIEW_MAX_REVISIONS}). ` +
+            `Workflow blocked for PM/Admin intervention.`;
+          await convex.mutation(api.tasks.update, {
+            id: currentTask._id,
+            expectedProjectId: currentTask.projectId ?? undefined,
+            workflowStageStatus: 'blocked',
+            workflowLastEventAt: Date.now(),
+            workflowLastEventText: blockedSummary,
+            status: 'IN_REVIEW',
+          });
+          await convex.mutation(api.topicWorkflow.recordStageProgress, {
+            taskId: currentTask._id,
+            stageKey: 'final_review',
+            summary: blockedSummary,
+            actorType: 'system',
+            actorId: input.user.id,
+            actorName: 'Workflow PM',
+            payload: {
+              status: 'blocked',
+              reasonCode: 'final_review_retry_exhausted',
+              maxRetries: FINAL_REVIEW_MAX_REVISIONS,
+              revisionAttempts,
+              revisionBrief,
+            },
+          });
+          runs.push({ ...runRecord, summary: blockedSummary });
+          stoppedReason = blockedSummary;
+          break;
+        }
+
+        const rerouteSummary =
+          `Final review requested revision #${revisionAttempts + 1}. ` +
+          `Routing back to writing.`;
+        await convex.mutation(api.topicWorkflow.recordStageProgress, {
+          taskId: currentTask._id,
+          stageKey: 'final_review',
+          summary: rerouteSummary,
+          actorType: 'system',
+          actorId: input.user.id,
+          actorName: 'Workflow PM',
+          payload: {
+            status: 'revision_required',
+            reasonCode: 'final_review_auto_revision',
+            revisionAttempt: revisionAttempts + 1,
+            maxRetries: FINAL_REVIEW_MAX_REVISIONS,
+            revisionBrief,
+          },
+        });
+        await convex.mutation(api.topicWorkflow.resetFromStage, {
+          taskId: currentTask._id,
+          fromStage: 'writing',
+          actorType: 'system',
+          actorId: input.user.id,
+          actorName: 'Workflow PM',
+          note: `Auto-revision from final review. ${revisionBrief}`,
+        });
+
+        runRecord.nextStage = 'writing';
+        runs.push(runRecord);
+
+        const refreshedAfterRevision = await convex.query(api.tasks.get, {
+          id: currentTask._id,
+          projectId: currentTask.projectId ?? undefined,
+        });
+        if (!refreshedAfterRevision) {
+          throw new Error('Task not found after final review auto-revision reset.');
+        }
+        currentTask = refreshedAfterRevision;
+        continue;
+      }
+    }
+
     if (!autoContinue) {
       runs.push(runRecord);
       stoppedReason = 'Stopped after current stage (autoContinue=false).';
@@ -1869,11 +2551,7 @@ export async function runTopicWorkflow(
     const next = resolveAutoAdvance(currentTask, stage);
     if (!next) {
       runs.push(runRecord);
-      if (stage === 'prewrite_context') {
-        stoppedReason = 'Prewrite complete. Waiting for explicit approval to start writing.';
-      } else {
-        stoppedReason = `No automatic transition after ${stage}.`;
-      }
+      stoppedReason = `No automatic transition after ${stage}.`;
       break;
     }
 
@@ -1902,14 +2580,6 @@ export async function runTopicWorkflow(
     currentTask = refreshedTask;
 
     const currentStage = (currentTask.workflowCurrentStageKey || 'research') as TopicStageKey;
-    if (currentStage === 'outline_review') {
-      stoppedReason = 'Waiting for outline approvals.';
-      break;
-    }
-    if (currentStage === 'final_review') {
-      stoppedReason = 'Waiting for final SEO review.';
-      break;
-    }
     if (currentStage === 'complete') {
       stoppedReason = 'Workflow completed.';
       break;

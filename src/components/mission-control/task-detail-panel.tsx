@@ -415,7 +415,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
           body: JSON.stringify({
             taskId: task._id,
             autoContinue: true,
-            maxStages: 6,
+            maxStages: 10,
           }),
         });
         if (!runRes.ok) {
@@ -468,12 +468,12 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
       const res = await fetch('/api/topic-workflow/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskId: task._id,
-          autoContinue,
-          maxStages: autoContinue ? 6 : 1,
-        }),
-      });
+          body: JSON.stringify({
+            taskId: task._id,
+            autoContinue,
+            maxStages: autoContinue ? 10 : 1,
+          }),
+        });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Failed to run workflow stage');
@@ -930,7 +930,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
             )}
 
             <div className="flex items-center gap-2 flex-wrap">
-              {workflowStage !== 'complete' && workflowStage !== 'outline_review' && workflowStage !== 'final_review' && (
+              {workflowStage !== 'complete' && workflowStage !== 'outline_review' && (
                 <>
                   <button
                     onClick={() => handleRunWorkflow(false)}
@@ -956,7 +956,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
               )}
               {workflowNextStage &&
                 workflowStage !== 'complete' &&
-                workflowStage !== 'prewrite_context' && (
+                workflowStage !== 'outline_review' && (
                 <button
                   onClick={() => handleAdvanceWorkflowStage(workflowNextStage as TopicStageKey)}
                   disabled={workflowBusy || workflowRunBusy || readOnly}
@@ -974,7 +974,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
                 <button
                   onClick={() =>
                     handleAdvanceWorkflowStage('writing', {
-                      note: 'Prewrite approved by human. Start writing stage.',
+                      note: 'Manual override: start writing from prewrite stage.',
                       runAfterAdvance: true,
                     })
                   }
@@ -986,7 +986,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
                   ) : (
                     <CheckCheck className="h-3 w-3" />
                   )}
-                  Approve Prewrite & Start Writing
+                  Force Start Writing (Override)
                 </button>
               )}
               {workflowStage === 'outline_build' && workflowFlags.outlineReviewOptional && (

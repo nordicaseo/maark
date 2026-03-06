@@ -10,7 +10,9 @@ export interface WritingCompletenessResult {
   reasons: string[];
   wordCount: number;
   minWords: number;
+  maxWords: number;
   wordGap: number;
+  wordOverflow: number;
   headingCoverage: number;
   missingHeadings: string[];
   abruptEnding: boolean;
@@ -82,6 +84,7 @@ export function evaluateWritingCompleteness(args: {
   plainText?: string;
   outlineHeadings: string[];
   minimumWords?: number;
+  maximumWords?: number;
 }): WritingCompletenessResult {
   const plainText = (args.plainText || stripHtmlForCompleteness(args.html)).trim();
   const normalizedOutline = args.outlineHeadings.map(normalizeHeading).filter(Boolean);
@@ -102,6 +105,7 @@ export function evaluateWritingCompleteness(args: {
   const wordCount = plainText.split(/\s+/).filter(Boolean).length;
   const minWords =
     args.minimumWords ?? Math.max(650, normalizedOutline.length * 140);
+  const maxWords = Math.max(minWords, args.maximumWords ?? minWords + 2400);
   const headingCoverage =
     normalizedOutline.length === 0
       ? 0
@@ -111,6 +115,9 @@ export function evaluateWritingCompleteness(args: {
   const reasons: string[] = [];
   if (wordCount < minWords) {
     reasons.push(`word count ${wordCount} is below minimum ${minWords}`);
+  }
+  if (wordCount > maxWords) {
+    reasons.push(`word count ${wordCount} exceeds maximum ${maxWords}`);
   }
   if (normalizedOutline.length > 0 && headingCoverage < 0.75) {
     reasons.push(
@@ -133,7 +140,9 @@ export function evaluateWritingCompleteness(args: {
     reasons,
     wordCount,
     minWords,
+    maxWords,
     wordGap: Math.max(0, minWords - wordCount),
+    wordOverflow: Math.max(0, wordCount - maxWords),
     headingCoverage,
     missingHeadings,
     abruptEnding,

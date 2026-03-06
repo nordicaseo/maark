@@ -84,7 +84,7 @@ export function CreateDialog({ open, onOpenChange, onCreated, projectId }: Creat
         if (created?.taskId) {
           triggerTopicWorkflowRun(created.taskId, {
             autoContinue: true,
-            maxStages: 6,
+            maxStages: 10,
             logLabel: 'topic workflow',
           });
         }

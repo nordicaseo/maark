@@ -18,7 +18,7 @@ describe('workflow runtime state resolver', () => {
     ).toBe('blocked');
   });
 
-  it('returns needs_input on manual approval stages', () => {
+  it('returns needs_input only for explicit manual review stage', () => {
     expect(
       resolveWorkflowRuntimeState({
         ...base,
@@ -31,7 +31,7 @@ describe('workflow runtime state resolver', () => {
         ...base,
         workflowCurrentStageKey: 'prewrite_context',
       })
-    ).toBe('needs_input');
+    ).toBe('working');
   });
 
   it('returns complete when stage/status indicate completion', () => {
