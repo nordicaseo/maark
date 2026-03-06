@@ -26,6 +26,7 @@ type WorkflowTask = {
   workflowTemplateKey?: string;
   workflowCurrentStageKey?: string;
   workflowStageStatus?: string;
+  workflowRunNotBeforeAt?: number | null;
   workflowLastEventAt?: number | null;
   updatedAt?: number | null;
   status: string;
@@ -116,6 +117,20 @@ export async function POST(req: NextRequest) {
           (b.workflowLastEventAt || b.updatedAt || 0)
       );
 
+    const readyResearchTasks = workflowTasks
+      .filter((task) => {
+        if (task.workflowCurrentStageKey !== 'research') return false;
+        if (task.status === 'IN_PROGRESS') return false;
+        if (task.workflowStageStatus === 'blocked') return false;
+        const runNotBeforeAt = task.workflowRunNotBeforeAt ?? 0;
+        return runNotBeforeAt <= now;
+      })
+      .sort(
+        (a, b) =>
+          (a.workflowRunNotBeforeAt || a.workflowLastEventAt || a.updatedAt || 0) -
+          (b.workflowRunNotBeforeAt || b.workflowLastEventAt || b.updatedAt || 0)
+      );
+
     const staleWorkingTasks = workflowTasks.filter((task) => {
       if (task.workflowStageStatus !== 'in_progress') return false;
       if (task.workflowCurrentStageKey === 'complete') return false;
@@ -158,7 +173,7 @@ export async function POST(req: NextRequest) {
 
     const failures: Array<{ taskId: string; error: string }> = [];
     let resumed = 0;
-    const toResume = queuedWritingTasks.slice(0, maxResumes);
+    const toResume = [...readyResearchTasks, ...queuedWritingTasks].slice(0, maxResumes);
 
     for (const task of toResume) {
       try {
@@ -187,6 +202,7 @@ export async function POST(req: NextRequest) {
       metadata: {
         projectIds,
         scanned: workflowTasks.length,
+        readyResearch: readyResearchTasks.length,
         queuedWriting: queuedWritingTasks.length,
         maxResumes,
         resumed,
@@ -197,6 +213,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       scanned: workflowTasks.length,
+      readyResearch: readyResearchTasks.length,
       queued: queuedWritingTasks.length,
       resumed,
       watchdogBlocked,

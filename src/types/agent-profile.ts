@@ -55,6 +55,8 @@ export interface ProjectAgentProfile {
   role: AgentRole;
   displayName: string;
   emoji: string | null;
+  avatarUrl: string | null;
+  shortDescription: string | null;
   mission: string | null;
   isEnabled: boolean;
   fileBundle: ProjectAgentFileBundle;
@@ -72,6 +74,8 @@ export interface UpsertProjectAgentProfileInput {
   role: AgentRole;
   displayName?: string;
   emoji?: string | null;
+  avatarUrl?: string | null;
+  shortDescription?: string | null;
   mission?: string | null;
   isEnabled?: boolean;
   fileBundle?: Partial<ProjectAgentFileBundle>;

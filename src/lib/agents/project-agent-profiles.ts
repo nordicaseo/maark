@@ -30,53 +30,61 @@ export interface RolePromptContext {
 
 const ROLE_DEFAULTS: Record<
   AgentRole,
-  { displayName: string; emoji: string; mission: string }
+  { displayName: string; emoji: string; mission: string; shortDescription: string }
 > = {
   researcher: {
     displayName: 'Sage',
     emoji: '🧠',
+    shortDescription: 'Research specialist',
     mission:
       'Produce accurate research briefs with sources, facts, and data that the team can trust.',
   },
   outliner: {
     displayName: 'Maple',
     emoji: '🧭',
+    shortDescription: 'Outline architect',
     mission:
       'Turn research into complete, sequenced outlines that writers can execute without gaps.',
   },
   writer: {
     displayName: 'Atlas',
     emoji: '✍️',
+    shortDescription: 'Content writer',
     mission:
       'Write complete, publication-ready content that follows outline, brand, and SEO requirements.',
   },
   'seo-reviewer': {
     displayName: 'Orion',
     emoji: '🔎',
+    shortDescription: 'SEO reviewer',
     mission:
       'Review drafts for SEO coverage, on-page quality, and launch-readiness before completion.',
   },
   'project-manager': {
     displayName: 'Pulse',
     emoji: '🧩',
+    shortDescription: 'Workflow orchestrator',
     mission:
       'Coordinate handoffs, unblock stages, and keep topic workflows moving with clear accountability.',
   },
   seo: {
     displayName: 'Helix',
     emoji: '📈',
+    shortDescription: 'SEO strategist',
     mission:
       'Provide strategy-level SEO guidance for keyword alignment, SERP intent, and content quality.',
   },
   content: {
     displayName: 'Lumen',
     emoji: '📝',
+    shortDescription: 'Editorial support',
     mission:
       'Support content quality, narrative clarity, and editorial consistency across deliverables.',
   },
   lead: {
     displayName: 'Astra',
     emoji: '🛡️',
+    shortDescription: 'Escalation lead',
     mission:
       'Act as escalation owner for quality gates, decision-making, and workflow continuity.',
   },
@@ -241,6 +249,14 @@ function mapProfileRow(row: Record<string, unknown>): ProjectAgentProfile {
     typeof row.mission === 'string' && row.mission.trim()
       ? row.mission
       : defaults.mission;
+  const shortDescription =
+    typeof row.shortDescription === 'string' && row.shortDescription.trim()
+      ? row.shortDescription.trim()
+      : defaults.shortDescription;
+  const avatarUrl =
+    typeof row.avatarUrl === 'string' && row.avatarUrl.trim()
+      ? row.avatarUrl.trim()
+      : null;
 
   return {
     id: Number(row.id),
@@ -248,6 +264,8 @@ function mapProfileRow(row: Record<string, unknown>): ProjectAgentProfile {
     role,
     displayName,
     emoji: emoji || null,
+    avatarUrl,
+    shortDescription: shortDescription || null,
     mission: mission || null,
     isEnabled:
       typeof row.isEnabled === 'boolean'
@@ -280,6 +298,8 @@ async function getProjectProfileRow(projectId: number, role: AgentRole) {
       role: projectAgentProfiles.role,
       displayName: projectAgentProfiles.displayName,
       emoji: projectAgentProfiles.emoji,
+      avatarUrl: projectAgentProfiles.avatarUrl,
+      shortDescription: projectAgentProfiles.shortDescription,
       mission: projectAgentProfiles.mission,
       isEnabled: projectAgentProfiles.isEnabled,
       fileBundle: projectAgentProfiles.fileBundle,
@@ -330,6 +350,7 @@ export async function seedProjectAgentProfiles(
       role,
       displayName: defaults.displayName,
       emoji: defaults.emoji,
+      shortDescription: defaults.shortDescription,
       mission: defaults.mission,
       isEnabled: true,
       fileBundle: buildDefaultFileBundle(
@@ -364,6 +385,8 @@ export async function listProjectAgentProfiles(
       role: projectAgentProfiles.role,
       displayName: projectAgentProfiles.displayName,
       emoji: projectAgentProfiles.emoji,
+      avatarUrl: projectAgentProfiles.avatarUrl,
+      shortDescription: projectAgentProfiles.shortDescription,
       mission: projectAgentProfiles.mission,
       isEnabled: projectAgentProfiles.isEnabled,
       fileBundle: projectAgentProfiles.fileBundle,
@@ -399,7 +422,16 @@ export async function upsertProjectAgentProfile(
   const defaults = roleDisplay(input.role);
   const displayName = (input.displayName || '').trim() || defaults.displayName;
   const emoji = (input.emoji || '').trim() || defaults.emoji;
+  const avatarUrlInput =
+    typeof input.avatarUrl === 'string' ? input.avatarUrl.trim() : undefined;
+  const shortDescriptionInput =
+    typeof input.shortDescription === 'string' ? input.shortDescription.trim() : undefined;
   const mission = (input.mission || '').trim() || defaults.mission;
+  const createAvatarUrl = avatarUrlInput !== undefined ? avatarUrlInput || null : null;
+  const createShortDescription =
+    shortDescriptionInput !== undefined
+      ? shortDescriptionInput || defaults.shortDescription
+      : defaults.shortDescription;
 
   if (!existingRow) {
     await db.insert(projectAgentProfiles).values({
@@ -407,6 +439,8 @@ export async function upsertProjectAgentProfile(
       role: input.role,
       displayName,
       emoji,
+      avatarUrl: createAvatarUrl,
+      shortDescription: createShortDescription,
       mission,
       isEnabled: input.isEnabled !== false,
       fileBundle: normalizeFileBundle(
@@ -433,6 +467,14 @@ export async function upsertProjectAgentProfile(
   }
 
   const existing = mapProfileRow(existingRow);
+  const avatarUrl =
+    avatarUrlInput !== undefined
+      ? avatarUrlInput || null
+      : existing.avatarUrl || null;
+  const shortDescription =
+    shortDescriptionInput !== undefined
+      ? shortDescriptionInput || defaults.shortDescription
+      : existing.shortDescription || defaults.shortDescription;
   const mergedFileBundle = {
     ...existing.fileBundle,
     ...(input.fileBundle || {}),
@@ -449,6 +491,8 @@ export async function upsertProjectAgentProfile(
     .set({
       displayName,
       emoji,
+      avatarUrl,
+      shortDescription,
       mission,
       isEnabled:
         input.isEnabled !== undefined
@@ -573,6 +617,8 @@ export async function buildRolePromptContext(
       role,
       displayName: defaults.displayName,
       emoji: defaults.emoji,
+      avatarUrl: null,
+      shortDescription: defaults.shortDescription,
       mission: defaults.mission,
       isEnabled: true,
       fileBundle: buildDefaultFileBundle(role, defaults.displayName, defaults.emoji, defaults.mission),

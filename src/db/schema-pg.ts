@@ -132,6 +132,8 @@ export const projectAgentProfiles = pgTable('project_agent_profiles', {
   role: varchar('role', { length: 60 }).notNull(),
   displayName: varchar('display_name', { length: 200 }).notNull(),
   emoji: varchar('emoji', { length: 16 }),
+  avatarUrl: text('avatar_url'),
+  shortDescription: text('short_description'),
   mission: text('mission'),
   isEnabled: boolean('is_enabled').notNull().default(true),
   fileBundle: jsonb('file_bundle'),

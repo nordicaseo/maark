@@ -89,6 +89,7 @@ export const create = mutation({
     workflowCompletedAt: v.optional(v.number()),
     workflowLastEventAt: v.optional(v.number()),
     workflowLastEventText: v.optional(v.string()),
+    workflowRunNotBeforeAt: v.optional(v.number()),
     topicKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -156,6 +157,7 @@ export const update = mutation({
     workflowCompletedAt: v.optional(v.number()),
     workflowLastEventAt: v.optional(v.number()),
     workflowLastEventText: v.optional(v.string()),
+    workflowRunNotBeforeAt: v.optional(v.number()),
     topicKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {

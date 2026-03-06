@@ -38,6 +38,7 @@ import {
   type PageType,
   type PageSubtype,
 } from '@/lib/content-workflow-taxonomy';
+import { triggerTopicWorkflowRun } from '@/lib/topic-workflow-client';
 
 interface Skill {
   id: number;
@@ -227,16 +228,10 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
             });
           }
           if (!missingSkill) {
-            void fetch('/api/topic-workflow/run', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                taskId: created.taskId,
-                autoContinue: true,
-                maxStages: 6,
-              }),
-            }).catch((err) => {
-              console.error('Auto-run topic workflow failed:', err);
+            triggerTopicWorkflowRun(created.taskId, {
+              autoContinue: true,
+              maxStages: 6,
+              logLabel: 'topic workflow',
             });
           }
         }

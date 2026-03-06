@@ -183,6 +183,8 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
         role VARCHAR(60) NOT NULL,
         display_name VARCHAR(200) NOT NULL,
         emoji VARCHAR(16),
+        avatar_url TEXT,
+        short_description TEXT,
         mission TEXT,
         is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         file_bundle JSONB,
@@ -214,6 +216,13 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       );
     EXCEPTION WHEN duplicate_table THEN NULL;
     END $$;
+  `);
+
+  await sql.query(`
+    ALTER TABLE project_agent_profiles
+      ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+    ALTER TABLE project_agent_profiles
+      ADD COLUMN IF NOT EXISTS short_description TEXT;
   `);
 
   // ── Skill Parts ──
@@ -858,6 +867,8 @@ function createDb() {
       role TEXT NOT NULL,
       display_name TEXT NOT NULL,
       emoji TEXT,
+      avatar_url TEXT,
+      short_description TEXT,
       mission TEXT,
       is_enabled INTEGER NOT NULL DEFAULT 1,
       file_bundle TEXT,
@@ -881,6 +892,8 @@ function createDb() {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+  addColumnSafe(sqlite, 'project_agent_profiles', 'avatar_url', 'TEXT');
+  addColumnSafe(sqlite, 'project_agent_profiles', 'short_description', 'TEXT');
 
   // ── Skill Parts ──
   sqlite.exec(`

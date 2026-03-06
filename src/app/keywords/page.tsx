@@ -18,6 +18,7 @@ import {
 import { useActiveProject } from '@/hooks/use-active-project';
 import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
 import { withProjectScope } from '@/lib/project-context';
+import { triggerTopicWorkflowRun } from '@/lib/topic-workflow-client';
 import type { Keyword, KeywordIntent, KeywordPriority, KeywordStatus } from '@/types/keyword';
 import { KEYWORD_INTENT_LABELS, KEYWORD_STATUS_LABELS } from '@/types/keyword';
 import { OperationsSidebar } from '@/components/layout/operations-sidebar';
@@ -197,16 +198,10 @@ export default function KeywordsPage() {
       if (res.ok) {
         const created = await res.json();
         if (created?.taskId) {
-          void fetch('/api/topic-workflow/run', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              taskId: created.taskId,
-              autoContinue: true,
-              maxStages: 6,
-            }),
-          }).catch((err) => {
-            console.error('Auto-run topic workflow failed:', err);
+          triggerTopicWorkflowRun(created.taskId, {
+            autoContinue: true,
+            maxStages: 6,
+            logLabel: 'topic workflow',
           });
         }
         await refreshKeywordData();
@@ -268,16 +263,10 @@ export default function KeywordsPage() {
       if (res.ok) {
         const created = await res.json();
         if (created?.taskId) {
-          void fetch('/api/topic-workflow/run', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              taskId: created.taskId,
-              autoContinue: true,
-              maxStages: 6,
-            }),
-          }).catch((err) => {
-            console.error('Auto-run cluster topic workflow failed:', err);
+          triggerTopicWorkflowRun(created.taskId, {
+            autoContinue: true,
+            maxStages: 6,
+            logLabel: 'cluster topic workflow',
           });
         }
         await refreshKeywordData();

@@ -4,6 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 
 const WORKFLOW_TEMPLATE_KEY = "topic_production_v1";
+const INITIAL_WORKFLOW_START_DELAY_MS = 20_000;
 
 type TopicStageKey =
   | "research"
@@ -543,6 +544,16 @@ async function assignStageOwner(
     stageKey: TopicStageKey;
   }
 ) {
+  const currentTask = await ctx.db.get(args.taskId);
+  if (!currentTask) {
+    return {
+      blocked: true,
+      queued: false,
+      assignedAgentId: null as Id<"agents"> | null,
+      assignedAgentName: null as string | null,
+    };
+  }
+
   const stageOwnerChain = stageOwnerChains[args.stageKey] || [];
   const assignableRoles = stageOwnerChain.filter((role) => role !== "human");
   if (assignableRoles.length === 0) {
@@ -579,6 +590,7 @@ async function assignStageOwner(
     await ctx.db.patch(args.taskId, {
       assignedAgentId: undefined,
       workflowStageStatus: queueWriting ? "queued" : "blocked",
+      status: queueWriting ? "PENDING" : currentTask.status,
       workflowUpdatedAt: now,
       updatedAt: now,
     });
@@ -612,9 +624,16 @@ async function assignStageOwner(
     };
   }
 
+  const isInitialResearchAssignment =
+    args.stageKey === "research" &&
+    (currentTask.status === "BACKLOG" || currentTask.status === "PENDING");
+  const assignedStatus = isInitialResearchAssignment ? "PENDING" : currentTask.status;
+  const assignedStageStatus = isInitialResearchAssignment ? "active" : "in_progress";
+
   await ctx.db.patch(args.taskId, {
     assignedAgentId: assignment.agent._id,
-    workflowStageStatus: "in_progress",
+    status: assignedStatus,
+    workflowStageStatus: assignedStageStatus,
     workflowUpdatedAt: now,
     updatedAt: Date.now(),
   });
@@ -670,6 +689,7 @@ async function transitionStage(
     updatedAt: now,
     status: stageToTaskStatus(args.toStage),
     workflowApprovals: approvals,
+    workflowRunNotBeforeAt: args.toStage === "research" ? task.workflowRunNotBeforeAt : undefined,
   };
 
   if (!task.startedAt && args.toStage !== "complete") {
@@ -769,13 +789,14 @@ export const createTopicFromSource = mutation({
     const outlineReviewOptional = args.options?.outlineReviewOptional ?? true;
     const seoReviewRequired = args.options?.seoReviewRequired ?? true;
     const initialStage: TopicStageKey = "research";
+    const runNotBeforeAt = now + INITIAL_WORKFLOW_START_DELAY_MS;
     const initialSummary = `Topic workflow created from ${args.entryPoint}: ${args.topic}`;
 
     const taskId = await ctx.db.insert("tasks", {
       title: args.topic,
       description: `Topic workflow (${args.entryPoint})`,
       type: "content",
-      status: stageToTaskStatus(initialStage),
+      status: "BACKLOG",
       priority: "MEDIUM",
       documentId: args.documentId,
       projectId: args.projectId,
@@ -783,10 +804,9 @@ export const createTopicFromSource = mutation({
       tags: ["topic", "workflow", args.entryPoint],
       createdAt: now,
       updatedAt: now,
-      startedAt: now,
       workflowTemplateKey: WORKFLOW_TEMPLATE_KEY,
       workflowCurrentStageKey: initialStage,
-      workflowStageStatus: "in_progress",
+      workflowStageStatus: "active",
       workflowFlags: { outlineReviewOptional, seoReviewRequired },
       workflowApprovals: {
         outlineHuman: false,
@@ -798,6 +818,7 @@ export const createTopicFromSource = mutation({
       workflowUpdatedAt: now,
       workflowLastEventAt: now,
       workflowLastEventText: initialSummary,
+      workflowRunNotBeforeAt: runNotBeforeAt,
       topicKey,
     });
 

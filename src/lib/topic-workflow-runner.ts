@@ -1404,6 +1404,47 @@ export async function runTopicWorkflow(
 
   for (let i = 0; i < maxStages; i += 1) {
     const stage = (currentTask.workflowCurrentStageKey || 'research') as TopicStageKey;
+    const runNotBeforeAt = currentTask.workflowRunNotBeforeAt ?? null;
+    if (
+      stage === 'research' &&
+      runNotBeforeAt &&
+      runNotBeforeAt > Date.now() &&
+      currentTask.workflowStageStatus !== 'blocked' &&
+      currentTask.workflowStageStatus !== 'queued'
+    ) {
+      const seconds = Math.max(1, Math.ceil((runNotBeforeAt - Date.now()) / 1000));
+      const planningSummary = `Planning in progress. Research will auto-start in ~${seconds}s.`;
+
+      await convex.mutation(api.tasks.update, {
+        id: currentTask._id,
+        expectedProjectId: currentTask.projectId ?? undefined,
+        status: 'PENDING',
+        workflowStageStatus: 'active',
+        workflowLastEventAt: Date.now(),
+        workflowLastEventText: planningSummary,
+      });
+
+      if (!currentTask.workflowLastEventText?.includes('Planning in progress')) {
+        await convex.mutation(api.topicWorkflow.recordStageProgress, {
+          taskId: currentTask._id,
+          stageKey: stage,
+          summary: planningSummary,
+          actorType: 'system',
+          actorId: input.user.id,
+          actorName: 'Workflow PM',
+          payload: {
+            status: 'active',
+            reason: 'planned_start_delay',
+            runNotBeforeAt,
+            remainingSeconds: seconds,
+          },
+        });
+      }
+
+      runs.push({ stage, summary: planningSummary });
+      stoppedReason = planningSummary;
+      break;
+    }
 
     if (stage === 'seo_intel_review') {
       const bypassSummary =
@@ -1599,6 +1640,21 @@ export async function runTopicWorkflow(
 
     const ensured = await ensureTaskDocument(currentTask, input.user);
     currentTask = ensured.task;
+    await convex.mutation(api.tasks.update, {
+      id: currentTask._id,
+      expectedProjectId: currentTask.projectId ?? undefined,
+      status: 'IN_PROGRESS',
+      workflowStageStatus: 'in_progress',
+      workflowRunNotBeforeAt: undefined,
+      startedAt: currentTask.startedAt ?? Date.now(),
+    });
+    const refreshedForRun = await convex.query(api.tasks.get, {
+      id: currentTask._id,
+      projectId: currentTask.projectId ?? undefined,
+    });
+    if (refreshedForRun) {
+      currentTask = refreshedForRun;
+    }
     const freshDocument = await getDocumentById(ensured.document.id);
     const skillContext = await buildSkillContext(currentTask, stageProfileContext.roleSkillIds);
     const agent = await setAgentWorking(convex, currentTask, assignedAgent);

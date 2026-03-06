@@ -61,6 +61,8 @@ interface AgentProfilesResponse {
 interface ProfileDraft {
   displayName: string;
   emoji: string;
+  avatarUrl: string;
+  shortDescription: string;
   mission: string;
   isEnabled: boolean;
   fileBundle: ProjectAgentFileBundle;
@@ -109,6 +111,8 @@ function mapProfileToDraft(profile: ProjectAgentProfile | null): ProfileDraft {
     return {
       displayName: '',
       emoji: '',
+      avatarUrl: '',
+      shortDescription: '',
       mission: '',
       isEnabled: true,
       fileBundle: { ...EMPTY_FILE_BUNDLE },
@@ -119,6 +123,8 @@ function mapProfileToDraft(profile: ProjectAgentProfile | null): ProfileDraft {
   return {
     displayName: profile.displayName || '',
     emoji: profile.emoji || '',
+    avatarUrl: profile.avatarUrl || '',
+    shortDescription: profile.shortDescription || '',
     mission: profile.mission || '',
     isEnabled: profile.isEnabled,
     fileBundle: { ...EMPTY_FILE_BUNDLE, ...profile.fileBundle },
@@ -267,6 +273,8 @@ export default function AdminAgentsPage() {
           role: selectedRole,
           displayName: draft.displayName,
           emoji: draft.emoji,
+          avatarUrl: draft.avatarUrl,
+          shortDescription: draft.shortDescription,
           mission: draft.mission,
           isEnabled: draft.isEnabled,
           fileBundle: draft.fileBundle,
@@ -487,6 +495,29 @@ export default function AdminAgentsPage() {
                   onChange={(e) => setDraft((prev) => ({ ...prev, emoji: e.target.value }))}
                 />
               </div>
+              <div>
+                <label className="text-xs font-medium mb-1 block">Avatar URL</label>
+                <Input
+                  value={draft.avatarUrl}
+                  placeholder="https://..."
+                  onChange={(e) =>
+                    setDraft((prev) => ({ ...prev, avatarUrl: e.target.value }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-3 mt-3">
+              <div>
+                <label className="text-xs font-medium mb-1 block">Short Description</label>
+                <Input
+                  value={draft.shortDescription}
+                  placeholder="What this agent does"
+                  onChange={(e) =>
+                    setDraft((prev) => ({ ...prev, shortDescription: e.target.value }))
+                  }
+                />
+              </div>
               <div className="flex items-end">
                 <div className="flex items-center gap-2">
                   <Checkbox
@@ -613,4 +644,3 @@ export default function AdminAgentsPage() {
     </div>
   );
 }
-

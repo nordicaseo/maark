@@ -112,6 +112,8 @@ export const projectAgentProfiles = sqliteTable('project_agent_profiles', {
   role: text('role').notNull(),
   displayName: text('display_name').notNull(),
   emoji: text('emoji'),
+  avatarUrl: text('avatar_url'),
+  shortDescription: text('short_description'),
   mission: text('mission'),
   isEnabled: integer('is_enabled').notNull().default(1),
   fileBundle: text('file_bundle', { mode: 'json' }),

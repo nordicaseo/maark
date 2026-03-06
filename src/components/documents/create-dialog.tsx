@@ -32,6 +32,7 @@ import {
   type CollectionSubtype,
   type PageType,
 } from '@/lib/content-workflow-taxonomy';
+import { triggerTopicWorkflowRun } from '@/lib/topic-workflow-client';
 
 interface CreateDialogProps {
   open: boolean;
@@ -81,16 +82,10 @@ export function CreateDialog({ open, onOpenChange, onCreated, projectId }: Creat
         const created = await res.json();
         const documentId = created.contentDocumentId;
         if (created?.taskId) {
-          void fetch('/api/topic-workflow/run', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              taskId: created.taskId,
-              autoContinue: true,
-              maxStages: 6,
-            }),
-          }).catch((err) => {
-            console.error('Auto-run topic workflow failed:', err);
+          triggerTopicWorkflowRun(created.taskId, {
+            autoContinue: true,
+            maxStages: 6,
+            logLabel: 'topic workflow',
           });
         }
         onCreated();

@@ -62,6 +62,7 @@ export default defineSchema({
     workflowCompletedAt: v.optional(v.number()),
     workflowLastEventAt: v.optional(v.number()),
     workflowLastEventText: v.optional(v.string()),
+    workflowRunNotBeforeAt: v.optional(v.number()),
     topicKey: v.optional(v.string()),
   })
     .index("by_status", ["status"])

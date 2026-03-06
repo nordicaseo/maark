@@ -60,6 +60,16 @@ function sanitizeModelOverrides(input: unknown) {
   return out;
 }
 
+function sanitizeAvatarUrl(input: unknown): string | undefined {
+  if (typeof input !== 'string') return undefined;
+  const value = input.trim();
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value) || value.startsWith('/')) {
+    return value;
+  }
+  return undefined;
+}
+
 export async function GET(req: NextRequest) {
   const auth = await requireRole('super_admin');
   if (auth.error) return auth.error;
@@ -127,6 +137,9 @@ export async function PUT(req: NextRequest) {
       role: body.role,
       displayName: typeof body.displayName === 'string' ? body.displayName : undefined,
       emoji: typeof body.emoji === 'string' ? body.emoji : undefined,
+      avatarUrl: sanitizeAvatarUrl(body.avatarUrl),
+      shortDescription:
+        typeof body.shortDescription === 'string' ? body.shortDescription : undefined,
       mission: typeof body.mission === 'string' ? body.mission : undefined,
       isEnabled: typeof body.isEnabled === 'boolean' ? body.isEnabled : undefined,
       fileBundle: sanitizeFileBundle(body.fileBundle),
