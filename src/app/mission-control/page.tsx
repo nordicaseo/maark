@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { useConvexAvailable } from '@/lib/convex/provider';
 import { useRouter } from 'next/navigation';
@@ -134,6 +134,7 @@ export default function MissionControlPage() {
   const [orgLoading, setOrgLoading] = useState(false);
   const [orgProjectFilter, setOrgProjectFilter] = useState<number | null>(null);
   const [orgNextCursor, setOrgNextCursor] = useState<string | null>(null);
+  const lastInteractionAtRef = useRef<number>(Date.now());
   const isClientRole = user?.role === 'client';
 
   useEffect(() => {
@@ -191,6 +192,57 @@ export default function MissionControlPage() {
       window.clearInterval(interval);
     };
   }, [projectId, user, orgProjectFilter]);
+
+  useEffect(() => {
+    const markInteraction = () => {
+      lastInteractionAtRef.current = Date.now();
+    };
+    window.addEventListener('pointerdown', markInteraction, { passive: true });
+    window.addEventListener('keydown', markInteraction, { passive: true });
+    window.addEventListener('wheel', markInteraction, { passive: true });
+    window.addEventListener('mousemove', markInteraction, { passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', markInteraction);
+      window.removeEventListener('keydown', markInteraction);
+      window.removeEventListener('wheel', markInteraction);
+      window.removeEventListener('mousemove', markInteraction);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+
+    const sendPresence = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      const active = Date.now() - lastInteractionAtRef.current < 60_000;
+      const scopedProjectId = projectId ?? orgProjectFilter ?? null;
+      try {
+        await fetch('/api/team/presence', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: scopedProjectId,
+            active,
+          }),
+        });
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Presence heartbeat failed:', error);
+        }
+      }
+    };
+
+    void sendPresence();
+    const interval = window.setInterval(() => {
+      void sendPresence();
+    }, 30_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [user, projectId, orgProjectFilter]);
 
   useEffect(() => {
     if (!user || isClientRole) return;

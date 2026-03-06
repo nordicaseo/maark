@@ -46,6 +46,35 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
     CREATE UNIQUE INDEX IF NOT EXISTS project_members_unique ON project_members(project_id, user_id);
+
+    CREATE TABLE IF NOT EXISTS user_presence (
+      id SERIAL PRIMARY KEY,
+      project_id INTEGER NOT NULL DEFAULT 0,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      is_online BOOLEAN NOT NULL DEFAULT FALSE,
+      last_seen_at TIMESTAMP,
+      online_seconds INTEGER NOT NULL DEFAULT 0,
+      active_seconds INTEGER NOT NULL DEFAULT 0,
+      heartbeat_count INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS user_presence_unique_project_user
+      ON user_presence(project_id, user_id);
+    CREATE INDEX IF NOT EXISTS user_presence_project_idx ON user_presence(project_id);
+    CREATE INDEX IF NOT EXISTS user_presence_user_idx ON user_presence(user_id);
+  `);
+
+  await sql.query(`
+    ALTER TABLE user_presence ADD COLUMN IF NOT EXISTS project_id INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE user_presence ADD COLUMN IF NOT EXISTS user_id TEXT;
+    ALTER TABLE user_presence ADD COLUMN IF NOT EXISTS is_online BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE user_presence ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP;
+    ALTER TABLE user_presence ADD COLUMN IF NOT EXISTS online_seconds INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE user_presence ADD COLUMN IF NOT EXISTS active_seconds INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE user_presence ADD COLUMN IF NOT EXISTS heartbeat_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE user_presence ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW();
+    ALTER TABLE user_presence ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW();
   `);
 
   // ── Documents (with new columns) ──
@@ -762,7 +791,31 @@ function createDb() {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE UNIQUE INDEX IF NOT EXISTS project_members_unique ON project_members(project_id, user_id);
+
+    CREATE TABLE IF NOT EXISTS user_presence (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL DEFAULT 0,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      is_online INTEGER NOT NULL DEFAULT 0,
+      last_seen_at TEXT,
+      online_seconds INTEGER NOT NULL DEFAULT 0,
+      active_seconds INTEGER NOT NULL DEFAULT 0,
+      heartbeat_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS user_presence_unique_project_user
+      ON user_presence(project_id, user_id);
+    CREATE INDEX IF NOT EXISTS user_presence_project_idx ON user_presence(project_id);
+    CREATE INDEX IF NOT EXISTS user_presence_user_idx ON user_presence(user_id);
   `);
+  addColumnSafe(sqlite, 'user_presence', 'project_id', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnSafe(sqlite, 'user_presence', 'user_id', 'TEXT');
+  addColumnSafe(sqlite, 'user_presence', 'is_online', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnSafe(sqlite, 'user_presence', 'last_seen_at', 'TEXT');
+  addColumnSafe(sqlite, 'user_presence', 'online_seconds', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnSafe(sqlite, 'user_presence', 'active_seconds', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnSafe(sqlite, 'user_presence', 'heartbeat_count', 'INTEGER NOT NULL DEFAULT 0');
 
   // ── Documents ──
   sqlite.exec(`

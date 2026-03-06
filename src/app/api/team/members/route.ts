@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
-import { projectMembers, users } from '@/db/schema';
+import { projectMembers, userPresence, users } from '@/db/schema';
 import { getAuthUser } from '@/lib/auth';
 import {
   getAccessibleProjectIds,
@@ -9,6 +9,39 @@ import {
   userCanAccessProject,
 } from '@/lib/access';
 import { eq, inArray } from 'drizzle-orm';
+
+const ONLINE_STALE_THRESHOLD_MS = 95 * 1000;
+
+function enrichWithPresence<T extends { id: string }>(
+  rows: T[],
+  presenceRows: Array<{
+    userId: string;
+    lastSeenAt: string | null;
+    onlineSeconds: number | null;
+    activeSeconds: number | null;
+    heartbeatCount: number | null;
+  }>
+) {
+  const now = Date.now();
+  const map = new Map(presenceRows.map((row) => [row.userId, row]));
+  return rows.map((row) => {
+    const presence = map.get(row.id);
+    const lastSeenAt = presence?.lastSeenAt || null;
+    const lastSeenMs = lastSeenAt ? new Date(lastSeenAt).getTime() : 0;
+    const isOnline = Boolean(lastSeenMs && now - lastSeenMs <= ONLINE_STALE_THRESHOLD_MS);
+    const onlineSeconds = Number(presence?.onlineSeconds || 0);
+    const activeSeconds = Number(presence?.activeSeconds || 0);
+    return {
+      ...row,
+      isOnline,
+      lastSeenAt,
+      onlineSeconds,
+      activeSeconds,
+      activityRatio: onlineSeconds > 0 ? Math.min(1, activeSeconds / onlineSeconds) : 0,
+      heartbeatCount: Number(presence?.heartbeatCount || 0),
+    };
+  });
+}
 
 export async function GET(req: NextRequest) {
   const user = await getAuthUser();
@@ -19,6 +52,7 @@ export async function GET(req: NextRequest) {
   try {
     await ensureDb();
     const requestedProjectId = getRequestedProjectId(req);
+    const presenceScopeProjectId = requestedProjectId ?? 0;
 
     if (requestedProjectId !== null) {
       if (!(await userCanAccessProject(user, requestedProjectId))) {
@@ -35,7 +69,17 @@ export async function GET(req: NextRequest) {
         .from(projectMembers)
         .innerJoin(users, eq(projectMembers.userId, users.id))
         .where(eq(projectMembers.projectId, requestedProjectId));
-      return NextResponse.json(rows);
+      const presenceRows = await db
+        .select({
+          userId: userPresence.userId,
+          lastSeenAt: userPresence.lastSeenAt,
+          onlineSeconds: userPresence.onlineSeconds,
+          activeSeconds: userPresence.activeSeconds,
+          heartbeatCount: userPresence.heartbeatCount,
+        })
+        .from(userPresence)
+        .where(eq(userPresence.projectId, presenceScopeProjectId));
+      return NextResponse.json(enrichWithPresence(rows, presenceRows));
     }
 
     if (isAdminUser(user)) {
@@ -48,7 +92,17 @@ export async function GET(req: NextRequest) {
           role: users.role,
         })
         .from(users);
-      return NextResponse.json(rows);
+      const presenceRows = await db
+        .select({
+          userId: userPresence.userId,
+          lastSeenAt: userPresence.lastSeenAt,
+          onlineSeconds: userPresence.onlineSeconds,
+          activeSeconds: userPresence.activeSeconds,
+          heartbeatCount: userPresence.heartbeatCount,
+        })
+        .from(userPresence)
+        .where(eq(userPresence.projectId, presenceScopeProjectId));
+      return NextResponse.json(enrichWithPresence(rows, presenceRows));
     }
 
     const accessibleProjectIds = await getAccessibleProjectIds(user);
@@ -74,8 +128,18 @@ export async function GET(req: NextRequest) {
       seen.add(row.id);
       return true;
     });
+    const presenceRows = await db
+      .select({
+        userId: userPresence.userId,
+        lastSeenAt: userPresence.lastSeenAt,
+        onlineSeconds: userPresence.onlineSeconds,
+        activeSeconds: userPresence.activeSeconds,
+        heartbeatCount: userPresence.heartbeatCount,
+      })
+      .from(userPresence)
+      .where(eq(userPresence.projectId, presenceScopeProjectId));
 
-    return NextResponse.json(uniqueRows);
+    return NextResponse.json(enrichWithPresence(uniqueRows, presenceRows));
   } catch (error) {
     console.error('Error fetching team members:', error);
     return NextResponse.json([], { status: 200 });

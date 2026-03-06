@@ -9,6 +9,7 @@ export const analysisSnapshots = schema.analysisSnapshots;
 export const users = schema.users;
 export const projects = schema.projects;
 export const projectMembers = schema.projectMembers;
+export const userPresence = schema.userPresence;
 export const skills = schema.skills;
 export const projectAgentProfiles = schema.projectAgentProfiles;
 export const agentSharedProfiles = schema.agentSharedProfiles;

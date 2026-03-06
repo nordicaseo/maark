@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from 'convex/react';
-import { Bot, ChevronDown } from 'lucide-react';
+import { Bot, ChevronDown, Users } from 'lucide-react';
 import Image from 'next/image';
 import { api } from '../../../convex/_generated/api';
 import type { Doc } from '../../../convex/_generated/dataModel';
 import { useActiveProject } from '@/hooks/use-active-project';
+import { useTeamMembers } from './team-members-provider';
 
 type Agent = Doc<'agents'>;
 
@@ -49,9 +50,11 @@ const STATUS_ORDER: Array<'WORKING' | 'ONLINE' | 'IDLE' | 'OFFLINE'> = [
 
 export function AgentsSidebar() {
   const agents = useQuery(api.agents.list, { limit: 300 });
+  const { members } = useTeamMembers();
   const { activeProjectId } = useActiveProject();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [profileMap, setProfileMap] = useState<Record<string, AgentProfileSummary>>({});
+  const [expandedHumanId, setExpandedHumanId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,6 +95,14 @@ export function AgentsSidebar() {
     label: status.charAt(0) + status.slice(1).toLowerCase(),
     agents: agents.filter((agent) => agent.status === status),
   })).filter((section) => section.agents.length > 0);
+  const humanMembers = members
+    .slice()
+    .sort((a, b) => {
+      const aOnline = a.isOnline ? 1 : 0;
+      const bOnline = b.isOnline ? 1 : 0;
+      if (aOnline !== bOnline) return bOnline - aOnline;
+      return (b.activeSeconds || 0) - (a.activeSeconds || 0);
+    });
 
   return (
     <div className="p-4 space-y-4">
@@ -124,8 +135,51 @@ export function AgentsSidebar() {
           </div>
         </div>
       ))}
+
+      <div className="pt-1">
+        <div className="flex items-center gap-2 mb-2">
+          <Users className="h-4 w-4" style={{ color: 'var(--mc-text-secondary)' }} />
+          <span className="mc-header-mono">Human Workforce ({humanMembers.length})</span>
+        </div>
+        <div className="space-y-1.5">
+          {humanMembers.map((member) => (
+            <HumanCard
+              key={member.id}
+              member={member}
+              expanded={expandedHumanId === member.id}
+              onToggle={() =>
+                setExpandedHumanId((prev) => (prev === member.id ? null : member.id))
+              }
+            />
+          ))}
+          {humanMembers.length === 0 && (
+            <p className="text-xs" style={{ color: 'var(--mc-text-muted)' }}>
+              No human members in current scope.
+            </p>
+          )}
+        </div>
+      </div>
     </div>
   );
+}
+
+function formatDuration(seconds: number | undefined): string {
+  const total = Math.max(0, Math.floor(seconds || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+function timeAgoFromIso(iso: string | null | undefined): string {
+  if (!iso) return 'never';
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return 'unknown';
+  const diffMs = Date.now() - parsed.getTime();
+  if (diffMs < 60_000) return 'just now';
+  if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)}m ago`;
+  if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)}h ago`;
+  return `${Math.floor(diffMs / 86_400_000)}d ago`;
 }
 
 function AgentAvatar({ agent, profile }: { agent: Agent; profile?: AgentProfileSummary }) {
@@ -155,6 +209,88 @@ function AgentAvatar({ agent, profile }: { agent: Agent; profile?: AgentProfileS
     <div className="h-7 w-7 rounded-md shrink-0 border border-[var(--mc-border)] bg-[var(--mc-overlay)] flex items-center justify-center text-xs font-semibold">
       {agent.name.charAt(0).toUpperCase()}
     </div>
+  );
+}
+
+function HumanCard({
+  member,
+  expanded,
+  onToggle,
+}: {
+  member: {
+    id: string;
+    name: string | null;
+    email: string;
+    image: string | null;
+    role: string;
+    isOnline?: boolean;
+    lastSeenAt?: string | null;
+    onlineSeconds?: number;
+    activeSeconds?: number;
+    activityRatio?: number;
+  };
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const label = member.name || member.email;
+  const statusClass = member.isOnline ? 'online' : 'offline';
+  const activityPercent = Math.round((member.activityRatio || 0) * 100);
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="w-full text-left rounded-lg border border-[var(--mc-border)] bg-[color-mix(in_srgb,var(--mc-surface)_92%,white_8%)] px-2.5 py-2 transition-colors hover:border-[var(--mc-border-hover)]"
+      aria-expanded={expanded}
+    >
+      <div className="flex items-start gap-2.5">
+        {member.image ? (
+          <Image
+            src={member.image}
+            alt={label}
+            width={28}
+            height={28}
+            unoptimized
+            className="h-7 w-7 rounded-full object-cover border border-[var(--mc-border)]"
+          />
+        ) : (
+          <div className="h-7 w-7 rounded-full border border-[var(--mc-border)] bg-[var(--mc-overlay)] flex items-center justify-center text-xs font-semibold">
+            {label.charAt(0).toUpperCase()}
+          </div>
+        )}
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm font-medium truncate" style={{ color: 'var(--mc-text-primary)' }}>
+              {label}
+            </span>
+            <span className={`mc-status-dot ${statusClass}`} />
+          </div>
+          <p className="text-[11px] leading-4 truncate" style={{ color: 'var(--mc-text-secondary)' }}>
+            {member.role}
+          </p>
+        </div>
+
+        <ChevronDown
+          className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
+          style={{ color: 'var(--mc-text-tertiary)' }}
+        />
+      </div>
+
+      {expanded && (
+        <div className="mt-2.5 border-t border-[var(--mc-border)] pt-2.5 space-y-1.5">
+          <p className="text-[11px]" style={{ color: 'var(--mc-text-secondary)' }}>
+            Status: {member.isOnline ? 'Online' : 'Offline'} · Last seen {timeAgoFromIso(member.lastSeenAt)}
+          </p>
+          <p className="text-[11px]" style={{ color: 'var(--mc-text-secondary)' }}>
+            Online time: {formatDuration(member.onlineSeconds)} · Active time: {formatDuration(member.activeSeconds)}
+          </p>
+          <p className="text-[11px]" style={{ color: 'var(--mc-text-secondary)' }}>
+            Activity ratio: {activityPercent}%
+          </p>
+        </div>
+      )}
+    </button>
   );
 }
 

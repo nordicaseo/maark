@@ -90,6 +90,23 @@ export const projectMembers = sqliteTable('project_members', {
   uniqueIndex('project_members_unique').on(table.projectId, table.userId),
 ]);
 
+export const userPresence = sqliteTable('user_presence', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().default(0),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  isOnline: integer('is_online').notNull().default(0),
+  lastSeenAt: text('last_seen_at'),
+  onlineSeconds: integer('online_seconds').notNull().default(0),
+  activeSeconds: integer('active_seconds').notNull().default(0),
+  heartbeatCount: integer('heartbeat_count').notNull().default(0),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('user_presence_unique_project_user').on(table.projectId, table.userId),
+  index('user_presence_project_idx').on(table.projectId),
+  index('user_presence_user_idx').on(table.userId),
+]);
+
 // ── Skills ─────────────────────────────────────────────────────────
 
 export const skills = sqliteTable('skills', {

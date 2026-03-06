@@ -138,6 +138,11 @@ function TaskCardContent({
     !workflowQueued &&
     workflowStage !== 'research' &&
     workflowStage !== 'outline_build';
+  const visibleTags = task.tags ? task.tags.slice(0, 2) : [];
+  const hiddenTagCount = task.tags && task.tags.length > 2 ? task.tags.length - 2 : 0;
+  const visibleDeliverables = task.deliverables ? task.deliverables.slice(0, 2) : [];
+  const hiddenDeliverableCount =
+    task.deliverables && task.deliverables.length > 2 ? task.deliverables.length - 2 : 0;
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -159,7 +164,7 @@ function TaskCardContent({
   };
 
   return (
-    <div className="space-y-2 min-w-0 overflow-hidden">
+    <div className="space-y-2.5 min-w-0 overflow-hidden">
       {/* Header: priority + title + delete */}
       <div className="flex items-start gap-2">
         <div className={`mc-priority-dot mt-1.5 ${PRIORITY_COLORS[task.priority] || 'low'}`} />
@@ -188,18 +193,8 @@ function TaskCardContent({
             {task.title}
           </p>
           {task.description && (
-            <p className="text-xs mt-0.5 line-clamp-2" style={{ color: 'var(--mc-text-secondary)' }}>
+            <p className="text-xs mt-0.5 line-clamp-1" style={{ color: 'var(--mc-text-secondary)' }}>
               {task.description}
-            </p>
-          )}
-          {isTopicWorkflow && workflowLastEvent && (
-            <p
-              className="text-[10px] mt-1 line-clamp-3"
-              style={{
-                color: workflowBlocked ? '#b91c1c' : 'var(--mc-text-tertiary)',
-              }}
-            >
-              {workflowLastEvent}
             </p>
           )}
         </div>
@@ -232,40 +227,50 @@ function TaskCardContent({
         </button>
       </div>
 
-      {/* Tags */}
-      {task.tags && task.tags.length > 0 && (
+      {/* Latest workflow update */}
+      {isTopicWorkflow && workflowLastEvent && (
+        <div
+          className="rounded-md px-2 py-1.5 space-y-0.5"
+          style={{
+            background: workflowBlocked ? '#fef2f2' : 'var(--mc-overlay)',
+            color: workflowBlocked ? '#b91c1c' : 'var(--mc-text-tertiary)',
+          }}
+        >
+          <p className="mc-header-mono text-[9px]">Latest update</p>
+          <p className="text-[10px] leading-4 line-clamp-2">{workflowLastEvent}</p>
+        </div>
+      )}
+
+      {/* Context */}
+      {(visibleTags.length > 0 || showProjectBadge || skillName) && (
         <div className="flex flex-wrap gap-1">
           {showProjectBadge && projectLabel && (
             <span className="mc-tag border" style={{ borderColor: 'var(--mc-border)' }}>
               {projectLabel}
             </span>
           )}
-          {task.tags.slice(0, 3).map((tag) => (
+          {visibleTags.map((tag) => (
             <span key={tag} className="mc-tag">
               <Tag className="h-2.5 w-2.5 mr-0.5" />
               {tag}
             </span>
           ))}
-          {task.tags.length > 3 && (
-            <span className="mc-tag">+{task.tags.length - 3}</span>
+          {hiddenTagCount > 0 && (
+            <span className="mc-tag">+{hiddenTagCount}</span>
+          )}
+          {skillName && (
+            <span className="mc-tag">
+              <Sparkles className="h-2.5 w-2.5 mr-0.5" />
+              {skillName}
+            </span>
           )}
         </div>
       )}
 
-      {(!task.tags || task.tags.length === 0) && showProjectBadge && projectLabel && (
+      {(!task.tags || task.tags.length === 0) && !skillName && showProjectBadge && projectLabel && (
         <div className="flex flex-wrap gap-1">
           <span className="mc-tag border" style={{ borderColor: 'var(--mc-border)' }}>
             {projectLabel}
-          </span>
-        </div>
-      )}
-
-      {/* Skill tag */}
-      {skillName && (
-        <div className="flex flex-wrap gap-1">
-          <span className="mc-tag">
-            <Sparkles className="h-2.5 w-2.5 mr-0.5" />
-            {skillName}
           </span>
         </div>
       )}
@@ -331,9 +336,9 @@ function TaskCardContent({
       </div>
 
       {/* Deliverables */}
-      {task.deliverables && task.deliverables.length > 0 && (
+      {visibleDeliverables.length > 0 && (
         <div className="flex flex-wrap items-start gap-1 pt-1 border-t min-w-0 overflow-hidden" style={{ borderColor: 'var(--mc-border)' }}>
-          {task.deliverables.map((d) => (
+          {visibleDeliverables.map((d) => (
             d.url ? (
               <a
                 key={d.id}
@@ -358,6 +363,14 @@ function TaskCardContent({
               </span>
             )
           ))}
+          {hiddenDeliverableCount > 0 && (
+            <span
+              className="inline-flex max-w-full min-w-0 items-start text-[10px] px-1.5 py-0.5 rounded"
+              style={{ background: 'var(--mc-overlay)', color: 'var(--mc-text-secondary)' }}
+            >
+              +{hiddenDeliverableCount} more outputs
+            </span>
+          )}
         </div>
       )}
     </div>

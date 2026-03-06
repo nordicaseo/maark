@@ -128,6 +128,27 @@ interface WorkflowEvent {
   createdAt: number;
 }
 
+interface DeliverableDraftState {
+  researchSummary: string;
+  researchFactsText: string;
+  outlineMarkdown: string;
+  brandContextReady: boolean;
+  internalLinksReady: boolean;
+  unresolvedQuestions: number;
+}
+
+function toTextList(values: string[] | undefined): string {
+  if (!values || values.length === 0) return '';
+  return values.join('\n');
+}
+
+function parseTextList(value: string): string[] {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }: TaskDetailPanelProps) {
   const { user } = useAuth();
   const task = useQuery(
@@ -156,6 +177,21 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
   const [messageText, setMessageText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [workflowEvents, setWorkflowEvents] = useState<WorkflowEvent[]>([]);
+  const [timelineExpanded, setTimelineExpanded] = useState(false);
+  const [outputsExpanded, setOutputsExpanded] = useState(false);
+  const [deliverablesExpanded, setDeliverablesExpanded] = useState(true);
+  const [deliverableDraft, setDeliverableDraft] = useState<DeliverableDraftState>({
+    researchSummary: '',
+    researchFactsText: '',
+    outlineMarkdown: '',
+    brandContextReady: false,
+    internalLinksReady: false,
+    unresolvedQuestions: 0,
+  });
+  const [deliverableDirty, setDeliverableDirty] = useState(false);
+  const [deliverableSaving, setDeliverableSaving] = useState(false);
+  const [deliverableError, setDeliverableError] = useState<string | null>(null);
+  const [deliverableSavedAt, setDeliverableSavedAt] = useState<number | null>(null);
 
   // ─── Document content preview ──────────────────────────────────
   const [docPreview, setDocPreview] = useState<{
@@ -219,6 +255,32 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
       });
     return () => { cancelled = true; };
   }, [task?.documentId, task?.updatedAt]);
+
+  useEffect(() => {
+    if (!docPreview) {
+      setDeliverableDraft({
+        researchSummary: '',
+        researchFactsText: '',
+        outlineMarkdown: '',
+        brandContextReady: false,
+        internalLinksReady: false,
+        unresolvedQuestions: 0,
+      });
+      setDeliverableDirty(false);
+      return;
+    }
+
+    setDeliverableDraft({
+      researchSummary: docPreview.researchSnapshot?.summary || '',
+      researchFactsText: toTextList(docPreview.researchSnapshot?.facts),
+      outlineMarkdown: docPreview.outlineSnapshot?.markdown || '',
+      brandContextReady: Boolean(docPreview.prewriteChecklist?.brandContextReady),
+      internalLinksReady: Boolean(docPreview.prewriteChecklist?.internalLinksReady),
+      unresolvedQuestions: docPreview.prewriteChecklist?.unresolvedQuestions ?? 0,
+    });
+    setDeliverableDirty(false);
+    setDeliverableError(null);
+  }, [docPreview, task?.documentId]);
 
   const refreshWorkflowContext = useCallback(async () => {
     if (!taskId || task?.workflowTemplateKey !== 'topic_production_v1') {
@@ -448,6 +510,74 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
       setWorkflowError((err as Error).message);
     } finally {
       setWorkflowRecoverBusy(false);
+    }
+  };
+
+  const handleSaveDeliverables = async () => {
+    if (!task.documentId || readOnly) return;
+
+    setDeliverableSaving(true);
+    setDeliverableError(null);
+    try {
+      const facts = parseTextList(deliverableDraft.researchFactsText);
+      const unresolvedQuestions = Number.isFinite(deliverableDraft.unresolvedQuestions)
+        ? Math.max(0, Math.floor(deliverableDraft.unresolvedQuestions))
+        : 0;
+      const now = Date.now();
+
+      const payload = {
+        researchSnapshot: {
+          ...(docPreview?.researchSnapshot || {}),
+          summary: deliverableDraft.researchSummary.trim() || undefined,
+          facts: facts.length > 0 ? facts : undefined,
+          analyzedAt: docPreview?.researchSnapshot?.analyzedAt || now,
+        },
+        outlineSnapshot: {
+          ...(docPreview?.outlineSnapshot || {}),
+          markdown: deliverableDraft.outlineMarkdown.trim() || undefined,
+          generatedAt: docPreview?.outlineSnapshot?.generatedAt || now,
+        },
+        prewriteChecklist: {
+          brandContextReady: deliverableDraft.brandContextReady,
+          internalLinksReady: deliverableDraft.internalLinksReady,
+          unresolvedQuestions,
+          completedAt:
+            deliverableDraft.brandContextReady &&
+            deliverableDraft.internalLinksReady &&
+            unresolvedQuestions === 0
+              ? now
+              : undefined,
+        },
+      };
+
+      const res = await fetch(`/api/documents/${task.documentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to save deliverables');
+      }
+
+      const updated = await res.json();
+      setDocPreview((prev) =>
+        prev
+          ? {
+              ...prev,
+              researchSnapshot: updated.researchSnapshot ?? null,
+              outlineSnapshot: updated.outlineSnapshot ?? null,
+              prewriteChecklist: updated.prewriteChecklist ?? null,
+            }
+          : prev
+      );
+      setDeliverableDirty(false);
+      setDeliverableSavedAt(Date.now());
+    } catch (err) {
+      setDeliverableError((err as Error).message);
+    } finally {
+      setDeliverableSaving(false);
     }
   };
 
@@ -932,141 +1062,169 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
               </div>
             )}
 
-            <div>
-              <p className="text-xs font-medium mb-1.5" style={{ color: 'var(--mc-text-secondary)' }}>
-                Workflow Timeline
-              </p>
-              <div className="max-h-36 overflow-y-auto space-y-1.5">
-                {workflowLoading ? (
-                  <div className="text-xs flex items-center gap-2" style={{ color: 'var(--mc-text-tertiary)' }}>
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Loading timeline...
-                  </div>
-                ) : workflowEvents.length > 0 ? (
-                  workflowEvents.map((event) => (
-                    <div key={event._id} className="rounded-md px-2 py-1.5 text-xs" style={{ background: 'var(--mc-overlay)' }}>
-                      <p style={{ color: 'var(--mc-text-secondary)' }}>{event.summary}</p>
-                      {event.payload?.meta && (
-                        <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
-                          {event.payload.meta.stageRole ? `Role: ${event.payload.meta.stageRole}` : null}
-                          {event.payload.meta.model?.model
-                            ? `${event.payload.meta.stageRole ? ' · ' : ''}Model: ${event.payload.meta.model.providerName || 'ai'}/${event.payload.meta.model.model}`
-                            : null}
-                          {event.payload.meta.skillNames && event.payload.meta.skillNames.length > 0
-                            ? `${event.payload.meta.stageRole || event.payload.meta.model?.model ? ' · ' : ''}Skills: ${event.payload.meta.skillNames.join(', ')}`
-                            : null}
-                        </p>
-                      )}
-                      {(event.payload?.reason || event.payload?.reasonCode) && (
-                        <p className="text-[10px]" style={{ color: '#b91c1c' }}>
-                          Reason: {event.payload?.reason || event.payload?.reasonCode}
-                        </p>
-                      )}
-                      {(event.payload?.outlineGap?.missingHeadings &&
-                        event.payload.outlineGap.missingHeadings.length > 0) && (
-                        <p className="text-[10px]" style={{ color: '#b91c1c' }}>
-                          Outline gaps: {event.payload.outlineGap.missingHeadings.slice(0, 4).join(', ')}
-                        </p>
-                      )}
-                      {(event.payload?.diagnostics?.wordGap ?? 0) > 0 && (
-                        <p className="text-[10px]" style={{ color: '#b91c1c' }}>
-                          Word gap: {event.payload?.diagnostics?.wordGap}
-                        </p>
-                      )}
-                      <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
-                        {event.actorName || event.actorType} · {new Date(event.createdAt).toLocaleString()}
-                      </p>
-                    </div>
-                  ))
+            <div className="rounded-md border" style={{ borderColor: 'var(--mc-border)' }}>
+              <button
+                type="button"
+                onClick={() => setTimelineExpanded((prev) => !prev)}
+                className="w-full flex items-center justify-between px-2.5 py-2 text-left"
+              >
+                <p className="text-xs font-medium" style={{ color: 'var(--mc-text-secondary)' }}>
+                  Workflow Timeline
+                </p>
+                {timelineExpanded ? (
+                  <ChevronUp className="h-3.5 w-3.5" style={{ color: 'var(--mc-text-tertiary)' }} />
                 ) : (
-                  <p className="text-xs" style={{ color: 'var(--mc-text-muted)' }}>
-                    No workflow events yet.
-                  </p>
+                  <ChevronDown className="h-3.5 w-3.5" style={{ color: 'var(--mc-text-tertiary)' }} />
                 )}
-              </div>
+              </button>
+              {timelineExpanded && (
+                <div className="px-2.5 pb-2.5 max-h-44 overflow-y-auto space-y-1.5">
+                  {workflowLoading ? (
+                    <div className="text-xs flex items-center gap-2" style={{ color: 'var(--mc-text-tertiary)' }}>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Loading timeline...
+                    </div>
+                  ) : workflowEvents.length > 0 ? (
+                    workflowEvents.map((event) => (
+                      <div key={event._id} className="rounded-md px-2 py-1.5 text-xs" style={{ background: 'var(--mc-overlay)' }}>
+                        <p style={{ color: 'var(--mc-text-secondary)' }}>{event.summary}</p>
+                        {event.payload?.meta && (
+                          <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
+                            {event.payload.meta.stageRole ? `Role: ${event.payload.meta.stageRole}` : null}
+                            {event.payload.meta.model?.model
+                              ? `${event.payload.meta.stageRole ? ' · ' : ''}Model: ${event.payload.meta.model.providerName || 'ai'}/${event.payload.meta.model.model}`
+                              : null}
+                            {event.payload.meta.skillNames && event.payload.meta.skillNames.length > 0
+                              ? `${event.payload.meta.stageRole || event.payload.meta.model?.model ? ' · ' : ''}Skills: ${event.payload.meta.skillNames.join(', ')}`
+                              : null}
+                          </p>
+                        )}
+                        {(event.payload?.reason || event.payload?.reasonCode) && (
+                          <p className="text-[10px]" style={{ color: '#b91c1c' }}>
+                            Reason: {event.payload?.reason || event.payload?.reasonCode}
+                          </p>
+                        )}
+                        {(event.payload?.outlineGap?.missingHeadings &&
+                          event.payload.outlineGap.missingHeadings.length > 0) && (
+                          <p className="text-[10px]" style={{ color: '#b91c1c' }}>
+                            Outline gaps: {event.payload.outlineGap.missingHeadings.slice(0, 4).join(', ')}
+                          </p>
+                        )}
+                        {(event.payload?.diagnostics?.wordGap ?? 0) > 0 && (
+                          <p className="text-[10px]" style={{ color: '#b91c1c' }}>
+                            Word gap: {event.payload?.diagnostics?.wordGap}
+                          </p>
+                        )}
+                        <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
+                          {event.actorName || event.actorType} · {new Date(event.createdAt).toLocaleString()}
+                        </p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-xs" style={{ color: 'var(--mc-text-muted)' }}>
+                      No workflow events yet.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {stageArtifacts.length > 0 && (
-              <div>
-                <p className="text-xs font-medium mb-1.5" style={{ color: 'var(--mc-text-secondary)' }}>
-                  Stage Outputs
-                </p>
-                <p className="text-[10px] mb-1.5" style={{ color: 'var(--mc-text-tertiary)' }}>
-                  Research/prewrite outputs are also synced to the document Workflow tab in the editor.
-                </p>
-                <div className="max-h-48 overflow-y-auto space-y-2">
-                  {stageArtifacts.slice(0, 8).map((event) => {
-                    const artifact = event.payload?.artifact;
-                    const deliverable = event.payload?.deliverable;
-                    if (!artifact) return null;
+              <div className="rounded-md border" style={{ borderColor: 'var(--mc-border)' }}>
+                <button
+                  type="button"
+                  onClick={() => setOutputsExpanded((prev) => !prev)}
+                  className="w-full flex items-center justify-between px-2.5 py-2 text-left"
+                >
+                  <p className="text-xs font-medium" style={{ color: 'var(--mc-text-secondary)' }}>
+                    Stage Outputs
+                  </p>
+                  {outputsExpanded ? (
+                    <ChevronUp className="h-3.5 w-3.5" style={{ color: 'var(--mc-text-tertiary)' }} />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5" style={{ color: 'var(--mc-text-tertiary)' }} />
+                  )}
+                </button>
+                {outputsExpanded && (
+                  <div className="px-2.5 pb-2.5">
+                    <p className="text-[10px] mb-1.5" style={{ color: 'var(--mc-text-tertiary)' }}>
+                      Research/prewrite outputs are also synced to the document Workflow tab in the editor.
+                    </p>
+                    <div className="max-h-48 overflow-y-auto space-y-2">
+                      {stageArtifacts.slice(0, 8).map((event) => {
+                        const artifact = event.payload?.artifact;
+                        const deliverable = event.payload?.deliverable;
+                        if (!artifact) return null;
 
-                    return (
-                      <div
-                        key={`artifact-${event._id}`}
-                        className="rounded-md border p-2 text-xs space-y-1.5"
-                        style={{ borderColor: 'var(--mc-border)', background: 'var(--mc-overlay)' }}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="font-medium" style={{ color: 'var(--mc-text-primary)' }}>
-                            {artifact.title}
-                          </p>
-                          <span className="text-[10px]" style={{ color: 'var(--mc-text-muted)' }}>
-                            {TOPIC_STAGE_LABELS[event.stageKey as TopicStageKey] || event.stageKey}
-                          </span>
-                        </div>
-                        {(event.payload?.meta?.stageRole ||
-                          event.payload?.meta?.model?.model ||
-                          (event.payload?.meta?.skillNames && event.payload.meta.skillNames.length > 0)) && (
-                          <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
-                            {event.payload?.meta?.stageRole ? `Role: ${event.payload.meta.stageRole}` : null}
-                            {event.payload?.meta?.model?.model
-                              ? `${event.payload?.meta?.stageRole ? ' · ' : ''}Model: ${event.payload.meta.model.providerName || 'ai'}/${event.payload.meta.model.model}`
-                              : null}
-                            {event.payload?.meta?.skillNames && event.payload.meta.skillNames.length > 0
-                              ? `${event.payload?.meta?.stageRole || event.payload?.meta?.model?.model ? ' · ' : ''}Skills: ${event.payload.meta.skillNames.join(', ')}`
-                              : null}
-                          </p>
-                        )}
-                        {artifact.body && (
-                          <pre
-                            className="whitespace-pre-wrap text-[11px] leading-4 max-h-28 overflow-y-auto"
-                            style={{ color: 'var(--mc-text-secondary)' }}
+                        return (
+                          <div
+                            key={`artifact-${event._id}`}
+                            className="rounded-md border p-2 text-xs space-y-1.5"
+                            style={{ borderColor: 'var(--mc-border)', background: 'var(--mc-overlay)' }}
                           >
-                            {artifact.body}
-                          </pre>
-                        )}
-                        {task.documentId && (
-                          <a
-                            href={withProjectScope(`/documents/${task.documentId}`, task.projectId)}
-                            className="inline-flex items-center gap-1 underline"
-                            style={{ color: 'var(--mc-accent)' }}
-                          >
-                            <FileText className="h-3 w-3" />
-                            Open in Editor Workflow Tab
-                          </a>
-                        )}
-                        {deliverable?.url ? (
-                          <a
-                            href={deliverable.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 underline"
-                            style={{ color: 'var(--mc-accent)' }}
-                          >
-                            <Eye className="h-3 w-3" />
-                            {deliverable.title || 'Open deliverable'}
-                          </a>
-                        ) : (
-                          deliverable?.title && (
-                            <p style={{ color: 'var(--mc-text-tertiary)' }}>
-                              Deliverable: {deliverable.title}
-                            </p>
-                          )
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="font-medium" style={{ color: 'var(--mc-text-primary)' }}>
+                                {artifact.title}
+                              </p>
+                              <span className="text-[10px]" style={{ color: 'var(--mc-text-muted)' }}>
+                                {TOPIC_STAGE_LABELS[event.stageKey as TopicStageKey] || event.stageKey}
+                              </span>
+                            </div>
+                            {(event.payload?.meta?.stageRole ||
+                              event.payload?.meta?.model?.model ||
+                              (event.payload?.meta?.skillNames && event.payload.meta.skillNames.length > 0)) && (
+                              <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
+                                {event.payload?.meta?.stageRole ? `Role: ${event.payload.meta.stageRole}` : null}
+                                {event.payload?.meta?.model?.model
+                                  ? `${event.payload?.meta?.stageRole ? ' · ' : ''}Model: ${event.payload.meta.model.providerName || 'ai'}/${event.payload.meta.model.model}`
+                                  : null}
+                                {event.payload?.meta?.skillNames && event.payload.meta.skillNames.length > 0
+                                  ? `${event.payload?.meta?.stageRole || event.payload?.meta?.model?.model ? ' · ' : ''}Skills: ${event.payload.meta.skillNames.join(', ')}`
+                                  : null}
+                              </p>
+                            )}
+                            {artifact.body && (
+                              <pre
+                                className="whitespace-pre-wrap text-[11px] leading-4 max-h-28 overflow-y-auto"
+                                style={{ color: 'var(--mc-text-secondary)' }}
+                              >
+                                {artifact.body}
+                              </pre>
+                            )}
+                            {task.documentId && (
+                              <a
+                                href={withProjectScope(`/documents/${task.documentId}`, task.projectId)}
+                                className="inline-flex items-center gap-1 underline"
+                                style={{ color: 'var(--mc-accent)' }}
+                              >
+                                <FileText className="h-3 w-3" />
+                                Open in Editor Workflow Tab
+                              </a>
+                            )}
+                            {deliverable?.url ? (
+                              <a
+                                href={deliverable.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 underline"
+                                style={{ color: 'var(--mc-accent)' }}
+                              >
+                                <Eye className="h-3 w-3" />
+                                {deliverable.title || 'Open deliverable'}
+                              </a>
+                            ) : (
+                              deliverable?.title && (
+                                <p style={{ color: 'var(--mc-text-tertiary)' }}>
+                                  Deliverable: {deliverable.title}
+                                </p>
+                              )
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1227,40 +1385,159 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
           </div>
         )}
 
-        {/* Workflow Context from Document */}
+        {/* Deliverables Review */}
         {task.documentId && docPreview && (
-          <div className="space-y-2">
-            <h3 className="mc-header-mono text-xs">Research & Prewrite Context</h3>
-            <div className="rounded-md border p-2.5 space-y-2 text-xs" style={{ borderColor: 'var(--mc-border)' }}>
-              {docPreview.researchSnapshot?.summary ? (
-                <div>
-                  <p className="font-medium mb-0.5" style={{ color: 'var(--mc-text-secondary)' }}>
+          <div className="rounded-md border" style={{ borderColor: 'var(--mc-border)' }}>
+            <button
+              type="button"
+              onClick={() => setDeliverablesExpanded((prev) => !prev)}
+              className="w-full flex items-center justify-between px-2.5 py-2 text-left"
+            >
+              <div>
+                <h3 className="mc-header-mono text-xs">Deliverables Review</h3>
+                <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
+                  Review and update research/outline before writing.
+                </p>
+              </div>
+              {deliverablesExpanded ? (
+                <ChevronUp className="h-3.5 w-3.5" style={{ color: 'var(--mc-text-tertiary)' }} />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" style={{ color: 'var(--mc-text-tertiary)' }} />
+              )}
+            </button>
+            {deliverablesExpanded && (
+              <div className="px-2.5 pb-2.5 space-y-2.5 text-xs">
+                <div className="space-y-1">
+                  <p className="font-medium" style={{ color: 'var(--mc-text-secondary)' }}>
                     Research summary
                   </p>
-                  <p style={{ color: 'var(--mc-text-tertiary)' }}>{docPreview.researchSnapshot.summary}</p>
-                  {docPreview.researchSnapshot.facts && docPreview.researchSnapshot.facts.length > 0 && (
-                    <div className="mt-1 space-y-0.5" style={{ color: 'var(--mc-text-tertiary)' }}>
-                      {docPreview.researchSnapshot.facts.slice(0, 4).map((fact, idx) => (
-                        <p key={`${fact}-${idx}`}>• {fact}</p>
-                      ))}
-                    </div>
-                  )}
-                  {docPreview.researchSnapshot.statistics && docPreview.researchSnapshot.statistics.length > 0 && (
-                    <div className="mt-1 space-y-0.5" style={{ color: 'var(--mc-text-tertiary)' }}>
-                      {docPreview.researchSnapshot.statistics.slice(0, 4).map((stat, idx) => (
-                        <p key={`${stat.stat}-${idx}`}>
-                          • {stat.stat}
-                          {stat.source ? ` (${stat.source})` : ''}
+                  <textarea
+                    value={deliverableDraft.researchSummary}
+                    onChange={(e) => {
+                      setDeliverableDraft((prev) => ({ ...prev, researchSummary: e.target.value }));
+                      setDeliverableDirty(true);
+                    }}
+                    disabled={readOnly}
+                    rows={4}
+                    className="w-full rounded-md border bg-white px-2 py-1.5 text-xs"
+                    style={{ borderColor: 'var(--mc-border)', color: 'var(--mc-text-primary)' }}
+                    placeholder="Summarize the research direction and key findings..."
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <p className="font-medium" style={{ color: 'var(--mc-text-secondary)' }}>
+                    Research facts (one per line)
+                  </p>
+                  <textarea
+                    value={deliverableDraft.researchFactsText}
+                    onChange={(e) => {
+                      setDeliverableDraft((prev) => ({ ...prev, researchFactsText: e.target.value }));
+                      setDeliverableDirty(true);
+                    }}
+                    disabled={readOnly}
+                    rows={5}
+                    className="w-full rounded-md border bg-white px-2 py-1.5 text-xs"
+                    style={{ borderColor: 'var(--mc-border)', color: 'var(--mc-text-primary)' }}
+                    placeholder="Add key facts for writing guidance..."
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <p className="font-medium" style={{ color: 'var(--mc-text-secondary)' }}>
+                    Outline
+                  </p>
+                  <textarea
+                    value={deliverableDraft.outlineMarkdown}
+                    onChange={(e) => {
+                      setDeliverableDraft((prev) => ({ ...prev, outlineMarkdown: e.target.value }));
+                      setDeliverableDirty(true);
+                    }}
+                    disabled={readOnly}
+                    rows={8}
+                    className="w-full rounded-md border bg-white px-2 py-1.5 text-xs font-mono"
+                    style={{ borderColor: 'var(--mc-border)', color: 'var(--mc-text-primary)' }}
+                    placeholder="Use markdown headings for final structure..."
+                  />
+                </div>
+
+                <div className="rounded-md border p-2 space-y-1.5" style={{ borderColor: 'var(--mc-border)' }}>
+                  <p className="font-medium" style={{ color: 'var(--mc-text-secondary)' }}>
+                    Prewrite checklist
+                  </p>
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={deliverableDraft.brandContextReady}
+                      onChange={(e) => {
+                        setDeliverableDraft((prev) => ({
+                          ...prev,
+                          brandContextReady: e.target.checked,
+                        }));
+                        setDeliverableDirty(true);
+                      }}
+                      disabled={readOnly}
+                    />
+                    <span>Brand context ready</span>
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={deliverableDraft.internalLinksReady}
+                      onChange={(e) => {
+                        setDeliverableDraft((prev) => ({
+                          ...prev,
+                          internalLinksReady: e.target.checked,
+                        }));
+                        setDeliverableDirty(true);
+                      }}
+                      disabled={readOnly}
+                    />
+                    <span>Internal links prepared</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <span>Unresolved questions</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={deliverableDraft.unresolvedQuestions}
+                      onChange={(e) => {
+                        const next = Number.parseInt(e.target.value || '0', 10);
+                        setDeliverableDraft((prev) => ({
+                          ...prev,
+                          unresolvedQuestions: Number.isNaN(next) ? 0 : Math.max(0, next),
+                        }));
+                        setDeliverableDirty(true);
+                      }}
+                      disabled={readOnly}
+                      className="w-20 rounded border px-1.5 py-1 text-xs"
+                      style={{ borderColor: 'var(--mc-border)', color: 'var(--mc-text-primary)' }}
+                    />
+                  </div>
+                </div>
+
+                {docPreview.agentQuestions && docPreview.agentQuestions.length > 0 && (
+                  <div className="rounded-md border p-2" style={{ borderColor: 'var(--mc-border)' }}>
+                    <p className="font-medium mb-1" style={{ color: 'var(--mc-text-secondary)' }}>
+                      Agent questions
+                    </p>
+                    <div className="space-y-1">
+                      {docPreview.agentQuestions.slice(0, 6).map((q) => (
+                        <p key={q.id} style={{ color: 'var(--mc-text-tertiary)' }}>
+                          • {q.question} ({q.status})
                         </p>
                       ))}
                     </div>
-                  )}
-                  {docPreview.researchSnapshot.sources && docPreview.researchSnapshot.sources.length > 0 && (
-                    <div className="mt-1.5 space-y-0.5">
-                      <p className="font-medium" style={{ color: 'var(--mc-text-secondary)' }}>
-                        Sources
-                      </p>
-                      {docPreview.researchSnapshot.sources.slice(0, 3).map((source, idx) => (
+                  </div>
+                )}
+
+                {docPreview.researchSnapshot?.sources && docPreview.researchSnapshot.sources.length > 0 && (
+                  <div className="rounded-md border p-2" style={{ borderColor: 'var(--mc-border)' }}>
+                    <p className="font-medium mb-1" style={{ color: 'var(--mc-text-secondary)' }}>
+                      Research sources
+                    </p>
+                    <div className="space-y-0.5">
+                      {docPreview.researchSnapshot.sources.slice(0, 5).map((source, idx) => (
                         <a
                           key={`${source.url}-${idx}`}
                           href={source.url}
@@ -1273,54 +1550,43 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
                         </a>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {deliverableError && (
+                  <p className="text-xs text-red-600">{deliverableError}</p>
+                )}
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleSaveDeliverables}
+                    disabled={readOnly || !deliverableDirty || deliverableSaving}
+                    className="mc-btn-secondary text-xs"
+                  >
+                    {deliverableSaving ? 'Saving…' : 'Save deliverables'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRerunWorkflowFromStage('outline_build')}
+                    disabled={readOnly || workflowRecoverBusy || workflowBusy || workflowRunBusy}
+                    className="mc-btn-secondary text-xs"
+                  >
+                    Regenerate from outline
+                  </button>
+                  {workflowStage === 'prewrite_context' && (
+                    <span className="text-[11px]" style={{ color: 'var(--mc-text-tertiary)' }}>
+                      Save updates, then use “Approve Prewrite & Start Writing”.
+                    </span>
+                  )}
+                  {deliverableSavedAt && (
+                    <span className="text-[11px]" style={{ color: 'var(--mc-text-muted)' }}>
+                      Saved {new Date(deliverableSavedAt).toLocaleTimeString()}
+                    </span>
                   )}
                 </div>
-              ) : (
-                <p style={{ color: 'var(--mc-text-muted)' }}>No research summary yet.</p>
-              )}
-              {docPreview.outlineSnapshot?.markdown ? (
-                <div>
-                  <p className="font-medium mb-0.5" style={{ color: 'var(--mc-text-secondary)' }}>
-                    Outline snapshot
-                  </p>
-                  <pre
-                    className="whitespace-pre-wrap text-[11px] leading-4 max-h-28 overflow-y-auto"
-                    style={{ color: 'var(--mc-text-tertiary)' }}
-                  >
-                    {docPreview.outlineSnapshot.markdown}
-                  </pre>
-                </div>
-              ) : (
-                <p style={{ color: 'var(--mc-text-muted)' }}>No outline snapshot yet.</p>
-              )}
-              {docPreview.prewriteChecklist && (
-                <div style={{ color: 'var(--mc-text-tertiary)' }}>
-                  <p>
-                    Brand context: {docPreview.prewriteChecklist.brandContextReady ? 'ready' : 'pending'}
-                  </p>
-                  <p>
-                    Internal links: {docPreview.prewriteChecklist.internalLinksReady ? 'ready' : 'pending'}
-                  </p>
-                  <p>
-                    Unresolved questions: {docPreview.prewriteChecklist.unresolvedQuestions}
-                  </p>
-                </div>
-              )}
-              {docPreview.agentQuestions && docPreview.agentQuestions.length > 0 && (
-                <div>
-                  <p className="font-medium mb-1" style={{ color: 'var(--mc-text-secondary)' }}>
-                    Agent questions
-                  </p>
-                  <div className="space-y-1">
-                    {docPreview.agentQuestions.slice(0, 4).map((q) => (
-                      <p key={q.id} style={{ color: 'var(--mc-text-tertiary)' }}>
-                        • {q.question} ({q.status})
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
 

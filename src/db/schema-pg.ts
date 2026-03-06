@@ -110,6 +110,23 @@ export const projectMembers = pgTable('project_members', {
   uniqueIndex('project_members_unique').on(table.projectId, table.userId),
 ]);
 
+export const userPresence = pgTable('user_presence', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().default(0),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  isOnline: boolean('is_online').notNull().default(false),
+  lastSeenAt: timestamp('last_seen_at'),
+  onlineSeconds: integer('online_seconds').notNull().default(0),
+  activeSeconds: integer('active_seconds').notNull().default(0),
+  heartbeatCount: integer('heartbeat_count').notNull().default(0),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('user_presence_unique_project_user').on(table.projectId, table.userId),
+  index('user_presence_project_idx').on(table.projectId),
+  index('user_presence_user_idx').on(table.userId),
+]);
+
 // ── Skills ─────────────────────────────────────────────────────────
 
 export const skills = pgTable('skills', {

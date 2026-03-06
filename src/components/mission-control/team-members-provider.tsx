@@ -8,6 +8,12 @@ export interface TeamMember {
   email: string;
   image: string | null;
   role: string;
+  isOnline?: boolean;
+  lastSeenAt?: string | null;
+  onlineSeconds?: number;
+  activeSeconds?: number;
+  activityRatio?: number;
+  heartbeatCount?: number;
 }
 
 interface TeamMembersContextValue {
@@ -36,14 +42,32 @@ export function TeamMembersProvider({
   const [members, setMembers] = useState<TeamMember[]>([]);
 
   useEffect(() => {
-    const params = new URLSearchParams();
-    if (projectId) params.set('projectId', String(projectId));
-    const query = params.toString();
-    const url = query ? `/api/team/members?${query}` : '/api/team/members';
-    fetch(url)
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data) => setMembers(data))
-      .catch(() => setMembers([]));
+    let cancelled = false;
+    const loadMembers = async () => {
+      const params = new URLSearchParams();
+      if (projectId) params.set('projectId', String(projectId));
+      const query = params.toString();
+      const url = query ? `/api/team/members?${query}` : '/api/team/members';
+      try {
+        const res = await fetch(url);
+        const data = res.ok ? await res.json() : [];
+        if (!cancelled) {
+          setMembers(Array.isArray(data) ? data : []);
+        }
+      } catch {
+        if (!cancelled) setMembers([]);
+      }
+    };
+
+    void loadMembers();
+    const interval = window.setInterval(() => {
+      void loadMembers();
+    }, 20_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, [projectId]);
 
   const getMember = useCallback(
