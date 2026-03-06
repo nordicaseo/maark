@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { db, ensureDb } from '@/db';
 import { keywords, pageKeywordMappings, pages } from '@/db/schema';
 import { dbNow } from '@/db/utils';
@@ -144,6 +144,13 @@ export async function PUT(
   const primaryKeywordId = parsePositiveInt(String(body.primaryKeywordId ?? ''));
   const secondaryKeywordIds = normalizeKeywordIds(body.secondaryKeywordIds);
 
+  if (!primaryKeywordId) {
+    return NextResponse.json(
+      { error: 'A primary keyword is required for page optimization.' },
+      { status: 400 }
+    );
+  }
+
   const allKeywordIds = Array.from(
     new Set([...(primaryKeywordId ? [primaryKeywordId] : []), ...secondaryKeywordIds])
   );
@@ -160,6 +167,39 @@ export async function PUT(
     return NextResponse.json(
       { error: 'One or more keywords are not in this project scope.' },
       { status: 400 }
+    );
+  }
+
+  const primaryInUse = await db
+    .select({
+      pageId: pageKeywordMappings.pageId,
+      pageUrl: pages.url,
+      pageTitle: pages.title,
+    })
+    .from(pageKeywordMappings)
+    .innerJoin(pages, eq(pages.id, pageKeywordMappings.pageId))
+    .where(
+      and(
+        eq(pageKeywordMappings.projectId, page.projectId),
+        eq(pageKeywordMappings.keywordId, primaryKeywordId),
+        eq(pageKeywordMappings.mappingType, 'primary'),
+        ne(pageKeywordMappings.pageId, page.id)
+      )
+    )
+    .limit(1);
+
+  if (primaryInUse.length > 0) {
+    const conflict = primaryInUse[0];
+    return NextResponse.json(
+      {
+        error: 'Primary keyword is already mapped to another page.',
+        conflict: {
+          pageId: Number(conflict.pageId),
+          url: String(conflict.pageUrl),
+          title: conflict.pageTitle ? String(conflict.pageTitle) : null,
+        },
+      },
+      { status: 409 }
     );
   }
 
@@ -248,7 +288,7 @@ export async function PUT(
     success: true,
     pageId: page.id,
     projectId: page.projectId,
-    primaryKeywordId: primaryKeywordId || null,
+    primaryKeywordId,
     mappings: mappings.map((row: (typeof mappings)[number]) => ({
       keywordId: Number(row.keywordId),
       mappingType: row.mappingType === 'primary' ? 'primary' : 'secondary',
@@ -256,5 +296,9 @@ export async function PUT(
       volume: row.volume === null || row.volume === undefined ? null : Number(row.volume),
       difficulty: row.difficulty === null || row.difficulty === undefined ? null : Number(row.difficulty),
     })),
+    governance: {
+      primaryRequired: true,
+      primaryUniquePerProject: true,
+    },
   });
 }

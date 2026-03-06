@@ -20,6 +20,7 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -524,7 +525,11 @@ export default function PagesPage() {
       });
       const payload = await res.json().catch(() => null);
       if (!res.ok) {
-        setNotice(payload?.error || 'Failed to save page keyword mappings.');
+        if (payload?.conflict?.url) {
+          setNotice(`${payload.error} Already mapped on ${payload.conflict.url}`);
+        } else {
+          setNotice(payload?.error || 'Failed to save page keyword mappings.');
+        }
         return;
       }
       setNotice('Page keyword mappings updated.');
@@ -542,6 +547,17 @@ export default function PagesPage() {
       .filter((option) => option.keyword.toLowerCase().includes(query))
       .slice(0, 80);
   }, [keywordData?.availableKeywords, keywordSearch]);
+
+  const chartAnnotations = useMemo(() => {
+    if (!detailData?.annotations?.length) return [];
+    return detailData.annotations
+      .filter((annotation) => Boolean(annotation.annotationDate))
+      .map((annotation) => ({
+        x: String(annotation.annotationDate).slice(0, 10),
+        label: annotation.title,
+      }))
+      .slice(0, 8);
+  }, [detailData?.annotations]);
 
   if (authLoading || !user) {
     return (
@@ -964,6 +980,15 @@ export default function PagesPage() {
                             <YAxis yAxisId="left" tick={{ fontSize: 11 }} />
                             <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} />
                             <Tooltip />
+                            {chartAnnotations.map((annotation, idx) => (
+                              <ReferenceLine
+                                key={`${annotation.x}-${idx}`}
+                                x={annotation.x}
+                                stroke="#f59e0b"
+                                strokeDasharray="4 4"
+                                ifOverflow="visible"
+                              />
+                            ))}
                             <Line
                               yAxisId="left"
                               type="monotone"

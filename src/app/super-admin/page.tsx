@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Activity, Bot, Cpu, Radar, ShieldCheck, Sparkles } from 'lucide-react';
+import { Activity, Bot, Cpu, Radar, Rocket, ShieldCheck, Sparkles } from 'lucide-react';
 
 interface Stats {
   providers: number;
@@ -22,6 +22,7 @@ export default function SuperAdminDashboardPage() {
     { label: 'Workflow Ops', value: 'Live', icon: Activity, href: '/super-admin/workflow-ops' },
     { label: 'Agents', value: '8 roles', icon: Bot, href: '/super-admin/agents' },
     { label: 'Templates', value: 'Managed', icon: Sparkles, href: '/super-admin/templates' },
+    { label: 'Launch Checklist', value: 'Ready', icon: Rocket, href: '/super-admin/launch-checklist' },
     { label: 'AI Providers', value: stats?.providers ?? '—', icon: Cpu, href: '/super-admin/ai' },
     { label: 'Observability', value: 'Live', icon: Radar, href: '/super-admin/observability' },
   ];
@@ -32,7 +33,7 @@ export default function SuperAdminDashboardPage() {
         <ShieldCheck className="h-6 w-6" />
         Super Admin Dashboard
       </h1>
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {cards.map((card) => {
           const Icon = card.icon;
           return (

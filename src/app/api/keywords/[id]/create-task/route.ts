@@ -9,6 +9,7 @@ import { logAuditEvent, logAlertEvent } from '@/lib/observability';
 import { createTopicWorkflow } from '@/lib/topic-workflow';
 import { normalizeUrlForInventory } from '@/lib/discovery/url-policy';
 import { linkDocumentToPage, linkTaskToPage } from '@/lib/pages/linking';
+import { getSerpIntelSnapshot } from '@/lib/serp/serp-intel';
 import {
   DEFAULT_BLOG_SUBTYPE,
   DEFAULT_COLLECTION_SUBTYPE,
@@ -64,6 +65,25 @@ export async function POST(
           ? (isCollectionSubtype(body.subtype) ? body.subtype : DEFAULT_COLLECTION_SUBTYPE)
           : 'standard';
     const contentType = resolveDefaultContentType(pageType, subtype);
+
+    let serpWarmStatus: 'cache_hit' | 'fetched' | 'timeout' | 'failed' | 'skipped' = 'skipped';
+    if (keyword.keyword && keyword.keyword.trim().length > 0) {
+      try {
+        const warmup = getSerpIntelSnapshot({
+          keyword: keyword.keyword,
+          projectId: keyword.projectId,
+          preferFresh: false,
+        })
+          .then(() => 'cache_hit' as const)
+          .catch(() => 'failed' as const);
+        const timed = new Promise<'timeout'>((resolve) =>
+          setTimeout(() => resolve('timeout'), 3500)
+        );
+        serpWarmStatus = await Promise.race([warmup, timed]);
+      } catch {
+        serpWarmStatus = 'failed';
+      }
+    }
 
     const created = await createTopicWorkflow({
       user: auth.user,
@@ -136,6 +156,7 @@ export async function POST(
         contentType,
         reused: created.reused,
         linkedPageId,
+        serpWarmStatus,
       },
     });
 
@@ -145,6 +166,7 @@ export async function POST(
       documentId: created.contentDocumentId ?? null,
       taskId: created.taskId,
       reused: created.reused,
+      serpWarmStatus,
     });
   } catch (error) {
     await logAlertEvent({

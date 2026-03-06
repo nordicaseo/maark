@@ -165,10 +165,11 @@ export async function POST(
     }
 
     const { inviteUrl, redirectTo } = buildInvitationUrls(req, token);
-    const { deliveryStatus, deliveryError, lastSentAt } =
+    const { deliveryStatus, deliveryChannel, deliveryError, lastSentAt } =
       await sendInvitationEmail({
         email: invitation.email,
         redirectTo,
+        inviteUrl,
       });
 
     if (lastSentAt) {
@@ -183,9 +184,9 @@ export async function POST(
         source: 'admin',
         eventType: 'invitation_email_send_failed',
         severity: 'warning',
-        message: 'Invitation email delivery failed via Supabase.',
+        message: 'Invitation email delivery failed.',
         resourceId: invitation.id,
-        metadata: { email: invitation.email, error: deliveryError },
+        metadata: { email: invitation.email, channel: deliveryChannel, error: deliveryError },
       });
     }
 
@@ -202,6 +203,7 @@ export async function POST(
           revokedAt: action === 'regenerate' ? null : invitation.revokedAt,
         }),
         deliveryStatus,
+        deliveryChannel,
         deliveryError,
       },
     });
@@ -225,6 +227,7 @@ export async function POST(
         expiresAt,
       }),
       deliveryStatus,
+      deliveryChannel,
       deliveryError,
     });
   } catch (error) {

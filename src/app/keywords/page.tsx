@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Loader2, Plus, RefreshCw, Sparkles, Target } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Loader2, Plus, RefreshCw, ShieldCheck, Sparkles, Target } from 'lucide-react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -59,6 +59,28 @@ interface KeywordSerpSnapshot {
   suggestions: string[];
 }
 
+interface KeywordGovernancePayload {
+  projectIds: number[];
+  summary: {
+    totalPages: number;
+    pagesWithPrimary: number;
+    pagesWithoutPrimary: number;
+    duplicatePrimaryKeywordCount: number;
+  };
+  pagesWithoutPrimary: Array<{
+    pageId: number;
+    projectId: number;
+    url: string;
+    title: string | null;
+  }>;
+  duplicatePrimaryKeywords: Array<{
+    projectId: number;
+    keywordId: number;
+    keyword: string;
+    pages: Array<{ pageId: number; url: string; title: string | null }>;
+  }>;
+}
+
 function statusClass(status: KeywordStatus): string {
   if (status === 'published') return 'bg-green-500/15 text-green-400';
   if (status === 'content_created') return 'bg-blue-500/15 text-blue-400';
@@ -85,6 +107,8 @@ export default function KeywordsPage() {
   const [serpSnapshot, setSerpSnapshot] = useState<KeywordSerpSnapshot | null>(null);
   const [serpKeywordLabel, setSerpKeywordLabel] = useState<string | null>(null);
   const [serpError, setSerpError] = useState<string | null>(null);
+  const [governance, setGovernance] = useState<KeywordGovernancePayload | null>(null);
+  const [governanceLoading, setGovernanceLoading] = useState(false);
   const [newKeyword, setNewKeyword] = useState('');
   const [newIntent, setNewIntent] = useState<KeywordIntent>('informational');
   const [newPriority, setNewPriority] = useState<KeywordPriority>('medium');
@@ -132,8 +156,26 @@ export default function KeywordsPage() {
     }
   };
 
+  const fetchGovernance = async () => {
+    setGovernanceLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (activeProjectId) params.set('projectId', String(activeProjectId));
+      const res = await fetch(`/api/keywords/governance?${params.toString()}`);
+      if (res.ok) {
+        setGovernance(await res.json());
+      } else {
+        setGovernance(null);
+      }
+    } catch {
+      setGovernance(null);
+    } finally {
+      setGovernanceLoading(false);
+    }
+  };
+
   const refreshKeywordData = async () => {
-    await Promise.all([fetchKeywords(), fetchClusters()]);
+    await Promise.all([fetchKeywords(), fetchClusters(), fetchGovernance()]);
   };
 
   useEffect(() => {
@@ -333,6 +375,77 @@ export default function KeywordsPage() {
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-6 space-y-5">
+        <section className="border border-border rounded-lg p-4 bg-card">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4" />
+                Keyword Governance
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                Ensure every optimization page has one primary keyword and no duplicate primaries.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void fetchGovernance()}
+              disabled={governanceLoading}
+            >
+              {governanceLoading ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
+              Refresh
+            </Button>
+          </div>
+          <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+            <div className="rounded-md border border-border p-2">
+              <p className="text-muted-foreground">Optimization pages</p>
+              <p className="text-lg font-semibold">{governance?.summary.totalPages ?? 0}</p>
+            </div>
+            <div className="rounded-md border border-border p-2">
+              <p className="text-muted-foreground">With primary</p>
+              <p className="text-lg font-semibold text-emerald-600">{governance?.summary.pagesWithPrimary ?? 0}</p>
+            </div>
+            <div className="rounded-md border border-border p-2">
+              <p className="text-muted-foreground">Missing primary</p>
+              <p className="text-lg font-semibold text-amber-600">{governance?.summary.pagesWithoutPrimary ?? 0}</p>
+            </div>
+            <div className="rounded-md border border-border p-2">
+              <p className="text-muted-foreground">Duplicate primaries</p>
+              <p className="text-lg font-semibold text-red-600">{governance?.summary.duplicatePrimaryKeywordCount ?? 0}</p>
+            </div>
+          </div>
+          {(governance?.summary.pagesWithoutPrimary || 0) > 0 && (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+              <p className="text-xs font-medium text-amber-700 flex items-center gap-1">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Pages missing primary keyword
+              </p>
+              <div className="mt-1 space-y-1">
+                {(governance?.pagesWithoutPrimary || []).slice(0, 5).map((page) => (
+                  <p key={page.pageId} className="text-xs text-amber-700 truncate">
+                    {page.url}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+          {(governance?.summary.duplicatePrimaryKeywordCount || 0) > 0 && (
+            <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3">
+              <p className="text-xs font-medium text-red-700 flex items-center gap-1">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Primary keyword conflicts
+              </p>
+              <div className="mt-1 space-y-1">
+                {(governance?.duplicatePrimaryKeywords || []).slice(0, 4).map((entry) => (
+                  <p key={`${entry.projectId}-${entry.keywordId}`} className="text-xs text-red-700">
+                    {entry.keyword} mapped to {entry.pages.length} pages
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+
         <section className="border border-border rounded-lg p-4 bg-card">
           <h2 className="text-sm font-semibold mb-3">Add Keyword</h2>
           <div className="grid grid-cols-1 md:grid-cols-5 gap-3">

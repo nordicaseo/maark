@@ -3,6 +3,7 @@ import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 
 export type InvitationDeliveryStatus = 'sent' | 'failed' | 'fallback_only';
 export type InvitationStatus = 'pending' | 'accepted' | 'expired' | 'revoked';
+export type InvitationDeliveryChannel = 'resend' | 'supabase' | 'none';
 
 function trimTrailingSlash(url: string): string {
   return url.replace(/\/+$/, '');
@@ -74,23 +75,83 @@ export function isInvitationExpired(expiresAt: unknown): boolean {
 export async function sendInvitationEmail(args: {
   email: string | null;
   redirectTo: string;
+  inviteUrl: string;
 }): Promise<{
   deliveryStatus: InvitationDeliveryStatus;
+  deliveryChannel: InvitationDeliveryChannel;
   deliveryError: string | null;
   lastSentAt: Date | null;
 }> {
   if (!args.email) {
     return {
       deliveryStatus: 'fallback_only',
+      deliveryChannel: 'none',
       deliveryError: null,
       lastSentAt: null,
     };
+  }
+
+  const resendApiKey = process.env.RESEND_API_KEY?.trim();
+  const resendFromEmail = process.env.INVITATION_FROM_EMAIL?.trim() || process.env.RESEND_FROM_EMAIL?.trim();
+  const resendFromName = process.env.INVITATION_FROM_NAME?.trim() || 'Maark';
+
+  if (resendApiKey && resendFromEmail) {
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: `${resendFromName} <${resendFromEmail}>`,
+          to: [args.email],
+          subject: 'You are invited to Maark',
+          html: [
+            '<div style="font-family:Arial,sans-serif;line-height:1.45;color:#1f2937">',
+            '<h2 style="margin:0 0 12px">You are invited to Maark</h2>',
+            '<p style="margin:0 0 12px">Click the link below to accept your invitation and sign in.</p>',
+            `<p style="margin:0 0 16px"><a href="${args.inviteUrl}" style="display:inline-block;padding:10px 14px;background:#c9732f;color:#fff;text-decoration:none;border-radius:8px">Accept Invitation</a></p>`,
+            '<p style="margin:0 0 8px;color:#6b7280;font-size:12px">If the button does not work, copy this URL:</p>',
+            `<p style="margin:0;color:#6b7280;font-size:12px;word-break:break-all">${args.inviteUrl}</p>`,
+            '</div>',
+          ].join(''),
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({} as { message?: string; error?: string }));
+      if (response.ok) {
+        return {
+          deliveryStatus: 'sent',
+          deliveryChannel: 'resend',
+          deliveryError: null,
+          lastSentAt: new Date(),
+        };
+      }
+      return {
+        deliveryStatus: 'failed',
+        deliveryChannel: 'resend',
+        deliveryError:
+          payload.message ||
+          payload.error ||
+          `Resend API failed (${response.status})`,
+        lastSentAt: null,
+      };
+    } catch (error) {
+      return {
+        deliveryStatus: 'failed',
+        deliveryChannel: 'resend',
+        deliveryError: error instanceof Error ? error.message : 'Resend request failed',
+        lastSentAt: null,
+      };
+    }
   }
 
   const supabaseAdmin = getSupabaseAdminClient();
   if (!supabaseAdmin) {
     return {
       deliveryStatus: 'fallback_only',
+      deliveryChannel: 'none',
       deliveryError: 'Supabase service role is not configured.',
       lastSentAt: null,
     };
@@ -103,6 +164,7 @@ export async function sendInvitationEmail(args: {
   if (error) {
     return {
       deliveryStatus: 'failed',
+      deliveryChannel: 'supabase',
       deliveryError: error.message,
       lastSentAt: null,
     };
@@ -110,6 +172,7 @@ export async function sendInvitationEmail(args: {
 
   return {
     deliveryStatus: 'sent',
+    deliveryChannel: 'supabase',
     deliveryError: null,
     lastSentAt: new Date(),
   };

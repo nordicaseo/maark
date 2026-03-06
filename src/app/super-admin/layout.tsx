@@ -13,6 +13,7 @@ import {
   LayoutDashboard,
   LogOut,
   Radar,
+  Rocket,
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
@@ -22,6 +23,7 @@ const SYSTEM_ITEMS = [
   { href: '/super-admin/workflow-ops', label: 'Workflow Ops', icon: Activity },
   { href: '/super-admin/agents', label: 'Agents', icon: Bot },
   { href: '/super-admin/templates', label: 'Templates', icon: Sparkles },
+  { href: '/super-admin/launch-checklist', label: 'Launch Checklist', icon: Rocket },
   { href: '/super-admin/ai', label: 'AI Models', icon: Cpu },
   { href: '/super-admin/observability', label: 'Observability', icon: Radar },
 ];

@@ -200,10 +200,11 @@ export async function POST(req: NextRequest) {
     });
 
     const { inviteUrl, redirectTo } = buildInvitationUrls(req, token);
-    const { deliveryStatus, deliveryError, lastSentAt } =
+    const { deliveryStatus, deliveryChannel, deliveryError, lastSentAt } =
       await sendInvitationEmail({
         email: invitation.email,
         redirectTo,
+        inviteUrl,
       });
 
     if (deliveryStatus === 'failed') {
@@ -211,9 +212,9 @@ export async function POST(req: NextRequest) {
         source: 'admin',
         eventType: 'invitation_email_send_failed',
         severity: 'warning',
-        message: 'Invitation email delivery failed via Supabase.',
+        message: 'Invitation email delivery failed.',
         resourceId: String(invitation.id),
-        metadata: { email: invitation.email, error: deliveryError },
+        metadata: { email: invitation.email, channel: deliveryChannel, error: deliveryError },
       });
     }
 
@@ -233,6 +234,7 @@ export async function POST(req: NextRequest) {
       metadata: {
         email,
         status: deliveryStatus,
+        channel: deliveryChannel,
         error: deliveryError,
       },
     });
@@ -251,6 +253,7 @@ export async function POST(req: NextRequest) {
       lastSentAt: lastSentAt || invitation.lastSentAt || null,
       status: resolveInvitationStatus(invitation),
       deliveryStatus,
+      deliveryChannel,
       deliveryError,
       scopeAutofill,
     });

@@ -79,6 +79,8 @@ function parseNumber(value: string, fallback: number): number {
 export default function WorkflowOpsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [autoResumeRunning, setAutoResumeRunning] = useState(false);
+  const [taskActionBusyId, setTaskActionBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [payload, setPayload] = useState<WorkflowOpsPayload | null>(null);
@@ -146,6 +148,94 @@ export default function WorkflowOpsPage() {
     }
   }
 
+  async function runAutoResumeNow() {
+    setAutoResumeRunning(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const body: Record<string, unknown> = {
+        maxResumes: draft?.autoResumeMaxResumes || 4,
+      };
+      if (selectedProjectId) {
+        body.projectId = selectedProjectId;
+      }
+      const res = await fetch('/api/topic-workflow/auto-resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({} as { error?: string; resumedCount?: number }));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to run auto-resume');
+      }
+      setNotice(`Auto-resume completed. Resumed ${Number(data.resumedCount || 0)} task(s).`);
+      await load(selectedProjectId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to run auto-resume');
+    } finally {
+      setAutoResumeRunning(false);
+    }
+  }
+
+  async function resumeTask(taskId: string) {
+    setTaskActionBusyId(taskId);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch('/api/topic-workflow/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId,
+          autoContinue: true,
+          maxStages: 4,
+        }),
+      });
+      const data = await res.json().catch(() => ({} as { error?: string }));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to resume task');
+      }
+      setNotice('Task resumed.');
+      await load(selectedProjectId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resume task');
+    } finally {
+      setTaskActionBusyId(null);
+    }
+  }
+
+  async function recoverTask(taskId: string, stage: string) {
+    setTaskActionBusyId(taskId);
+    setError(null);
+    setNotice(null);
+    const fromStage =
+      stage === 'writing' || stage === 'final_review'
+        ? 'writing'
+        : stage === 'outline_build' || stage === 'outline_review' || stage === 'prewrite_context'
+          ? 'outline_build'
+          : 'research';
+    try {
+      const res = await fetch('/api/topic-workflow/rerun', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId,
+          fromStage,
+        }),
+      });
+      const data = await res.json().catch(() => ({} as { error?: string }));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to recover task');
+      }
+      setNotice(`Task recovered from ${fromStage}.`);
+      await load(selectedProjectId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to recover task');
+    } finally {
+      setTaskActionBusyId(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -187,6 +277,10 @@ export default function WorkflowOpsPage() {
           </Select>
         </div>
         <Badge variant="secondary">{selectedProjectLabel}</Badge>
+        <Button variant="outline" onClick={() => void runAutoResumeNow()} disabled={autoResumeRunning}>
+          <RefreshCw className={`h-4 w-4 mr-2 ${autoResumeRunning ? 'animate-spin' : ''}`} />
+          Run Auto-Resume Now
+        </Button>
       </div>
 
       {error && (
@@ -282,9 +376,29 @@ export default function WorkflowOpsPage() {
             </label>
           </div>
           {payload?.recommendations && (
-            <p className="text-xs text-muted-foreground">
-              Suggested from last 24h: timeout {payload.recommendations.stageTimeoutMinutes}m, final-review retries {payload.recommendations.finalReviewMaxRevisions}.
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">
+                Suggested from last 24h: timeout {payload.recommendations.stageTimeoutMinutes}m, final-review retries {payload.recommendations.finalReviewMaxRevisions}.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setDraft((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          stageTimeoutMinutes: payload.recommendations?.stageTimeoutMinutes || prev.stageTimeoutMinutes,
+                          finalReviewMaxRevisions:
+                            payload.recommendations?.finalReviewMaxRevisions || prev.finalReviewMaxRevisions,
+                        }
+                      : prev
+                  )
+                }
+              >
+                Apply Recommended
+              </Button>
+            </div>
           )}
         </section>
       )}
@@ -376,6 +490,27 @@ export default function WorkflowOpsPage() {
                   stage {task.stage} · project {task.projectId ?? '—'} · {task.updatedAt ? new Date(task.updatedAt).toLocaleString() : 'unknown time'}
                 </p>
                 <p className="mt-1 text-red-700">{task.reason}</p>
+                <div className="mt-2 flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void resumeTask(task.id)}
+                    disabled={taskActionBusyId === task.id}
+                  >
+                    {taskActionBusyId === task.id ? (
+                      <RefreshCw className="h-3.5 w-3.5 mr-1 animate-spin" />
+                    ) : null}
+                    Resume
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void recoverTask(task.id, task.stage)}
+                    disabled={taskActionBusyId === task.id}
+                  >
+                    Recover
+                  </Button>
+                </div>
               </div>
             ))}
           </div>

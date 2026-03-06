@@ -32,6 +32,7 @@ interface ProjectOption {
 }
 
 type InvitationDeliveryStatus = 'sent' | 'failed' | 'fallback_only';
+type InvitationDeliveryChannel = 'resend' | 'supabase' | 'none';
 
 export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDialogProps) {
   const { user } = useAuth();
@@ -44,6 +45,7 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
   const [loading, setLoading] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [deliveryStatus, setDeliveryStatus] = useState<InvitationDeliveryStatus>('fallback_only');
+  const [deliveryChannel, setDeliveryChannel] = useState<InvitationDeliveryChannel>('none');
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [scopeAutofillNote, setScopeAutofillNote] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -129,6 +131,11 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
           ? data.deliveryStatus
           : 'fallback_only'
       );
+      setDeliveryChannel(
+        data.deliveryChannel === 'resend' || data.deliveryChannel === 'supabase'
+          ? data.deliveryChannel
+          : 'none'
+      );
       setDeliveryError(typeof data.deliveryError === 'string' ? data.deliveryError : null);
       if (data.scopeAutofill?.mode === 'active_project' && Array.isArray(data.scopeAutofill?.projectIds)) {
         setScopeAutofillNote(
@@ -168,6 +175,7 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
       setSelectedProjectIds([]);
       setInviteUrl(null);
       setDeliveryStatus('fallback_only');
+      setDeliveryChannel('none');
       setDeliveryError(null);
       setScopeAutofillNote(null);
       setCopied(false);
@@ -335,7 +343,7 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
               </p>
               {deliveryStatus === 'sent' && (
                 <p className="text-xs text-emerald-600">
-                  Invite email was sent via Supabase.
+                  Invite email was sent via {deliveryChannel === 'resend' ? 'Resend' : 'Supabase'}.
                 </p>
               )}
               {deliveryStatus === 'failed' && (

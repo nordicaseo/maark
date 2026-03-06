@@ -132,6 +132,7 @@ export default function MissionControlPage() {
   const [orgTasks, setOrgTasks] = useState<TaskDoc[]>([]);
   const [orgProjects, setOrgProjects] = useState<Array<{ id: number; name: string }>>([]);
   const [orgLoading, setOrgLoading] = useState(false);
+  const [orgLoadingMore, setOrgLoadingMore] = useState(false);
   const [orgProjectFilter, setOrgProjectFilter] = useState<number | null>(null);
   const [orgNextCursor, setOrgNextCursor] = useState<string | null>(null);
   const lastInteractionAtRef = useRef<number>(Date.now());
@@ -146,6 +147,7 @@ export default function MissionControlPage() {
   useEffect(() => {
     if (projectId !== null) {
       setOrgProjectFilter(null);
+      setOrgNextCursor(null);
     }
   }, [projectId]);
 
@@ -292,6 +294,39 @@ export default function MissionControlPage() {
     if (projectId !== null) return [];
     return orgTasks;
   }, [projectId, orgTasks]);
+
+  const loadMoreOrgTasks = async () => {
+    if (projectId !== null || !orgNextCursor || orgLoadingMore) return;
+    setOrgLoadingMore(true);
+    try {
+      const params = new URLSearchParams();
+      params.set('limit', '220');
+      params.set('cursor', orgNextCursor);
+      if (orgProjectFilter !== null) {
+        params.set('projectId', String(orgProjectFilter));
+      }
+      const res = await fetch(`/api/mission-control/tasks?${params.toString()}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const incoming = Array.isArray(data.tasks) ? data.tasks : [];
+      setOrgTasks((prev) => {
+        const seen = new Set(prev.map((task) => String(task._id)));
+        const merged = [...prev];
+        for (const task of incoming) {
+          const key = String(task?._id || '');
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          merged.push(task);
+        }
+        return merged;
+      });
+      setOrgNextCursor(typeof data.nextCursor === 'string' ? data.nextCursor : null);
+    } catch (error) {
+      console.error('Failed to load more org tasks:', error);
+    } finally {
+      setOrgLoadingMore(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -522,6 +557,18 @@ export default function MissionControlPage() {
             {!projectId && orgLoading && (
               <div className="mt-3 text-xs mc-header-mono">
                 Refreshing org task stream{orgNextCursor ? ' (paged)' : ''}...
+              </div>
+            )}
+            {!projectId && !orgLoading && orgNextCursor && (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => void loadMoreOrgTasks()}
+                  disabled={orgLoadingMore}
+                  className="mc-btn-secondary"
+                >
+                  {orgLoadingMore ? 'Loading…' : 'Load more'}
+                </button>
               </div>
             )}
           </main>

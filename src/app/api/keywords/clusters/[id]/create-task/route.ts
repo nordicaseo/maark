@@ -7,6 +7,7 @@ import { userCanAccessProject } from '@/lib/access';
 import { createTopicWorkflow } from '@/lib/topic-workflow';
 import { dbNow } from '@/db/utils';
 import { logAuditEvent, logAlertEvent } from '@/lib/observability';
+import { getSerpIntelSnapshot } from '@/lib/serp/serp-intel';
 
 function parseId(value: string): number | null {
   const parsed = Number.parseInt(value, 10);
@@ -88,6 +89,25 @@ export async function POST(
         ? body.title.trim()
         : `${mainKeyword.keyword}`;
 
+    let serpWarmStatus: 'cache_hit' | 'fetched' | 'timeout' | 'failed' | 'skipped' = 'skipped';
+    if (mainKeyword.keyword && mainKeyword.keyword.trim().length > 0) {
+      try {
+        const warmup = getSerpIntelSnapshot({
+          keyword: mainKeyword.keyword,
+          projectId: cluster.projectId,
+          preferFresh: false,
+        })
+          .then(() => 'cache_hit' as const)
+          .catch(() => 'failed' as const);
+        const timed = new Promise<'timeout'>((resolve) =>
+          setTimeout(() => resolve('timeout'), 3500)
+        );
+        serpWarmStatus = await Promise.race([warmup, timed]);
+      } catch {
+        serpWarmStatus = 'failed';
+      }
+    }
+
     const created = await createTopicWorkflow({
       user: auth.user,
       projectId: cluster.projectId,
@@ -129,6 +149,7 @@ export async function POST(
         reused: created.reused,
         mainKeywordId: mainKeyword.id,
         secondaryKeywords,
+        serpWarmStatus,
       },
     });
 
@@ -140,6 +161,7 @@ export async function POST(
       clusterId: cluster.id,
       mainKeyword: mainKeyword.keyword,
       secondaryKeywords,
+      serpWarmStatus,
     });
   } catch (error) {
     await logAlertEvent({
