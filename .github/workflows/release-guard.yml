@@ -44,13 +44,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Convex codegen
-        run: npm run convex:codegen
-
-      - name: Verify Convex public functions
+      - name: Convex codegen + public-function verification
         if: env.CONVEX_DEPLOY_KEY != ''
-        run: npm run convex:verify-public
+        run: npm run ci:convex-guard
 
       - name: Skip remote Convex verification
         if: env.CONVEX_DEPLOY_KEY == ''
-        run: echo "CONVEX_DEPLOY_KEY not set. Skipping remote Convex public-function verification."
+        run: echo "CONVEX_DEPLOY_KEY not set. Skipping Convex codegen and remote public-function verification."

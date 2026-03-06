@@ -12,7 +12,8 @@
     "convex:codegen": "npx convex codegen",
     "convex:deploy": "npx convex deploy",
     "convex:verify-public": "node scripts/verify-convex-public-functions.mjs",
-    "ci:release-guard": "npm run convex:codegen && npm run lint && npm run test && npm run build",
+    "ci:release-guard": "npm run lint && npm run test && npm run build",
+    "ci:convex-guard": "npm run convex:codegen && npm run convex:verify-public",
     "vercel:verify-alias": "node scripts/verify-vercel-domain-aliases.mjs",
     "release:guard": "npm run convex:deploy && npm run convex:verify-public && npm run vercel:verify-alias",
     "ship:vercel": "npm run convex:codegen && npm run build && npm run convex:deploy && npm run convex:verify-public && vercel --prod && npm run vercel:verify-alias"
