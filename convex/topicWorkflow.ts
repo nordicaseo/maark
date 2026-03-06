@@ -304,6 +304,20 @@ async function healWriterAvailability(
         !currentTask ||
         currentTask.status === "COMPLETED" ||
         currentTask.workflowCurrentStageKey === "complete";
+
+      // Recover stale writer locks when writer status remains WORKING but the
+      // linked task is no longer actively executing the writing stage.
+      if (!staleWorking && currentTask) {
+        const taskStage = (currentTask.workflowCurrentStageKey || "research") as TopicStageKey;
+        const taskStageStatus = currentTask.workflowStageStatus || "in_progress";
+        const taskStillWriting =
+          taskStage === "writing" &&
+          taskStageStatus === "in_progress" &&
+          currentTask.status === "IN_PROGRESS";
+        if (!taskStillWriting) {
+          staleWorking = true;
+        }
+      }
     }
 
     if (staleWorking) {

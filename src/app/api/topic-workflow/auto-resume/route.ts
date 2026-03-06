@@ -223,7 +223,9 @@ export async function POST(req: NextRequest) {
 
     const failures: Array<{ taskId: string; error: string }> = [];
     let resumed = 0;
-    const toResume = [...readyResearchTasks, ...queuedWritingTasks].slice(0, maxResumes);
+    // Prioritize queued writing work so writer queue does not starve behind
+    // newly created research tasks during busy periods.
+    const toResume = [...queuedWritingTasks, ...readyResearchTasks].slice(0, maxResumes);
 
     for (const task of toResume) {
       try {
