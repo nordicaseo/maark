@@ -45,6 +45,7 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [deliveryStatus, setDeliveryStatus] = useState<InvitationDeliveryStatus>('fallback_only');
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
+  const [scopeAutofillNote, setScopeAutofillNote] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isRootInvite = role === 'owner' || role === 'super_admin';
@@ -105,10 +106,6 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
     setError(null);
 
     try {
-      if (!isRootInvite && selectedProjectIds.length === 0) {
-        throw new Error('Select at least one project for this invitation.');
-      }
-
       const res = await fetch('/api/admin/invitations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -133,6 +130,20 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
           : 'fallback_only'
       );
       setDeliveryError(typeof data.deliveryError === 'string' ? data.deliveryError : null);
+      if (data.scopeAutofill?.mode === 'active_project' && Array.isArray(data.scopeAutofill?.projectIds)) {
+        setScopeAutofillNote(
+          `No project was selected, so this invite was scoped to the active project (${data.scopeAutofill.projectIds.length} project).`
+        );
+      } else if (
+        data.scopeAutofill?.mode === 'all_mutable_projects' &&
+        Array.isArray(data.scopeAutofill?.projectIds)
+      ) {
+        setScopeAutofillNote(
+          `No project was selected, so this invite was scoped to all projects you can manage (${data.scopeAutofill.projectIds.length} projects).`
+        );
+      } else {
+        setScopeAutofillNote(null);
+      }
       onInviteCreated?.();
     } catch (err) {
       setError((err as Error).message);
@@ -158,6 +169,7 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
       setInviteUrl(null);
       setDeliveryStatus('fallback_only');
       setDeliveryError(null);
+      setScopeAutofillNote(null);
       setCopied(false);
       setError(null);
     }
@@ -223,6 +235,9 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
                 </div>
                 <div className="space-y-2">
                   <Label>Projects</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    If no projects are selected, Maark will auto-scope to your active project or all projects you can manage.
+                  </p>
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs text-muted-foreground">
                       {selectedProjectIds.length} selected
@@ -333,6 +348,9 @@ export function InviteDialog({ open, onOpenChange, onInviteCreated }: InviteDial
                 <p className="text-xs text-muted-foreground">
                   Email delivery is not configured. Share the invite link manually.
                 </p>
+              )}
+              {scopeAutofillNote && (
+                <p className="text-xs text-amber-700">{scopeAutofillNote}</p>
               )}
             </div>
 

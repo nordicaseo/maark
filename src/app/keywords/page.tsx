@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Loader2, Plus, Sparkles, Target } from 'lucide-react';
+import { ArrowLeft, Loader2, Plus, RefreshCw, Sparkles, Target } from 'lucide-react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -34,6 +34,30 @@ const STATUS_OPTIONS: KeywordStatus[] = [
 const PRIORITY_OPTIONS: KeywordPriority[] = ['low', 'medium', 'high'];
 const INTENT_OPTIONS: KeywordIntent[] = ['informational', 'commercial', 'transactional', 'navigational', 'local'];
 
+interface KeywordCluster {
+  id: number;
+  projectId: number;
+  name: string;
+  status: string;
+  notes: string | null;
+  mainKeywordId: number | null;
+  mainKeyword: string | null;
+  memberCount: number;
+  secondaryKeywords: Array<{ id: number; keyword: string }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface KeywordSerpSnapshot {
+  keyword: string;
+  provider: string;
+  fetchedAt: string;
+  competitors: Array<{ rank: number; domain: string; url: string; title: string }>;
+  entities: Array<{ term: string }>;
+  lsiKeywords: Array<{ term: string }>;
+  suggestions: string[];
+}
+
 function statusClass(status: KeywordStatus): string {
   if (status === 'published') return 'bg-green-500/15 text-green-400';
   if (status === 'content_created') return 'bg-blue-500/15 text-blue-400';
@@ -49,13 +73,25 @@ export default function KeywordsPage() {
   const { activeProjectId, setActiveProjectId } = useActiveProject();
   useProjectScopeSync(activeProjectId, setActiveProjectId);
   const [keywords, setKeywords] = useState<Keyword[]>([]);
+  const [clusters, setClusters] = useState<KeywordCluster[]>([]);
   const [loading, setLoading] = useState(true);
+  const [clustersLoading, setClustersLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [clusterSubmitting, setClusterSubmitting] = useState(false);
   const [taskBusyId, setTaskBusyId] = useState<number | null>(null);
+  const [clusterTaskBusyId, setClusterTaskBusyId] = useState<number | null>(null);
+  const [serpBusyId, setSerpBusyId] = useState<number | null>(null);
+  const [serpSnapshot, setSerpSnapshot] = useState<KeywordSerpSnapshot | null>(null);
+  const [serpKeywordLabel, setSerpKeywordLabel] = useState<string | null>(null);
+  const [serpError, setSerpError] = useState<string | null>(null);
   const [newKeyword, setNewKeyword] = useState('');
   const [newIntent, setNewIntent] = useState<KeywordIntent>('informational');
   const [newPriority, setNewPriority] = useState<KeywordPriority>('medium');
   const [newVolume, setNewVolume] = useState('');
+  const [newClusterName, setNewClusterName] = useState('');
+  const [newClusterMainKeywordId, setNewClusterMainKeywordId] = useState<string>('');
+  const [newClusterSecondaryKeywordIds, setNewClusterSecondaryKeywordIds] = useState<number[]>([]);
+  const [newClusterNotes, setNewClusterNotes] = useState('');
 
   const canCreate = useMemo(() => newKeyword.trim().length > 0 && !!activeProjectId, [newKeyword, activeProjectId]);
 
@@ -79,12 +115,38 @@ export default function KeywordsPage() {
     }
   };
 
+  const fetchClusters = async () => {
+    setClustersLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (activeProjectId) params.set('projectId', String(activeProjectId));
+      const res = await fetch(`/api/keywords/clusters?${params.toString()}`);
+      if (res.ok) {
+        setClusters(await res.json());
+      } else {
+        setClusters([]);
+      }
+    } finally {
+      setClustersLoading(false);
+    }
+  };
+
+  const refreshKeywordData = async () => {
+    await Promise.all([fetchKeywords(), fetchClusters()]);
+  };
+
   useEffect(() => {
     if (!authLoading && user) {
-      void fetchKeywords();
+      void refreshKeywordData();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user, activeProjectId]);
+
+  useEffect(() => {
+    setSerpSnapshot(null);
+    setSerpKeywordLabel(null);
+    setSerpError(null);
+  }, [activeProjectId]);
 
   if (authLoading || !user) {
     return (
@@ -112,7 +174,7 @@ export default function KeywordsPage() {
       if (res.ok) {
         setNewKeyword('');
         setNewVolume('');
-        await fetchKeywords();
+        await refreshKeywordData();
       }
     } finally {
       setSubmitting(false);
@@ -125,7 +187,7 @@ export default function KeywordsPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
     });
-    await fetchKeywords();
+    await refreshKeywordData();
   };
 
   const handleCreateTask = async (keyword: Keyword) => {
@@ -147,10 +209,106 @@ export default function KeywordsPage() {
             console.error('Auto-run topic workflow failed:', err);
           });
         }
-        await fetchKeywords();
+        await refreshKeywordData();
       }
     } finally {
       setTaskBusyId(null);
+    }
+  };
+
+  const handleToggleSecondaryKeyword = (keywordId: number) => {
+    setNewClusterSecondaryKeywordIds((prev) =>
+      prev.includes(keywordId)
+        ? prev.filter((id) => id !== keywordId)
+        : [...prev, keywordId]
+    );
+  };
+
+  const handleCreateCluster = async () => {
+    if (!activeProjectId) return;
+    if (!newClusterName.trim()) return;
+    const mainKeywordId = Number.parseInt(newClusterMainKeywordId, 10);
+    if (!Number.isFinite(mainKeywordId) || mainKeywordId <= 0) return;
+
+    setClusterSubmitting(true);
+    try {
+      const res = await fetch('/api/keywords/clusters', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: activeProjectId,
+          name: newClusterName.trim(),
+          mainKeywordId,
+          secondaryKeywordIds: newClusterSecondaryKeywordIds,
+          notes: newClusterNotes.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to create keyword cluster');
+      }
+      setNewClusterName('');
+      setNewClusterMainKeywordId('');
+      setNewClusterSecondaryKeywordIds([]);
+      setNewClusterNotes('');
+      await refreshKeywordData();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setClusterSubmitting(false);
+    }
+  };
+
+  const handleCreateClusterTask = async (cluster: KeywordCluster) => {
+    setClusterTaskBusyId(cluster.id);
+    try {
+      const res = await fetch(`/api/keywords/clusters/${cluster.id}/create-task`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        const created = await res.json();
+        if (created?.taskId) {
+          void fetch('/api/topic-workflow/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              taskId: created.taskId,
+              autoContinue: true,
+              maxStages: 6,
+            }),
+          }).catch((err) => {
+            console.error('Auto-run cluster topic workflow failed:', err);
+          });
+        }
+        await refreshKeywordData();
+      }
+    } finally {
+      setClusterTaskBusyId(null);
+    }
+  };
+
+  const handleRunSerpIntel = async (keyword: Keyword, forceRefresh: boolean) => {
+    setSerpBusyId(keyword.id);
+    if (!forceRefresh) setSerpError(null);
+    try {
+      const endpoint = forceRefresh
+        ? `/api/keywords/${keyword.id}/serp-intel`
+        : `/api/keywords/${keyword.id}/serp-intel?refresh=0`;
+      const res = await fetch(endpoint, {
+        method: forceRefresh ? 'POST' : 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload.error || 'Failed to run SERP intel');
+      }
+      setSerpSnapshot(payload.snapshot || null);
+      setSerpKeywordLabel(payload.keyword || keyword.keyword);
+      setSerpError(null);
+    } catch (error) {
+      setSerpError((error as Error).message);
+    } finally {
+      setSerpBusyId(null);
     }
   };
 
@@ -239,6 +397,133 @@ export default function KeywordsPage() {
           </div>
         </section>
 
+        <section className="border border-border rounded-lg p-4 bg-card space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold">Keyword Clusters</h2>
+            <span className="text-xs text-muted-foreground">
+              Main keyword + secondary terms mapped for task creation
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Input
+              placeholder="Cluster name"
+              value={newClusterName}
+              onChange={(e) => setNewClusterName(e.target.value)}
+            />
+            <Select value={newClusterMainKeywordId} onValueChange={setNewClusterMainKeywordId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Main keyword" />
+              </SelectTrigger>
+              <SelectContent>
+                {keywords.map((keyword) => (
+                  <SelectItem key={keyword.id} value={String(keyword.id)}>
+                    {keyword.keyword}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              placeholder="Notes (optional)"
+              value={newClusterNotes}
+              onChange={(e) => setNewClusterNotes(e.target.value)}
+            />
+          </div>
+
+          <div className="rounded-md border border-border p-2">
+            <p className="text-xs font-medium text-muted-foreground mb-2">
+              Secondary keywords
+            </p>
+            {keywords.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Add keywords first.</p>
+            ) : (
+              <div className="max-h-32 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-1">
+                {keywords.map((keyword) => {
+                  const selected = newClusterSecondaryKeywordIds.includes(keyword.id);
+                  const isMainSelected = Number.parseInt(newClusterMainKeywordId || '0', 10) === keyword.id;
+                  return (
+                    <label
+                      key={keyword.id}
+                      className={`text-xs flex items-center gap-2 px-2 py-1 rounded ${
+                        isMainSelected ? 'opacity-50 cursor-not-allowed' : 'hover:bg-accent/40 cursor-pointer'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        disabled={isMainSelected}
+                        onChange={() => handleToggleSecondaryKeyword(keyword.id)}
+                      />
+                      <span className="truncate">{keyword.keyword}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <Button
+              onClick={handleCreateCluster}
+              disabled={
+                clusterSubmitting ||
+                !activeProjectId ||
+                !newClusterName.trim() ||
+                !newClusterMainKeywordId
+              }
+            >
+              {clusterSubmitting ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4 mr-2" />
+              )}
+              Create Cluster
+            </Button>
+          </div>
+
+          <div className="rounded-md border border-border overflow-hidden">
+            <div className="px-3 py-2 text-xs font-semibold border-b border-border">
+              Clusters ({clusters.length})
+            </div>
+            {clustersLoading ? (
+              <div className="py-4 flex items-center justify-center text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+              </div>
+            ) : clusters.length === 0 ? (
+              <div className="px-3 py-4 text-xs text-muted-foreground">
+                No clusters created yet.
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                {clusters.map((cluster) => (
+                  <div key={cluster.id} className="px-3 py-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{cluster.name}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Main: {cluster.mainKeyword || '—'} · Secondary: {cluster.secondaryKeywords.length}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      onClick={() => void handleCreateClusterTask(cluster)}
+                      disabled={clusterTaskBusyId === cluster.id}
+                    >
+                      {clusterTaskBusyId === cluster.id ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-3.5 w-3.5 mr-1" />
+                      )}
+                      Create Cluster Task
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
         <section className="border border-border rounded-lg bg-card overflow-hidden">
           <div className="px-4 py-3 border-b border-border text-sm font-semibold">
             Keywords ({keywords.length})
@@ -296,9 +581,69 @@ export default function KeywordsPage() {
                       )}
                       Create Task
                     </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      onClick={() => void handleRunSerpIntel(keyword, true)}
+                      disabled={serpBusyId === keyword.id}
+                    >
+                      {serpBusyId === keyword.id ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3.5 w-3.5 mr-1" />
+                      )}
+                      SERP Intel
+                    </Button>
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </section>
+
+        <section className="border border-border rounded-lg bg-card overflow-hidden">
+          <div className="px-4 py-3 border-b border-border text-sm font-semibold">
+            SERP Intel Snapshot {serpKeywordLabel ? `· ${serpKeywordLabel}` : ''}
+          </div>
+          {serpError ? (
+            <div className="px-4 py-3 text-sm text-red-500">{serpError}</div>
+          ) : !serpSnapshot ? (
+            <div className="px-4 py-4 text-sm text-muted-foreground">
+              Run SERP Intel on a keyword to preview competitor domains, entity coverage, and suggestions.
+            </div>
+          ) : (
+            <div className="px-4 py-4 space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Provider: {serpSnapshot.provider} · Fetched: {new Date(serpSnapshot.fetchedAt).toLocaleString()}
+              </p>
+              <div>
+                <p className="text-xs font-semibold mb-1">Top competitors</p>
+                <div className="flex flex-wrap gap-2">
+                  {serpSnapshot.competitors.slice(0, 8).map((competitor) => (
+                    <Badge key={`${competitor.rank}-${competitor.url}`} variant="secondary" className="text-xs">
+                      {competitor.domain || competitor.url}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold mb-1">Entity / LSI preview</p>
+                <p className="text-xs text-muted-foreground">
+                  Entities: {serpSnapshot.entities.slice(0, 10).map((entity) => entity.term).join(', ') || '—'}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Related terms: {serpSnapshot.lsiKeywords.slice(0, 10).map((term) => term.term).join(', ') || '—'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold mb-1">Action suggestions</p>
+                <ul className="list-disc pl-5 space-y-1 text-xs text-muted-foreground">
+                  {serpSnapshot.suggestions.slice(0, 5).map((suggestion) => (
+                    <li key={suggestion}>{suggestion}</li>
+                  ))}
+                </ul>
+              </div>
             </div>
           )}
         </section>

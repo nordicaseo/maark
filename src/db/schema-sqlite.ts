@@ -223,6 +223,30 @@ export const keywords = sqliteTable('keywords', {
   uniqueIndex('keywords_project_keyword_unique').on(table.projectId, table.keyword),
 ]);
 
+export const keywordClusters = sqliteTable('keyword_clusters', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  mainKeywordId: integer('main_keyword_id').references(() => keywords.id, { onDelete: 'set null' }),
+  status: text('status').notNull().default('active'),
+  notes: text('notes'),
+  createdById: text('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('keyword_clusters_project_name_unique').on(table.projectId, table.name),
+]);
+
+export const keywordClusterMembers = sqliteTable('keyword_cluster_members', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  clusterId: integer('cluster_id').notNull().references(() => keywordClusters.id, { onDelete: 'cascade' }),
+  keywordId: integer('keyword_id').notNull().references(() => keywords.id, { onDelete: 'cascade' }),
+  role: text('role').notNull().default('secondary'),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('keyword_cluster_members_unique').on(table.clusterId, table.keywordId),
+]);
+
 // ── Sites ─────────────────────────────────────────────────────────
 
 export const sites = sqliteTable('sites', {

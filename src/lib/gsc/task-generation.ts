@@ -31,6 +31,88 @@ interface TrafficDropCandidate {
   recentImpressions: number;
 }
 
+interface ConvexTaskSummary {
+  _id: string;
+  status: string;
+  tags?: string[];
+}
+
+async function ensureTrafficDropSubtasks(args: {
+  convex: NonNullable<ReturnType<typeof getConvexClient>>;
+  projectId: number;
+  pageId: number;
+  pageUrl: string | null;
+  dropPct: number;
+  parentTaskId: string;
+  existingTasks: ConvexTaskSummary[];
+}) {
+  const parentTag = `parent_task:${args.parentTaskId}`;
+  const pageTag = `page:${args.pageId}`;
+  const definitions = [
+    {
+      key: 'traffic_drop_diagnose',
+      title: 'Diagnose ranking and SERP changes',
+      description: `Inspect ranking movement, SERP feature shifts, and competitor gains for ${args.pageUrl || `page #${args.pageId}`}.`,
+      priority: 'HIGH',
+    },
+    {
+      key: 'traffic_drop_on_page',
+      title: 'Apply on-page optimization updates',
+      description: 'Refresh metadata, headings, internal links, and topical coverage to recover clicks.',
+      priority: 'MEDIUM',
+    },
+    {
+      key: 'traffic_drop_validate',
+      title: 'Validate recovery and annotate outcome',
+      description: 'Track recovery over the next 14 days and annotate wins/blockers in Mission Control.',
+      priority: 'MEDIUM',
+    },
+  ] as const;
+
+  for (const subtask of definitions) {
+    const existing = args.existingTasks.find(
+      (task) =>
+        task.status !== 'COMPLETED' &&
+        task.tags?.includes(parentTag) &&
+        task.tags?.includes(`subtask:${subtask.key}`)
+    );
+    if (existing) {
+      await linkTaskToPage({
+        taskId: String(existing._id),
+        projectId: args.projectId,
+        pageId: args.pageId,
+        linkType: 'traffic_drop',
+      });
+      continue;
+    }
+
+    const subTaskId = await args.convex.mutation(api.tasks.create, {
+      title: subtask.title,
+      description: subtask.description,
+      type: 'research',
+      status: 'BACKLOG',
+      priority: subtask.priority,
+      projectId: args.projectId,
+      tags: [
+        'seo',
+        'traffic_drop',
+        'subtask',
+        parentTag,
+        pageTag,
+        `drop:${args.dropPct}`,
+        `subtask:${subtask.key}`,
+      ],
+    });
+
+    await linkTaskToPage({
+      taskId: String(subTaskId),
+      projectId: args.projectId,
+      pageId: args.pageId,
+      linkType: 'traffic_drop',
+    });
+  }
+}
+
 export async function createTrafficDropTasksForProject(args: {
   projectId: number;
   minDropPercent?: number;
@@ -159,6 +241,7 @@ export async function createTrafficDropTasksForProject(args: {
   for (const candidate of candidates.slice(0, 20)) {
     const pageMeta = pageMap.get(candidate.pageId);
     const pageTag = `page:${candidate.pageId}`;
+    const dropPct = Math.round(candidate.dropPercent * 100);
 
     const existing = taskPool.find(
       (task) =>
@@ -175,10 +258,18 @@ export async function createTrafficDropTasksForProject(args: {
         pageId: candidate.pageId,
         linkType: 'traffic_drop',
       });
+      await ensureTrafficDropSubtasks({
+        convex,
+        projectId: args.projectId,
+        pageId: candidate.pageId,
+        pageUrl: pageMeta?.url || null,
+        dropPct,
+        parentTaskId: String(existing._id),
+        existingTasks: taskPool as ConvexTaskSummary[],
+      });
       continue;
     }
 
-    const dropPct = Math.round(candidate.dropPercent * 100);
     const title = pageMeta?.title?.trim()
       ? `Traffic drop: ${pageMeta.title}`
       : `Traffic drop: ${pageMeta?.url || `Page #${candidate.pageId}`}`;
@@ -212,6 +303,15 @@ export async function createTrafficDropTasksForProject(args: {
         projectId: args.projectId,
         pageId: candidate.pageId,
         linkType: 'traffic_drop',
+      });
+      await ensureTrafficDropSubtasks({
+        convex,
+        projectId: args.projectId,
+        pageId: candidate.pageId,
+        pageUrl: pageMeta?.url || null,
+        dropPct,
+        parentTaskId: taskIdString,
+        existingTasks: taskPool as ConvexTaskSummary[],
       });
 
       created += 1;

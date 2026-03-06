@@ -26,6 +26,80 @@ import { linkTaskToPage } from '@/lib/pages/linking';
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 
+interface ConvexTaskSummary {
+  _id: string;
+  status: string;
+  tags?: string[];
+}
+
+async function ensureCrawlerSubtasks(args: {
+  convex: NonNullable<ReturnType<typeof getConvexClient>>;
+  projectId: number;
+  pageId: number;
+  pageUrl: string;
+  issueCount: number;
+  parentTaskId: string;
+  existingTasks: ConvexTaskSummary[];
+}) {
+  const parentTag = `parent_task:${args.parentTaskId}`;
+  const pageTag = `page:${args.pageId}`;
+  const definitions = [
+    {
+      key: 'crawler_triage',
+      title: `Triage crawl issues (${args.issueCount})`,
+      description: `Review crawler findings for ${args.pageUrl}, prioritize by impact, and confirm root causes.`,
+      priority: 'HIGH',
+    },
+    {
+      key: 'crawler_fix_plan',
+      title: 'Create on-page SEO fix plan',
+      description: `Define concrete fixes for technical and on-page SEO issues found on ${args.pageUrl}.`,
+      priority: 'MEDIUM',
+    },
+    {
+      key: 'crawler_verify_recrawl',
+      title: 'Verify fixes with recrawl',
+      description: `Run recrawl after fixes and confirm issue closure for ${args.pageUrl}.`,
+      priority: 'MEDIUM',
+    },
+  ] as const;
+
+  for (const subtask of definitions) {
+    const existing = args.existingTasks.find(
+      (task) =>
+        task.status !== 'COMPLETED' &&
+        task.tags?.includes(parentTag) &&
+        task.tags?.includes(`subtask:${subtask.key}`)
+    );
+    if (existing) {
+      await linkTaskToPage({
+        taskId: String(existing._id),
+        projectId: args.projectId,
+        pageId: args.pageId,
+        linkType: 'crawler_issue',
+      });
+      continue;
+    }
+
+    const subTaskId = await args.convex.mutation(api.tasks.create, {
+      title: subtask.title,
+      description: subtask.description,
+      type: 'research',
+      status: 'BACKLOG',
+      priority: subtask.priority,
+      projectId: args.projectId,
+      tags: ['seo', 'crawler', 'page', 'subtask', parentTag, pageTag, `subtask:${subtask.key}`],
+    });
+
+    await linkTaskToPage({
+      taskId: String(subTaskId),
+      projectId: args.projectId,
+      pageId: args.pageId,
+      linkType: 'crawler_issue',
+    });
+  }
+}
+
 async function updateSiteCrawlStatus(args: {
   siteId: number | null | undefined;
   status: 'never' | 'queued' | 'running' | 'ok' | 'error';
@@ -111,6 +185,15 @@ async function maybeCreateCrawlerIssueTask(args: {
         pageId: args.pageId,
         linkType: 'crawler_issue',
       });
+      await ensureCrawlerSubtasks({
+        convex,
+        projectId: args.projectId,
+        pageId: args.pageId,
+        pageUrl: args.pageUrl,
+        issueCount: args.issueCount,
+        parentTaskId: taskId,
+        existingTasks: existingTasks as ConvexTaskSummary[],
+      });
       return taskId;
     }
 
@@ -132,6 +215,15 @@ async function maybeCreateCrawlerIssueTask(args: {
       projectId: args.projectId,
       pageId: args.pageId,
       linkType: 'crawler_issue',
+    });
+    await ensureCrawlerSubtasks({
+      convex,
+      projectId: args.projectId,
+      pageId: args.pageId,
+      pageUrl: args.pageUrl,
+      issueCount: args.issueCount,
+      parentTaskId: linkedTaskId,
+      existingTasks: existingTasks as ConvexTaskSummary[],
     });
     return linkedTaskId;
   } catch (error) {

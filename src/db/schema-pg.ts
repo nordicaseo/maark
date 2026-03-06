@@ -243,6 +243,30 @@ export const keywords = pgTable('keywords', {
   uniqueIndex('keywords_project_keyword_unique').on(table.projectId, table.keyword),
 ]);
 
+export const keywordClusters = pgTable('keyword_clusters', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 300 }).notNull(),
+  mainKeywordId: integer('main_keyword_id').references(() => keywords.id, { onDelete: 'set null' }),
+  status: varchar('status', { length: 30 }).notNull().default('active'),
+  notes: text('notes'),
+  createdById: text('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('keyword_clusters_project_name_unique').on(table.projectId, table.name),
+]);
+
+export const keywordClusterMembers = pgTable('keyword_cluster_members', {
+  id: serial('id').primaryKey(),
+  clusterId: integer('cluster_id').notNull().references(() => keywordClusters.id, { onDelete: 'cascade' }),
+  keywordId: integer('keyword_id').notNull().references(() => keywords.id, { onDelete: 'cascade' }),
+  role: varchar('role', { length: 24 }).notNull().default('secondary'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('keyword_cluster_members_unique').on(table.clusterId, table.keywordId),
+]);
+
 // ── Sites ─────────────────────────────────────────────────────────
 
 export const sites = pgTable('sites', {

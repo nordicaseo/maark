@@ -33,6 +33,9 @@ const REQUIRED_API_ROUTES = [
   'src/app/api/client/dashboard/route.ts',
   'src/app/api/pages/[id]/insights/route.ts',
   'src/app/api/pages/[id]/keywords/route.ts',
+  'src/app/api/keywords/clusters/route.ts',
+  'src/app/api/keywords/clusters/[id]/create-task/route.ts',
+  'src/app/api/keywords/[id]/serp-intel/route.ts',
 ];
 
 const ACCEPTABLE_VALIDATION_ERRORS = [

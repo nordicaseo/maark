@@ -300,6 +300,32 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       ON keywords(project_id, keyword);
   `);
 
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS keyword_clusters (
+      id SERIAL PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name VARCHAR(300) NOT NULL,
+      main_keyword_id INTEGER REFERENCES keywords(id) ON DELETE SET NULL,
+      status VARCHAR(30) NOT NULL DEFAULT 'active',
+      notes TEXT,
+      created_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS keyword_clusters_project_name_unique
+      ON keyword_clusters(project_id, name);
+
+    CREATE TABLE IF NOT EXISTS keyword_cluster_members (
+      id SERIAL PRIMARY KEY,
+      cluster_id INTEGER NOT NULL REFERENCES keyword_clusters(id) ON DELETE CASCADE,
+      keyword_id INTEGER NOT NULL REFERENCES keywords(id) ON DELETE CASCADE,
+      role VARCHAR(24) NOT NULL DEFAULT 'secondary',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS keyword_cluster_members_unique
+      ON keyword_cluster_members(cluster_id, keyword_id);
+  `);
+
   // ── Sites ──
   await sql.query(`
     CREATE TABLE IF NOT EXISTS sites (
@@ -871,6 +897,31 @@ function createDb() {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE UNIQUE INDEX IF NOT EXISTS keywords_project_keyword_unique ON keywords(project_id, keyword);
+  `);
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS keyword_clusters (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      main_keyword_id INTEGER REFERENCES keywords(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      notes TEXT,
+      created_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS keyword_clusters_project_name_unique
+      ON keyword_clusters(project_id, name);
+
+    CREATE TABLE IF NOT EXISTS keyword_cluster_members (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cluster_id INTEGER NOT NULL REFERENCES keyword_clusters(id) ON DELETE CASCADE,
+      keyword_id INTEGER NOT NULL REFERENCES keywords(id) ON DELETE CASCADE,
+      role TEXT NOT NULL DEFAULT 'secondary',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS keyword_cluster_members_unique
+      ON keyword_cluster_members(cluster_id, keyword_id);
   `);
 
   // ── Sites ──

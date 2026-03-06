@@ -6,7 +6,7 @@ import { requireRole } from '@/lib/auth';
 import { ASSIGNABLE_ROLES, PROJECT_ASSIGNABLE_ROLES } from '@/lib/permissions';
 import { randomUUID } from 'crypto';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
-import { userCanMutateProject } from '@/lib/access';
+import { getAccessibleProjectIds, getRequestedProjectId, userCanMutateProject } from '@/lib/access';
 import {
   buildInvitationUrls,
   resolveInvitationStatus,
@@ -81,10 +81,16 @@ export async function POST(req: NextRequest) {
         ? body.email.trim().toLowerCase()
         : null;
     const role = typeof body.role === 'string' ? body.role : 'writer';
-    const projectIds = sanitizeProjectIds(body.projectIds);
+    let projectIds = sanitizeProjectIds(body.projectIds);
     const projectRoleRaw =
       typeof body.projectRole === 'string' ? body.projectRole : 'writer';
     const targetIsRootRole = isRootRole(role);
+    let scopeAutofill:
+      | null
+      | {
+          mode: 'active_project' | 'all_mutable_projects';
+          projectIds: number[];
+        } = null;
 
     // Validate role
     if (!ASSIGNABLE_ROLES.includes(role)) {
@@ -115,8 +121,40 @@ export async function POST(req: NextRequest) {
     }
 
     if (!targetIsRootRole && projectIds.length === 0) {
+      const requestedProjectId = getRequestedProjectId(req);
+      if (
+        requestedProjectId !== null &&
+        (await userCanMutateProject(auth.user, requestedProjectId, 'admin'))
+      ) {
+        projectIds = [requestedProjectId];
+        scopeAutofill = {
+          mode: 'active_project',
+          projectIds,
+        };
+      } else {
+        const accessibleProjectIds = await getAccessibleProjectIds(auth.user);
+        const mutableProjectIds: number[] = [];
+        for (const projectId of accessibleProjectIds) {
+          if (await userCanMutateProject(auth.user, projectId, 'admin')) {
+            mutableProjectIds.push(projectId);
+          }
+        }
+        if (mutableProjectIds.length > 0) {
+          projectIds = mutableProjectIds;
+          scopeAutofill = {
+            mode: 'all_mutable_projects',
+            projectIds,
+          };
+        }
+      }
+    }
+
+    if (!targetIsRootRole && projectIds.length === 0) {
       return NextResponse.json(
-        { error: 'At least one projectId is required for non-root invitations.' },
+        {
+          error:
+            'At least one project assignment is required for non-root invitations. Select projects in the invite dialog.',
+        },
         { status: 400 }
       );
     }
@@ -157,6 +195,7 @@ export async function POST(req: NextRequest) {
         email: invitation.email,
         projectIds: invitation.projectIds ?? [],
         projectRole: invitation.projectRole ?? null,
+        scopeAutofill,
       },
     });
 
@@ -213,6 +252,7 @@ export async function POST(req: NextRequest) {
       status: resolveInvitationStatus(invitation),
       deliveryStatus,
       deliveryError,
+      scopeAutofill,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

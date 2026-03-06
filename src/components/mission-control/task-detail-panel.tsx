@@ -149,6 +149,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
   const [feedbackRunning, setFeedbackRunning] = useState(false);
   const [workflowBusy, setWorkflowBusy] = useState(false);
   const [workflowRunBusy, setWorkflowRunBusy] = useState(false);
+  const [workflowRecoverBusy, setWorkflowRecoverBusy] = useState(false);
   const [workflowLoading, setWorkflowLoading] = useState(false);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<AgentRunResult | null>(null);
@@ -325,7 +326,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
 
   const handleAdvanceWorkflowStage = async (
     toStage: TopicStageKey,
-    options?: { skipOptionalOutlineReview?: boolean; note?: string }
+    options?: { skipOptionalOutlineReview?: boolean; note?: string; runAfterAdvance?: boolean }
   ) => {
     if (!isTopicWorkflow || readOnly) return;
     setWorkflowBusy(true);
@@ -344,6 +345,21 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Failed to advance workflow stage');
+      }
+      if (options?.runAfterAdvance) {
+        const runRes = await fetch('/api/topic-workflow/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            taskId: task._id,
+            autoContinue: true,
+            maxStages: 6,
+          }),
+        });
+        if (!runRes.ok) {
+          const err = await runRes.json().catch(() => ({}));
+          throw new Error(err.error || 'Advanced stage, but failed to resume workflow');
+        }
       }
       await refreshWorkflowContext();
     } catch (err) {
@@ -405,6 +421,33 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
       setWorkflowError((err as Error).message);
     } finally {
       setWorkflowRunBusy(false);
+    }
+  };
+
+  const handleRerunWorkflowFromStage = async (
+    fromStage: 'research' | 'outline_build' | 'writing'
+  ) => {
+    if (!isTopicWorkflow || readOnly) return;
+    setWorkflowRecoverBusy(true);
+    setWorkflowError(null);
+    try {
+      const res = await fetch('/api/topic-workflow/rerun', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: task._id,
+          fromStage,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to recover workflow');
+      }
+      await refreshWorkflowContext();
+    } catch (err) {
+      setWorkflowError((err as Error).message);
+    } finally {
+      setWorkflowRecoverBusy(false);
     }
   };
 
@@ -564,6 +607,19 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
   const showComplete = isTopicWorkflow
     ? workflowStage === 'final_review'
     : task.status === 'IN_REVIEW';
+  const workflowRecoveryStage: 'research' | 'outline_build' | 'writing' =
+    workflowStage === 'writing' || workflowStage === 'final_review'
+      ? 'writing'
+      : workflowStage === 'outline_build' ||
+          workflowStage === 'outline_review' ||
+          workflowStage === 'prewrite_context'
+        ? 'outline_build'
+        : 'research';
+  const showWorkflowRecoveryButton =
+    isTopicWorkflow &&
+    (task.workflowStageStatus === 'blocked' ||
+      task.workflowStageStatus === 'queued' ||
+      workflowRuntimeState === 'blocked');
 
   return (
     <div className="fixed inset-y-0 right-0 w-[640px] max-w-full bg-white shadow-xl border-l z-50 flex flex-col"
@@ -713,6 +769,13 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
                     Word gap: {latestBlockedEvent?.payload?.diagnostics?.wordGap}
                   </p>
                 )}
+                <button
+                  onClick={() => handleRerunWorkflowFromStage(workflowRecoveryStage)}
+                  disabled={workflowRecoverBusy || workflowBusy || workflowRunBusy || readOnly}
+                  className="mc-btn-secondary text-xs mt-1"
+                >
+                  {workflowRecoverBusy ? 'Recovering…' : `Recover from ${TOPIC_STAGE_LABELS[workflowRecoveryStage]}`}
+                </button>
               </div>
             )}
             {(task.workflowStageStatus === 'queued' || latestQueuedEvent) && (
@@ -723,6 +786,13 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
                 <p className="font-medium">Writer queue</p>
                 <p>{latestQueuedEvent?.summary || task.workflowLastEventText || 'Waiting for an available writer.'}</p>
                 <p className="text-[11px]">This task will resume automatically when a writer is available.</p>
+                <button
+                  onClick={() => handleRerunWorkflowFromStage(workflowRecoveryStage)}
+                  disabled={workflowRecoverBusy || workflowBusy || workflowRunBusy || readOnly}
+                  className="mc-btn-secondary text-xs mt-1"
+                >
+                  {workflowRecoverBusy ? 'Recovering…' : `Force Resume from ${TOPIC_STAGE_LABELS[workflowRecoveryStage]}`}
+                </button>
               </div>
             )}
             {workflowError && (
@@ -775,6 +845,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
                   onClick={() =>
                     handleAdvanceWorkflowStage('writing', {
                       note: 'Prewrite approved by human. Start writing stage.',
+                      runAfterAdvance: true,
                     })
                   }
                   disabled={workflowBusy || workflowRunBusy || readOnly}
@@ -800,6 +871,17 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
                   className="mc-btn-secondary text-xs"
                 >
                   Skip Optional Outline Review
+                </button>
+              )}
+              {showWorkflowRecoveryButton && (
+                <button
+                  onClick={() => handleRerunWorkflowFromStage(workflowRecoveryStage)}
+                  disabled={workflowRecoverBusy || workflowBusy || workflowRunBusy || readOnly}
+                  className="mc-btn-secondary text-xs"
+                >
+                  {workflowRecoverBusy
+                    ? 'Recovering…'
+                    : `Recover Workflow from ${TOPIC_STAGE_LABELS[workflowRecoveryStage]}`}
                 </button>
               )}
             </div>
