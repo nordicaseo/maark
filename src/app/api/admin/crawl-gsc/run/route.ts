@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
 import { ensureDb } from '@/db';
-import { logAuditEvent } from '@/lib/observability';
+import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import { runDiscoveryForProject } from '@/lib/discovery/discovery-runner';
 import { enqueueProjectPagesForCrawl, processDueCrawlJobs } from '@/lib/discovery/crawl-queue';
 import { processDuePageArtifactJobs } from '@/lib/discovery/page-artifact-queue';
@@ -76,6 +76,18 @@ export async function POST(req: NextRequest) {
     } catch (error) {
       gscError = error instanceof Error ? error.message : 'Unknown GSC sync error';
       await markGscSyncFailure(projectId, gscError);
+      await logAlertEvent({
+        source: 'crawl_gsc',
+        eventType: 'gsc_sync_failed',
+        severity: 'warning',
+        projectId,
+        resourceId: String(projectId),
+        message: `GSC sync failed: ${gscError}`,
+        metadata: {
+          projectId,
+          daysBack: gscDaysBack,
+        },
+      });
     }
   }
 
@@ -107,6 +119,43 @@ export async function POST(req: NextRequest) {
     projectId,
     limit: Math.min(workerLimit * 2, 50),
   });
+
+  const crawlFailures = workerResult.results.filter((entry) => entry.state === 'failed');
+  if (crawlFailures.length > 0) {
+    await logAlertEvent({
+      source: 'crawl_gsc',
+      eventType: 'crawl_worker_failed_jobs',
+      severity: 'warning',
+      projectId,
+      resourceId: String(projectId),
+      message: `Crawl worker reported ${crawlFailures.length} failed jobs.`,
+      metadata: {
+        projectId,
+        failedJobs: crawlFailures.slice(0, 10),
+      },
+    });
+  }
+
+  const artifactFailedJobs = artifactWorkerResult.results.filter(
+    (entry) => entry.state === 'failed' || entry.state === 'dead_letter'
+  );
+  if (artifactWorkerResult.states.deadLetter > 0 || artifactFailedJobs.length > 0) {
+    await logAlertEvent({
+      source: 'crawl_gsc',
+      eventType: 'artifact_worker_issues',
+      severity: 'warning',
+      projectId,
+      resourceId: String(projectId),
+      message:
+        `Artifact worker issues: failed=${artifactFailedJobs.length}, ` +
+        `deadLetter=${artifactWorkerResult.states.deadLetter}.`,
+      metadata: {
+        projectId,
+        states: artifactWorkerResult.states,
+        failedJobs: artifactFailedJobs.slice(0, 10),
+      },
+    });
+  }
 
   await logAuditEvent({
     userId: auth.user.id,

@@ -4,6 +4,7 @@ import { db, ensureDb } from '@/db';
 import { documents } from '@/db/schema';
 import type { AppUser } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
+import { getWorkflowOpsSettings } from '@/lib/workflow/ops-settings';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { TopicStageKey } from '@/lib/content-workflow-taxonomy';
 
@@ -34,6 +35,7 @@ export interface CreateTopicWorkflowInput {
   options?: {
     outlineReviewOptional?: boolean;
     seoReviewRequired?: boolean;
+    workflowStartDelayMs?: number;
   };
 }
 
@@ -62,6 +64,7 @@ export async function createTopicWorkflow(input: CreateTopicWorkflowInput) {
 
   // Ensure workflow-critical agent roles exist before assignment.
   await convex.mutation(api.seed.seedAgents, {});
+  const workflowOps = await getWorkflowOpsSettings(input.projectId);
 
   const created = await convex.mutation(api.topicWorkflow.createTopicFromSource, {
     projectId: input.projectId,
@@ -74,7 +77,12 @@ export async function createTopicWorkflow(input: CreateTopicWorkflowInput) {
     requestedByUserId: input.user.id,
     documentId: input.documentId,
     skillId: input.skillId,
-    options: input.options,
+    options: {
+      ...input.options,
+      workflowStartDelayMs:
+        input.options?.workflowStartDelayMs ??
+        workflowOps.initialStartDelaySeconds * 1000,
+    },
   });
 
   let contentDocumentId = created.contentDocumentId;

@@ -5,10 +5,21 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/components/auth/auth-provider';
 import { hasRole } from '@/lib/permissions';
-import { ArrowLeft, Bot, Cpu, LayoutDashboard, LogOut, Radar, ShieldCheck, Sparkles } from 'lucide-react';
+import {
+  Activity,
+  ArrowLeft,
+  Bot,
+  Cpu,
+  LayoutDashboard,
+  LogOut,
+  Radar,
+  ShieldCheck,
+  Sparkles,
+} from 'lucide-react';
 
 const SYSTEM_ITEMS = [
   { href: '/super-admin', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/super-admin/workflow-ops', label: 'Workflow Ops', icon: Activity },
   { href: '/super-admin/agents', label: 'Agents', icon: Bot },
   { href: '/super-admin/templates', label: 'Templates', icon: Sparkles },
   { href: '/super-admin/ai', label: 'AI Models', icon: Cpu },

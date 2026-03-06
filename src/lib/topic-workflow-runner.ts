@@ -27,6 +27,7 @@ import { contentToHtml } from '@/lib/tiptap/to-html';
 import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
 import { getConvexClient } from '@/lib/convex/server';
 import { resolveTaskLinkedPageCleanContent } from '@/lib/pages/artifacts';
+import { logAlertEvent } from '@/lib/observability';
 import {
   buildEndingCompletionPrompt,
   buildContinuationPrompt,
@@ -37,6 +38,7 @@ import {
 } from '@/lib/workflow/writing-completeness';
 import { applyStyleGuard, styleGuardPassed } from '@/lib/workflow/style-guard';
 import { resolveTemplatePolicy } from '@/lib/workflow/content-templates';
+import { getWorkflowOpsSettings } from '@/lib/workflow/ops-settings';
 import type { AgentRole } from '@/types/agent-profile';
 import type { AIAction } from '@/types/ai';
 import type {
@@ -150,9 +152,10 @@ const SUPPORTED_CONTENT_FORMATS: ContentFormat[] = [
   'news_article',
 ];
 
-const FINAL_REVIEW_MAX_REVISIONS = 2;
+const DEFAULT_FINAL_REVIEW_MAX_REVISIONS = 2;
 const STYLE_FIX_MAX_ATTEMPTS = 1;
 const MAX_COMPRESSION_ATTEMPTS = 2;
+const NON_BLOCKING_SERP_TIMEOUT_MS = 1500;
 
 function stripCodeFences(input: string): string {
   return input
@@ -256,6 +259,29 @@ function parseTermArray(value: unknown, limit = 10): string[] {
 function trimTo(input: string, maxChars: number): string {
   if (input.length <= maxChars) return input;
   return `${input.slice(0, maxChars).trimEnd()}…`;
+}
+
+async function loadSerpIntelNonBlocking(args: {
+  keyword: string;
+  projectId?: number | null;
+}): Promise<Awaited<ReturnType<typeof getSerpIntelSnapshot>> | null> {
+  const keyword = args.keyword.trim();
+  if (!keyword) return null;
+
+  const timeoutPromise = new Promise<null>((resolve) => {
+    setTimeout(() => resolve(null), NON_BLOCKING_SERP_TIMEOUT_MS);
+  });
+
+  const intelPromise = getSerpIntelSnapshot({
+    keyword,
+    projectId: args.projectId ?? undefined,
+    preferFresh: false,
+    cachedOnly: true,
+  })
+    .then((snapshot) => snapshot)
+    .catch(() => null);
+
+  return Promise.race([intelPromise, timeoutPromise]);
 }
 
 function normalizeContentFormat(value: unknown): ContentFormat {
@@ -775,7 +801,7 @@ async function setAgentOnline(
 
 async function runResearchStage(
   task: Doc<'tasks'>,
-  documentId: number,
+  document: Awaited<ReturnType<typeof getDocumentById>>,
   skillContext: SkillContext,
   stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
@@ -812,7 +838,7 @@ Keep facts specific, concise, and production-safe.`;
 
   const user = `Topic: ${task.title}
 Description: ${task.description || ''}
-Target keyword: ${task.title}
+Target keyword: ${document.targetKeyword || task.title}
 ${pageContextBlock}
 
 Produce a concise research brief for content production.`;
@@ -875,11 +901,24 @@ Produce a concise research brief for content production.`;
         .slice(0, 8)
     : [];
 
+  const serpIntelKeyword = String(document.targetKeyword || task.title || '').trim();
+  const serpIntelSnapshot = await loadSerpIntelNonBlocking({
+    keyword: serpIntelKeyword,
+    projectId: task.projectId ?? null,
+  });
+
+  const existingResearch =
+    document.researchSnapshot && typeof document.researchSnapshot === 'object'
+      ? (document.researchSnapshot as Record<string, unknown>)
+      : {};
+
   const researchSnapshot = {
+    ...existingResearch,
     summary,
     facts,
     statistics,
     sources,
+    seoIntel: serpIntelSnapshot ?? existingResearch.seoIntel,
     analyzedAt: Date.now(),
   };
 
@@ -889,7 +928,7 @@ Produce a concise research brief for content production.`;
       researchSnapshot,
       updatedAt: dbNow(),
     })
-    .where(eq(documents.id, documentId));
+    .where(eq(documents.id, document.id));
 
   const bodyLines: string[] = [summary];
   if (facts.length > 0) {
@@ -898,9 +937,29 @@ Produce a concise research brief for content production.`;
   if (statistics.length > 0) {
     bodyLines.push('', 'Statistics:', ...statistics.map((stat) => `- ${stat.stat}${stat.source ? ` (${stat.source})` : ''}`));
   }
+  if (serpIntelSnapshot) {
+    bodyLines.push(
+      '',
+      'SERP context (keyword intel):',
+      `- Provider: ${serpIntelSnapshot.provider}`,
+      `- Competitors: ${serpIntelSnapshot.competitors.length}`,
+      `- Entities: ${serpIntelSnapshot.entities
+        .slice(0, 8)
+        .map((item) => item.term)
+        .join(', ') || 'none'}`,
+      `- Related terms: ${serpIntelSnapshot.lsiKeywords
+        .slice(0, 10)
+        .map((item) => item.term)
+        .join(', ') || 'none'}`
+    );
+  }
+
+  const summaryWithIntel = serpIntelSnapshot
+    ? `Research completed (${facts.length} facts, ${sources.length} sources). SERP intel linked (${serpIntelSnapshot.entities.length} entities, ${serpIntelSnapshot.lsiKeywords.length} related terms).`
+    : `Research completed (${facts.length} facts, ${sources.length} sources).`;
 
   return {
-    summary: `Research completed (${facts.length} facts, ${sources.length} sources).`,
+    summary: summaryWithIntel,
     artifactTitle: 'Research Brief',
     artifactBody: trimTo(bodyLines.join('\n'), 4000),
     artifactData: researchSnapshot,
@@ -1839,7 +1898,7 @@ async function runStage(
   stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
   if (stage === 'research') {
-    return runResearchStage(task, document.id, skillContext, stageProfileContext);
+    return runResearchStage(task, document, skillContext, stageProfileContext);
   }
 
   if (stage === 'seo_intel_review') {
@@ -1940,7 +1999,6 @@ export async function runTopicWorkflow(
   await ensureDb();
 
   const autoContinue = input.autoContinue ?? true;
-  const maxStages = clamp(input.maxStages ?? 10, 1, 16);
 
   const { convex } = await getWorkflowTaskForUser(input.user, input.taskId);
 
@@ -1950,6 +2008,13 @@ export async function runTopicWorkflow(
   if (!initialTask) {
     throw new Error('Task not found');
   }
+  const workflowOps = await getWorkflowOpsSettings(initialTask.projectId ?? null);
+  const maxStages = clamp(input.maxStages ?? workflowOps.maxStagesPerRun, 1, 24);
+  const finalReviewMaxRevisions = clamp(
+    workflowOps.finalReviewMaxRevisions || DEFAULT_FINAL_REVIEW_MAX_REVISIONS,
+    1,
+    8
+  );
   let currentTask: Doc<'tasks'> = initialTask;
 
   const runs: WorkflowStageRun[] = [];
@@ -2168,6 +2233,19 @@ export async function runTopicWorkflow(
         blockedSummary,
         blockedSummary
       );
+      await logAlertEvent({
+        source: 'topic_workflow',
+        eventType: 'assignment_blocked',
+        severity: 'warning',
+        projectId: currentTask.projectId ?? null,
+        resourceId: String(currentTask._id),
+        message: blockedSummary,
+        metadata: {
+          taskId: String(currentTask._id),
+          stage,
+          ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
+        },
+      });
       runs.push({ stage, summary: blockedSummary });
       stoppedReason = blockedSummary;
       break;
@@ -2213,6 +2291,20 @@ export async function runTopicWorkflow(
         blockedSummary,
         blockedSummary
       );
+      await logAlertEvent({
+        source: 'topic_workflow',
+        eventType: 'owner_role_mismatch',
+        severity: 'warning',
+        projectId: currentTask.projectId ?? null,
+        resourceId: String(currentTask._id),
+        message: blockedSummary,
+        metadata: {
+          taskId: String(currentTask._id),
+          stage,
+          assignedAgentId: currentTask.assignedAgentId ?? null,
+          assignedAgentRole: assignedAgent?.role ?? null,
+        },
+      });
       runs.push({ stage, summary: blockedSummary });
       stoppedReason = blockedSummary;
       break;
@@ -2382,6 +2474,32 @@ export async function runTopicWorkflow(
         failedSummary,
         failedSummary
       );
+      if (blockedBySafety) {
+        await logAlertEvent({
+          source: 'topic_workflow',
+          eventType: incompleteDraftError
+            ? 'writing_incomplete_blocked'
+            : 'workflow_stage_blocked',
+          severity: 'warning',
+          projectId: currentTask.projectId ?? null,
+          resourceId: String(currentTask._id),
+          message: failedSummary,
+          metadata: {
+            taskId: String(currentTask._id),
+            stage,
+            reason: incompleteDraftError ? 'writing_incomplete' : 'stage_safety_blocked',
+            outlineGap: incompleteDraftError?.completion.outlineGap,
+            diagnostics: incompleteDraftError
+              ? {
+                  missingHeadings: incompleteDraftError.completion.missingHeadings,
+                  wordGap: incompleteDraftError.completion.wordGap,
+                  headingCoverage: incompleteDraftError.completion.headingCoverage,
+                  abruptEnding: incompleteDraftError.completion.abruptEnding,
+                }
+              : undefined,
+          },
+        });
+      }
       await setAgentOnline(convex, currentTask);
       if (blockedBySafety) {
         runs.push({ stage, summary: failedSummary });
@@ -2468,9 +2586,9 @@ export async function runTopicWorkflow(
           stageResult.control?.revisionBrief?.trim() ||
           'Final review requested improvements. Revise clarity, SEO alignment, and completeness.';
 
-        if (revisionAttempts >= FINAL_REVIEW_MAX_REVISIONS) {
+        if (revisionAttempts >= finalReviewMaxRevisions) {
           const blockedSummary =
-            `Final review retry limit reached (${FINAL_REVIEW_MAX_REVISIONS}). ` +
+            `Final review retry limit reached (${finalReviewMaxRevisions}). ` +
             `Workflow blocked for PM/Admin intervention.`;
           await convex.mutation(api.tasks.update, {
             id: currentTask._id,
@@ -2490,9 +2608,23 @@ export async function runTopicWorkflow(
             payload: {
               status: 'blocked',
               reasonCode: 'final_review_retry_exhausted',
-              maxRetries: FINAL_REVIEW_MAX_REVISIONS,
+              maxRetries: finalReviewMaxRevisions,
               revisionAttempts,
               revisionBrief,
+            },
+          });
+          await logAlertEvent({
+            source: 'topic_workflow',
+            eventType: 'final_review_retry_exhausted',
+            severity: 'warning',
+            projectId: currentTask.projectId ?? null,
+            resourceId: String(currentTask._id),
+            message: blockedSummary,
+            metadata: {
+              taskId: String(currentTask._id),
+              stage: 'final_review',
+              maxRetries: finalReviewMaxRevisions,
+              revisionAttempts,
             },
           });
           runs.push({ ...runRecord, summary: blockedSummary });
@@ -2514,7 +2646,7 @@ export async function runTopicWorkflow(
             status: 'revision_required',
             reasonCode: 'final_review_auto_revision',
             revisionAttempt: revisionAttempts + 1,
-            maxRetries: FINAL_REVIEW_MAX_REVISIONS,
+            maxRetries: finalReviewMaxRevisions,
             revisionBrief,
           },
         });

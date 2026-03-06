@@ -5,6 +5,8 @@ import type { MutationCtx } from "./_generated/server";
 
 const WORKFLOW_TEMPLATE_KEY = "topic_production_v1";
 const INITIAL_WORKFLOW_START_DELAY_MS = 20_000;
+const MIN_WORKFLOW_START_DELAY_MS = 0;
+const MAX_WORKFLOW_START_DELAY_MS = 10 * 60 * 1000;
 
 type TopicStageKey =
   | "research"
@@ -143,6 +145,10 @@ function normalizeTopicKey(topic: string): string {
     .replace(/[^\w\s-]/g, "")
     .replace(/\s+/g, "-")
     .slice(0, 140);
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function isTopicTask(task: Doc<"tasks"> | null | undefined): task is Doc<"tasks"> {
@@ -756,6 +762,7 @@ export const createTopicFromSource = mutation({
       v.object({
         outlineReviewOptional: v.optional(v.boolean()),
         seoReviewRequired: v.optional(v.boolean()),
+        workflowStartDelayMs: v.optional(v.number()),
       })
     ),
   },
@@ -789,7 +796,12 @@ export const createTopicFromSource = mutation({
     const outlineReviewOptional = args.options?.outlineReviewOptional ?? true;
     const seoReviewRequired = args.options?.seoReviewRequired ?? true;
     const initialStage: TopicStageKey = "research";
-    const runNotBeforeAt = now + INITIAL_WORKFLOW_START_DELAY_MS;
+    const startDelayMs = clampNumber(
+      args.options?.workflowStartDelayMs ?? INITIAL_WORKFLOW_START_DELAY_MS,
+      MIN_WORKFLOW_START_DELAY_MS,
+      MAX_WORKFLOW_START_DELAY_MS
+    );
+    const runNotBeforeAt = now + startDelayMs;
     const initialSummary = `Topic workflow created from ${args.entryPoint}: ${args.topic}`;
 
     const taskId = await ctx.db.insert("tasks", {
@@ -837,6 +849,7 @@ export const createTopicFromSource = mutation({
         pageId: args.pageId,
         keywordId: args.keywordId,
         keywordClusterId: args.keywordClusterId,
+        workflowStartDelayMs: startDelayMs,
       },
     });
 

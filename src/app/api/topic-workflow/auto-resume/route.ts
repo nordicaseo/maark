@@ -14,8 +14,12 @@ import { getConvexClient } from '@/lib/convex/server';
 import { runTopicWorkflow } from '@/lib/topic-workflow-runner';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import type { TopicStageKey } from '@/lib/content-workflow-taxonomy';
+import {
+  getDefaultWorkflowOpsSettings,
+  getWorkflowOpsSettings,
+  type WorkflowOpsSettings,
+} from '@/lib/workflow/ops-settings';
 
-const STAGE_TIMEOUT_MS = 25 * 60 * 1000;
 const DEFAULT_MAX_RESUMES = 4;
 const MAX_SCAN_PER_PROJECT = 500;
 
@@ -48,6 +52,10 @@ function parseOptionalNumber(value: unknown): number | null {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function timeoutMsFromSettings(settings: WorkflowOpsSettings): number {
+  return Math.max(5, settings.stageTimeoutMinutes) * 60 * 1000;
 }
 
 export async function POST(req: NextRequest) {
@@ -84,11 +92,7 @@ export async function POST(req: NextRequest) {
         ? null
         : parseOptionalNumber((body as { projectId?: unknown }).projectId) ??
           getRequestedProjectId(req);
-    const maxResumes = clamp(
-      Number((body as { maxResumes?: unknown }).maxResumes) || DEFAULT_MAX_RESUMES,
-      1,
-      12
-    );
+    const requestedMaxResumes = parseOptionalNumber((body as { maxResumes?: unknown }).maxResumes);
 
     let projectIds: number[] = [];
     if (requestedProjectId !== null) {
@@ -112,6 +116,23 @@ export async function POST(req: NextRequest) {
         failures: [],
       });
     }
+
+    const defaultOps = getDefaultWorkflowOpsSettings();
+    const settingsByProject = new Map<number, WorkflowOpsSettings>();
+    await Promise.all(
+      projectIds.map(async (projectId) => {
+        const settings = await getWorkflowOpsSettings(projectId);
+        settingsByProject.set(projectId, settings);
+      })
+    );
+
+    const inferredMaxResumes =
+      requestedMaxResumes ??
+      Math.max(
+        DEFAULT_MAX_RESUMES,
+        ...Array.from(settingsByProject.values()).map((settings) => settings.autoResumeMaxResumes)
+      );
+    const maxResumes = clamp(inferredMaxResumes, 1, 24);
 
     const taskChunks = await Promise.all(
       projectIds.map((projectId) =>
@@ -159,14 +180,19 @@ export async function POST(req: NextRequest) {
       if (task.workflowStageStatus !== 'in_progress') return false;
       if (task.workflowCurrentStageKey === 'complete') return false;
       const lastEventAt = task.workflowLastEventAt || task.updatedAt || 0;
-      return now - lastEventAt > STAGE_TIMEOUT_MS;
+      const projectSettings =
+        (task.projectId ? settingsByProject.get(task.projectId) : null) ?? defaultOps;
+      return now - lastEventAt > timeoutMsFromSettings(projectSettings);
     });
 
     let watchdogBlocked = 0;
     for (const task of staleWorkingTasks) {
       const stage = (task.workflowCurrentStageKey || 'research') as TopicStageKey;
+      const projectSettings =
+        (task.projectId ? settingsByProject.get(task.projectId) : null) ?? defaultOps;
+      const stageTimeoutMs = timeoutMsFromSettings(projectSettings);
       const summary = `Watchdog blocked ${stage}: no progress in ${Math.floor(
-        STAGE_TIMEOUT_MS / 60000
+        stageTimeoutMs / 60000
       )}m. Use Run Current Stage to resume.`;
 
       await convex.mutation(api.tasks.update, {
@@ -187,7 +213,7 @@ export async function POST(req: NextRequest) {
         payload: {
           status: 'blocked',
           reasonCode: 'stage_timeout_watchdog',
-          timeoutMs: STAGE_TIMEOUT_MS,
+          timeoutMs: stageTimeoutMs,
           previousLastEventAt: task.workflowLastEventAt || task.updatedAt || null,
         },
       });
@@ -201,11 +227,13 @@ export async function POST(req: NextRequest) {
 
     for (const task of toResume) {
       try {
+        const projectSettings =
+          (task.projectId ? settingsByProject.get(task.projectId) : null) ?? defaultOps;
         const result = await runTopicWorkflow({
           user: actorUser,
           taskId: task._id,
           autoContinue: true,
-          maxStages: 10,
+          maxStages: projectSettings.maxStagesPerRun,
         });
         if (result.runs.length > 0) {
           resumed += 1;
@@ -231,6 +259,16 @@ export async function POST(req: NextRequest) {
         maxResumes,
         resumed,
         watchdogBlocked,
+        projectSettings: Object.fromEntries(
+          Array.from(settingsByProject.entries()).map(([projectId, settings]) => [
+            projectId,
+            {
+              stageTimeoutMinutes: settings.stageTimeoutMinutes,
+              autoResumeMaxResumes: settings.autoResumeMaxResumes,
+              maxStagesPerRun: settings.maxStagesPerRun,
+            },
+          ])
+        ),
         failures,
       },
     });

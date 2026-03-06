@@ -165,6 +165,21 @@ export async function PUT(
 
   const now = dbNow();
 
+  const previousMappings = await db
+    .select({
+      keywordId: pageKeywordMappings.keywordId,
+      mappingType: pageKeywordMappings.mappingType,
+    })
+    .from(pageKeywordMappings)
+    .where(and(eq(pageKeywordMappings.projectId, page.projectId), eq(pageKeywordMappings.pageId, page.id)));
+
+  const previousPrimaryKeywordId =
+    previousMappings.find((row: (typeof previousMappings)[number]) => row.mappingType === 'primary')
+      ?.keywordId ?? null;
+  const previousSecondaryKeywordIds = previousMappings
+    .filter((row: (typeof previousMappings)[number]) => row.mappingType !== 'primary')
+    .map((row: (typeof previousMappings)[number]) => Number(row.keywordId));
+
   await db.delete(pageKeywordMappings).where(eq(pageKeywordMappings.pageId, page.id));
 
   if (primaryKeywordId) {
@@ -223,6 +238,9 @@ export async function PUT(
       primaryKeywordId,
       secondaryKeywordCount: secondaryKeywordIds.length,
       hasPrimary: Boolean(primaryKeywordId),
+      previousPrimaryKeywordId,
+      previousSecondaryKeywordIds,
+      newSecondaryKeywordIds: cleanSecondary,
     },
   });
 

@@ -258,6 +258,7 @@ export async function getSerpIntelSnapshot(args: {
   keyword: string;
   projectId?: number;
   preferFresh?: boolean;
+  cachedOnly?: boolean;
   ttlHours?: number;
   locationName?: string;
   languageName?: string;
@@ -268,9 +269,13 @@ export async function getSerpIntelSnapshot(args: {
   }
 
   const ttlHours = Math.max(6, Math.min(args.ttlHours ?? 168, 24 * 14));
-  if (!args.preferFresh) {
+  if (!args.preferFresh || args.cachedOnly) {
     const cached = await readCachedSnapshot(normalizedKeyword, ttlHours);
     if (cached) return cached;
+  }
+
+  if (args.cachedOnly) {
+    throw new Error(`SERP intel cache miss for "${normalizedKeyword}".`);
   }
 
   const errors: string[] = [];
@@ -348,4 +353,3 @@ export async function getSerpIntelSnapshot(args: {
   await writeCache(snapshot);
   return snapshot;
 }
-
