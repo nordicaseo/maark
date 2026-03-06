@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Trash2, Sparkles, Globe, Wrench } from 'lucide-react';
+import { Plus, Trash2, Sparkles, Wrench } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 /* ------------------------------------------------------------------ */
@@ -196,9 +196,6 @@ export default function AdminSkillsPage() {
           </Select>
           <Button variant="outline" onClick={() => router.push('/admin/skills/new')}>
             <Sparkles className="h-4 w-4 mr-1" /> Auto-Create
-          </Button>
-          <Button variant="outline" onClick={() => router.push('/admin/skills/new')}>
-            <Globe className="h-4 w-4 mr-1" /> From URL
           </Button>
           <Button onClick={openNew}>
             <Plus className="h-4 w-4 mr-1" /> New Skill

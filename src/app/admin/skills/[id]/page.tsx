@@ -14,7 +14,6 @@ import {
 } from '@/components/ui/select';
 import {
   ArrowLeft,
-  Plus,
   Save,
   Loader2,
   ChevronDown,
@@ -45,6 +44,7 @@ export default function SkillBuilderPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [addPartPickerKey, setAddPartPickerKey] = useState(0);
 
   const fetchSkill = useCallback(async () => {
     try {
@@ -143,6 +143,12 @@ export default function SkillBuilderPage() {
       updatedAt: new Date().toISOString(),
     };
     setParts(prev => [...prev, newPart]);
+  };
+
+  const handleAddPartType = (partType: string) => {
+    addPart(partType as SkillPartType);
+    // Reset picker so selecting the same type again still triggers onValueChange.
+    setAddPartPickerKey((prev) => prev + 1);
   };
 
   const updatePart = (index: number, updated: Partial<SkillPart>) => {
@@ -245,12 +251,9 @@ export default function SkillBuilderPage() {
           <h2 className="text-lg font-semibold">
             Skill Parts ({parts.length})
           </h2>
-          <Select value="" onValueChange={(v) => addPart(v as SkillPartType)}>
+          <Select key={addPartPickerKey} onValueChange={handleAddPartType}>
             <SelectTrigger className="w-[180px] h-8 text-sm">
-              <div className="flex items-center gap-1">
-                <Plus className="h-3.5 w-3.5" />
-                Add Part
-              </div>
+              <SelectValue placeholder="Add Part" />
             </SelectTrigger>
             <SelectContent>
               {SKILL_PART_TYPES.map(t => (

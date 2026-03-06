@@ -61,6 +61,7 @@ export default function SkillWizardPage() {
   const [projectId, setProjectId] = useState<string>('none');
   const [projects, setProjects] = useState<Array<{ id: number; name: string }>>([]);
   const [saving, setSaving] = useState(false);
+  const [addPartPickerKey, setAddPartPickerKey] = useState(0);
 
   const addUrl = () => setUrls(prev => [...prev, '']);
   const removeUrl = (i: number) => setUrls(prev => prev.filter((_, idx) => idx !== i));
@@ -181,6 +182,12 @@ export default function SkillWizardPage() {
         updatedAt: new Date().toISOString(),
       },
     ]);
+  };
+
+  const handleAddPartType = (partType: string) => {
+    addPart(partType as SkillPartType);
+    // Reset picker so selecting the same type again continues to work.
+    setAddPartPickerKey((prev) => prev + 1);
   };
 
   const updatePart = (index: number, updated: Partial<SkillPart>) => {
@@ -374,11 +381,9 @@ export default function SkillWizardPage() {
               <Button variant="outline" size="sm" onClick={() => setStep('sources')}>
                 <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
               </Button>
-              <Select value="" onValueChange={(v) => addPart(v as SkillPartType)}>
+              <Select key={addPartPickerKey} onValueChange={handleAddPartType}>
                 <SelectTrigger className="w-[160px] h-8 text-xs">
-                  <div className="flex items-center gap-1">
-                    <Plus className="h-3.5 w-3.5" /> Add Part
-                  </div>
+                  <SelectValue placeholder="Add Part" />
                 </SelectTrigger>
                 <SelectContent>
                   {SKILL_PART_TYPES.map(t => (
