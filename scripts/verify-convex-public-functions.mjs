@@ -22,8 +22,17 @@ const REQUIRED_API_ROUTES = [
   'src/app/api/admin/agents/route.ts',
   'src/app/api/admin/agents/shared-user/route.ts',
   'src/app/api/admin/agents/heartbeat/route.ts',
+  'src/app/api/admin/crawl-gsc/route.ts',
+  'src/app/api/admin/crawl-gsc/run/route.ts',
+  'src/app/api/admin/crawl-gsc/cron/route.ts',
+  'src/app/api/admin/crawl-gsc/observability/route.ts',
+  'src/app/api/admin/crawl-gsc/properties/route.ts',
+  'src/app/api/admin/crawl-gsc/oauth/start/route.ts',
+  'src/app/api/admin/crawl-gsc/oauth/callback/route.ts',
   'src/app/api/mission-control/tasks/[id]/route.ts',
   'src/app/api/client/dashboard/route.ts',
+  'src/app/api/pages/[id]/insights/route.ts',
+  'src/app/api/pages/[id]/keywords/route.ts',
 ];
 
 const ACCEPTABLE_VALIDATION_ERRORS = [

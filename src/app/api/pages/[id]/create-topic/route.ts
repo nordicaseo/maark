@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { requireRole } from '@/lib/auth';
 import { userCanAccessPage } from '@/lib/access';
 import { db, ensureDb } from '@/db';
-import { pages } from '@/db/schema';
+import { keywords, pageKeywordMappings, pages } from '@/db/schema';
 import { createTopicWorkflow } from '@/lib/topic-workflow';
 import { logAuditEvent, logAlertEvent } from '@/lib/observability';
 import { linkDocumentToPage, linkTaskToPage } from '@/lib/pages/linking';
@@ -57,6 +57,22 @@ export async function POST(
     }
 
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
+    const [primaryMapping] = await db
+      .select({
+        keywordId: pageKeywordMappings.keywordId,
+        keyword: keywords.keyword,
+      })
+      .from(pageKeywordMappings)
+      .innerJoin(keywords, eq(keywords.id, pageKeywordMappings.keywordId))
+      .where(
+        and(
+          eq(pageKeywordMappings.projectId, page.projectId),
+          eq(pageKeywordMappings.pageId, page.id),
+          eq(pageKeywordMappings.mappingType, 'primary')
+        )
+      )
+      .limit(1);
+
     const topic = typeof body.topic === 'string' && body.topic.trim()
       ? body.topic.trim()
       : page.title || `Content for ${page.url}`;
@@ -69,16 +85,20 @@ export async function POST(
           : 'standard';
     const contentType = resolveDefaultContentType(pageType, subtype);
 
+    const mappedPrimaryKeyword = primaryMapping?.keyword ? String(primaryMapping.keyword) : null;
+    const explicitTargetKeyword = typeof body.targetKeyword === 'string' && body.targetKeyword.trim()
+      ? body.targetKeyword.trim()
+      : null;
+
     const created = await createTopicWorkflow({
       user: auth.user,
       projectId: page.projectId,
       topic,
       entryPoint: 'pages',
       pageId: page.id,
+      keywordId: primaryMapping?.keywordId ? Number(primaryMapping.keywordId) : undefined,
       contentType,
-      targetKeyword: typeof body.targetKeyword === 'string' && body.targetKeyword.trim()
-        ? body.targetKeyword.trim()
-        : null,
+      targetKeyword: explicitTargetKeyword || mappedPrimaryKeyword,
       options: {
         outlineReviewOptional: true,
         seoReviewRequired: true,
@@ -97,6 +117,7 @@ export async function POST(
       taskId: created.taskId,
       projectId: page.projectId,
       pageId: page.id,
+      keywordId: primaryMapping?.keywordId ? Number(primaryMapping.keywordId) : null,
       linkType: 'content_topic',
     });
 
@@ -112,6 +133,8 @@ export async function POST(
         pageType,
         subtype,
         contentType,
+        primaryKeywordId: primaryMapping?.keywordId ? Number(primaryMapping.keywordId) : null,
+        primaryKeyword: mappedPrimaryKeyword,
         taskId: created.taskId,
         documentId: created.contentDocumentId ?? null,
         reused: created.reused,

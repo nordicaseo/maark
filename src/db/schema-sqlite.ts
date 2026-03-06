@@ -231,6 +231,9 @@ export const sites = sqliteTable('sites', {
   domain: text('domain').notNull(),
   sitemapUrl: text('sitemap_url'),
   gscProperty: text('gsc_property'),
+  gscAccessToken: text('gsc_access_token'),
+  gscRefreshToken: text('gsc_refresh_token'),
+  gscTokenExpiresAt: text('gsc_token_expires_at'),
   gscConnectedAt: text('gsc_connected_at'),
   gscLastSyncAt: text('gsc_last_sync_at'),
   gscLastSyncStatus: text('gsc_last_sync_status').notNull().default('never'),
@@ -246,6 +249,25 @@ export const sites = sqliteTable('sites', {
   updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
 }, (table) => [
   uniqueIndex('sites_project_domain_unique').on(table.projectId, table.domain),
+]);
+
+export const gscPageDailyMetrics = sqliteTable('gsc_page_daily_metrics', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
+  pageId: integer('page_id').references(() => pages.id, { onDelete: 'set null' }),
+  date: text('date').notNull(),
+  url: text('url').notNull(),
+  normalizedUrl: text('normalized_url').notNull(),
+  clicks: real('clicks').notNull().default(0),
+  impressions: real('impressions').notNull().default(0),
+  ctr: real('ctr').notNull().default(0),
+  position: real('position').notNull().default(0),
+  source: text('source').notNull().default('gsc'),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('gsc_metrics_unique_project_date_url').on(table.projectId, table.date, table.normalizedUrl),
 ]);
 
 // ── Pages & Crawls ────────────────────────────────────────────────
@@ -391,6 +413,19 @@ export const taskPageLinks = sqliteTable('task_page_links', {
   updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
 }, (table) => [
   uniqueIndex('task_page_links_unique').on(table.taskId, table.pageId, table.linkType),
+]);
+
+export const pageKeywordMappings = sqliteTable('page_keyword_mappings', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  pageId: integer('page_id').notNull().references(() => pages.id, { onDelete: 'cascade' }),
+  keywordId: integer('keyword_id').notNull().references(() => keywords.id, { onDelete: 'cascade' }),
+  mappingType: text('mapping_type').notNull().default('secondary'),
+  clusterKey: text('cluster_key'),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('page_keyword_mappings_unique').on(table.pageId, table.keywordId, table.mappingType),
 ]);
 
 // ── Observability ─────────────────────────────────────────────────

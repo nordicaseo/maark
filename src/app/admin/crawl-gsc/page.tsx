@@ -1,7 +1,17 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Globe, Loader2, RefreshCw, SearchCheck, ShieldCheck } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import {
+  AlertTriangle,
+  Globe,
+  Loader2,
+  RefreshCw,
+  SearchCheck,
+  ShieldCheck,
+  Link as LinkIcon,
+  Activity,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -32,6 +42,45 @@ interface SiteConfigResponse {
   } | null;
 }
 
+interface GscPropertyOption {
+  siteUrl: string;
+  permissionLevel: string;
+}
+
+interface ObservabilityResponse {
+  queue: {
+    queued: number;
+    processing: number;
+    done: number;
+    failed: number;
+  };
+  gsc: {
+    pointsLast30d: {
+      clicks: number;
+      impressions: number;
+    };
+    latestMetricDate: string | null;
+  };
+  crawlRuns: Array<{
+    id: number;
+    runType: string;
+    status: string;
+    totalUrls: number;
+    processedUrls: number;
+    successUrls: number;
+    failedUrls: number;
+    updatedAt: string | null;
+  }>;
+  alerts: Array<{
+    id: number;
+    source: string;
+    eventType: string;
+    severity: string;
+    message: string;
+    createdAt: string | null;
+  }>;
+}
+
 function statusDot(on: boolean) {
   return (
     <span
@@ -40,13 +89,25 @@ function statusDot(on: boolean) {
   );
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return 'Never';
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return 'Never';
+  return new Date(parsed).toLocaleString();
+}
+
 export default function AdminCrawlGscPage() {
+  const searchParams = useSearchParams();
+
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingSite, setLoadingSite] = useState(false);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [loadingProperties, setLoadingProperties] = useState(false);
+  const [loadingObservability, setLoadingObservability] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   const [domain, setDomain] = useState('');
@@ -56,6 +117,8 @@ export default function AdminCrawlGscPage() {
   const [autoGscEnabled, setAutoGscEnabled] = useState(true);
   const [crawlFrequencyHours, setCrawlFrequencyHours] = useState(24);
   const [siteState, setSiteState] = useState<SiteConfigResponse['site'] | null>(null);
+  const [properties, setProperties] = useState<GscPropertyOption[]>([]);
+  const [observability, setObservability] = useState<ObservabilityResponse | null>(null);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === projectId) ?? null,
@@ -73,7 +136,12 @@ export default function AdminCrawlGscPage() {
         : [];
       setProjects(next);
       if (next.length > 0 && !projectId) {
-        setProjectId(next[0].id);
+        const fromQuery = Number.parseInt(String(searchParams.get('projectId') || ''), 10);
+        if (Number.isFinite(fromQuery) && next.some((entry) => entry.id === fromQuery)) {
+          setProjectId(fromQuery);
+        } else {
+          setProjectId(next[0].id);
+        }
       }
     } finally {
       setLoading(false);
@@ -101,6 +169,21 @@ export default function AdminCrawlGscPage() {
     }
   }
 
+  async function fetchObservability(targetProjectId: number) {
+    setLoadingObservability(true);
+    try {
+      const res = await fetch(`/api/admin/crawl-gsc/observability?projectId=${targetProjectId}`);
+      if (!res.ok) {
+        setObservability(null);
+        return;
+      }
+      const payload: ObservabilityResponse = await res.json();
+      setObservability(payload);
+    } finally {
+      setLoadingObservability(false);
+    }
+  }
+
   useEffect(() => {
     void fetchProjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -109,7 +192,22 @@ export default function AdminCrawlGscPage() {
   useEffect(() => {
     if (!projectId) return;
     void fetchSiteConfig(projectId);
+    void fetchObservability(projectId);
   }, [projectId]);
+
+  useEffect(() => {
+    const oauthStatus = searchParams.get('oauth');
+    const msg = searchParams.get('msg');
+    if (!oauthStatus) return;
+
+    if (oauthStatus === 'connected') {
+      setNotice('Google Search Console connected successfully.');
+      return;
+    }
+
+    const statusText = oauthStatus.replace(/_/g, ' ');
+    setNotice(`GSC connect ${statusText}${msg ? `: ${msg}` : ''}`);
+  }, [searchParams]);
 
   async function saveConfig() {
     if (!projectId) return;
@@ -133,6 +231,7 @@ export default function AdminCrawlGscPage() {
       if (res.ok) {
         setNotice('Crawler and GSC settings saved.');
         await fetchSiteConfig(projectId);
+        await fetchObservability(projectId);
       } else {
         setNotice(payload?.error || 'Failed to save settings.');
       }
@@ -152,6 +251,8 @@ export default function AdminCrawlGscPage() {
         body: JSON.stringify({
           projectId,
           runDiscovery: true,
+          runGscSync: true,
+          runTrafficTasking: true,
           enqueueLimit: 30,
           workerLimit: 10,
         }),
@@ -160,13 +261,62 @@ export default function AdminCrawlGscPage() {
       if (res.ok) {
         const discovered = payload?.discovery?.totals?.discovered ?? 0;
         const processed = payload?.worker?.processedCount ?? 0;
-        setNotice(`Run complete: ${discovered} discovered, ${processed} crawled.`);
+        const gscRows = payload?.gsc?.rowsUpserted ?? 0;
+        const tasksCreated = payload?.trafficTasking?.created ?? 0;
+        setNotice(
+          `Run complete: ${discovered} discovered, ${gscRows} GSC rows synced, ${processed} crawled, ${tasksCreated} traffic tasks created.`
+        );
         await fetchSiteConfig(projectId);
+        await fetchObservability(projectId);
       } else {
-        setNotice(payload?.error || 'Run failed.');
+        setNotice(payload?.error || payload?.gscError || 'Run failed.');
       }
     } finally {
       setRunning(false);
+    }
+  }
+
+  async function connectGsc() {
+    if (!projectId) return;
+    setConnecting(true);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/admin/crawl-gsc/oauth/start?projectId=${projectId}`);
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.url) {
+        setNotice(payload?.error || 'Failed to initialize Google OAuth flow.');
+        return;
+      }
+      window.location.href = payload.url;
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  async function loadGscProperties() {
+    if (!projectId) return;
+    setLoadingProperties(true);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/admin/crawl-gsc/properties?projectId=${projectId}`);
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setNotice(payload?.error || 'Failed to load GSC properties.');
+        return;
+      }
+      const next = Array.isArray(payload?.properties)
+        ? payload.properties.map((row: { siteUrl: string; permissionLevel: string }) => ({
+            siteUrl: String(row.siteUrl),
+            permissionLevel: String(row.permissionLevel || 'unknown'),
+          }))
+        : [];
+      setProperties(next);
+      if (!gscProperty && next.length > 0) {
+        setGscProperty(next[0].siteUrl);
+      }
+      setNotice(next.length > 0 ? `Loaded ${next.length} GSC properties.` : 'No GSC properties found.');
+    } finally {
+      setLoadingProperties(false);
     }
   }
 
@@ -187,11 +337,23 @@ export default function AdminCrawlGscPage() {
             Crawl & GSC
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Configure automatic crawling and Google Search Console sync per project.
+            Configure automatic crawling, connect Google Search Console, and monitor operational health.
           </p>
         </div>
-        <Button variant="outline" onClick={() => projectId && fetchSiteConfig(projectId)} disabled={!projectId || loadingSite}>
-          {loadingSite ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+        <Button
+          variant="outline"
+          onClick={() => {
+            if (!projectId) return;
+            void fetchSiteConfig(projectId);
+            void fetchObservability(projectId);
+          }}
+          disabled={!projectId || loadingSite || loadingObservability}
+        >
+          {loadingSite || loadingObservability ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4 mr-2" />
+          )}
           Refresh
         </Button>
       </div>
@@ -247,11 +409,26 @@ export default function AdminCrawlGscPage() {
           </div>
           <div>
             <label className="text-sm font-medium mb-1 block">GSC Property</label>
-            <Input
-              value={gscProperty}
-              onChange={(event) => setGscProperty(event.target.value)}
-              placeholder="sc-domain:example.com or https://example.com/"
-            />
+            {properties.length > 0 ? (
+              <select
+                className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                value={gscProperty}
+                onChange={(event) => setGscProperty(event.target.value)}
+              >
+                <option value="">Select GSC property</option>
+                {properties.map((property) => (
+                  <option key={property.siteUrl} value={property.siteUrl}>
+                    {property.siteUrl} ({property.permissionLevel})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <Input
+                value={gscProperty}
+                onChange={(event) => setGscProperty(event.target.value)}
+                placeholder="sc-domain:example.com or https://example.com/"
+              />
+            )}
           </div>
           <div>
             <label className="text-sm font-medium mb-1 block">Crawl Frequency (hours)</label>
@@ -289,10 +466,23 @@ export default function AdminCrawlGscPage() {
             {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <SearchCheck className="h-4 w-4 mr-2" />}
             Save Config
           </Button>
+          <Button variant="outline" onClick={() => void connectGsc()} disabled={!projectId || connecting}>
+            {connecting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <LinkIcon className="h-4 w-4 mr-2" />}
+            Connect Google
+          </Button>
+          <Button variant="outline" onClick={() => void loadGscProperties()} disabled={!projectId || loadingProperties}>
+            {loadingProperties ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+            Load Properties
+          </Button>
           <Button variant="outline" onClick={() => void runNow()} disabled={!projectId || running}>
             {running ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
-            Run Discovery + Crawl
+            Run Discovery + GSC + Crawl
           </Button>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-2 text-xs text-muted-foreground">
+          <div>GSC last sync: {formatDateTime(siteState?.gscLastSyncAt)}</div>
+          <div>Crawl last run: {formatDateTime(siteState?.crawlLastRunAt)}</div>
         </div>
 
         {siteState?.gscLastError && (
@@ -307,7 +497,78 @@ export default function AdminCrawlGscPage() {
         )}
         {notice && <p className="text-xs text-muted-foreground">{notice}</p>}
       </section>
+
+      <section className="border border-border rounded-lg p-4 bg-card space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <Activity className="h-4 w-4" />
+            Observability
+          </h2>
+          {loadingObservability && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-4">
+          <div className="rounded-md border border-border p-3">
+            <p className="text-xs text-muted-foreground">Queued</p>
+            <p className="text-lg font-semibold">{observability?.queue.queued ?? 0}</p>
+          </div>
+          <div className="rounded-md border border-border p-3">
+            <p className="text-xs text-muted-foreground">Processing</p>
+            <p className="text-lg font-semibold">{observability?.queue.processing ?? 0}</p>
+          </div>
+          <div className="rounded-md border border-border p-3">
+            <p className="text-xs text-muted-foreground">GSC Clicks (30d)</p>
+            <p className="text-lg font-semibold">{Math.round(observability?.gsc.pointsLast30d.clicks ?? 0)}</p>
+          </div>
+          <div className="rounded-md border border-border p-3">
+            <p className="text-xs text-muted-foreground">GSC Impressions (30d)</p>
+            <p className="text-lg font-semibold">{Math.round(observability?.gsc.pointsLast30d.impressions ?? 0)}</p>
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs text-muted-foreground mb-2">Recent Crawl Runs</p>
+          {observability?.crawlRuns?.length ? (
+            <div className="space-y-2">
+              {observability.crawlRuns.map((run) => (
+                <div key={run.id} className="rounded-md border border-border p-2 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-medium">Run #{run.id} · {run.runType}</div>
+                    <Badge variant="outline">{run.status}</Badge>
+                  </div>
+                  <div className="text-muted-foreground mt-1">
+                    Processed {run.processedUrls}/{run.totalUrls} · Success {run.successUrls} · Failed {run.failedUrls}
+                  </div>
+                  <div className="text-muted-foreground mt-1">Updated {formatDateTime(run.updatedAt)}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">No crawl runs yet.</p>
+          )}
+        </div>
+
+        <div>
+          <p className="text-xs text-muted-foreground mb-2">Recent Alerts</p>
+          {observability?.alerts?.length ? (
+            <div className="space-y-2">
+              {observability.alerts.map((alert) => (
+                <div key={alert.id} className="rounded-md border border-border p-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                    <span className="font-medium">{alert.eventType}</span>
+                    <Badge variant="secondary" className="uppercase">{alert.severity}</Badge>
+                  </div>
+                  <p className="mt-1 text-muted-foreground">{alert.message}</p>
+                  <p className="mt-1 text-muted-foreground">{formatDateTime(alert.createdAt)}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">No recent crawler/GSC alerts.</p>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
-

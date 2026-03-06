@@ -6,6 +6,7 @@ import { upsertDiscoveryUrl, upsertEligiblePage } from '@/lib/discovery/ledger';
 import { fetchSitemapUrls } from '@/lib/discovery/sitemap';
 import { fetchGscTopPages } from '@/lib/discovery/gsc';
 import { dbNow } from '@/db/utils';
+import { ensureGscAccessTokenForProject } from '@/lib/gsc/sync';
 
 export interface DiscoveryRunInput {
   projectId: number;
@@ -51,7 +52,7 @@ export async function runDiscoveryForProject(input: DiscoveryRunInput): Promise<
   const siteId = primarySite?.id ?? null;
   const sitemapUrl = input.sitemapUrl || primarySite?.sitemapUrl || null;
   const gscProperty = input.gscProperty || primarySite?.gscProperty || null;
-  const gscAccessToken = input.gscAccessToken || process.env.GOOGLE_SEARCH_CONSOLE_ACCESS_TOKEN || null;
+  let gscAccessToken = input.gscAccessToken || process.env.GOOGLE_SEARCH_CONSOLE_ACCESS_TOKEN || null;
   let gscSucceeded = false;
   let gscAttempted = false;
   let gscError: string | null = null;
@@ -74,6 +75,16 @@ export async function runDiscoveryForProject(input: DiscoveryRunInput): Promise<
     }
   } else {
     warnings.push('No sitemap URL configured; skipping sitemap discovery.');
+  }
+
+  if (gscProperty && !gscAccessToken) {
+    try {
+      const token = await ensureGscAccessTokenForProject(input.projectId);
+      gscAccessToken = token.accessToken;
+    } catch (error) {
+      gscError = error instanceof Error ? error.message : 'unknown error';
+      warnings.push(`GSC token refresh failed: ${gscError}`);
+    }
   }
 
   if (gscProperty && gscAccessToken) {

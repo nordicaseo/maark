@@ -2,6 +2,10 @@ import { execFileSync } from 'node:child_process';
 
 const CANONICAL_ALIAS =
   process.env.VERCEL_CANONICAL_ALIAS || 'maark-nordicaseo.vercel.app';
+const PROJECT_PRODUCTION_REF =
+  process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+  process.env.VERCEL_PRODUCTION_ALIAS ||
+  'maark-nordicaseo.vercel.app';
 const REQUIRED_DOMAINS = (process.env.VERCEL_REQUIRED_DOMAINS || 'maark.ai,www.maark.ai')
   .split(',')
   .map((value) => value.trim())
@@ -60,7 +64,20 @@ function main() {
   }
 
   const canonical = inspectDeployment(CANONICAL_ALIAS);
+  const projectProduction = inspectDeployment(PROJECT_PRODUCTION_REF);
   validateCanonicalDeployment(canonical);
+  validateCanonicalDeployment(projectProduction);
+
+  if (canonical.id !== projectProduction.id) {
+    console.error('\nVercel production alias drift detected.\n');
+    console.error(
+      `Canonical (${CANONICAL_ALIAS}) -> ${canonical.url} (${canonical.id})`
+    );
+    console.error(
+      `Project production (${PROJECT_PRODUCTION_REF}) -> ${projectProduction.url} (${projectProduction.id})`
+    );
+    process.exit(1);
+  }
 
   const mismatches = [];
   for (const domain of REQUIRED_DOMAINS) {

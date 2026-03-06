@@ -14,7 +14,17 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
+  X,
 } from 'lucide-react';
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { useAuth } from '@/components/auth/auth-provider';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -22,7 +32,14 @@ import { Input } from '@/components/ui/input';
 import { useActiveProject } from '@/hooks/use-active-project';
 import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
 import { withProjectScope } from '@/lib/project-context';
-import type { DiscoveryUrlRecord, ManagedPage, PageDataHealth } from '@/types/page';
+import type {
+  DiscoveryUrlRecord,
+  ManagedPage,
+  PageDataHealth,
+  PageKeywordMappingRecord,
+  PagePerformancePoint,
+  PageTaskAnnotation,
+} from '@/types/page';
 import { OperationsSidebar } from '@/components/layout/operations-sidebar';
 
 type PagesViewMode = 'inventory' | 'discovery';
@@ -70,6 +87,42 @@ function formatReason(reason: string | null | undefined) {
   return reason.replace(/_/g, ' ');
 }
 
+interface PageInsightsResponse {
+  page: {
+    id: number;
+    url: string;
+    title: string | null;
+    projectId: number;
+  };
+  performance: PagePerformancePoint[];
+  annotations: PageTaskAnnotation[];
+  keywordMappings: PageKeywordMappingRecord[];
+  linkedDocuments: Array<{
+    documentId: number;
+    title: string;
+    status: string;
+    relationType: string;
+    previewUrl: string;
+  }>;
+}
+
+interface PageKeywordOption {
+  id: number;
+  keyword: string;
+  status: string;
+  volume: number | null;
+  difficulty: number | null;
+}
+
+interface PageKeywordsResponse {
+  primaryKeywordId: number | null;
+  mappings: Array<{
+    keywordId: number;
+    mappingType: 'primary' | 'secondary';
+  }>;
+  availableKeywords: PageKeywordOption[];
+}
+
 export default function PagesPage() {
   const { user, isLoading: authLoading } = useAuth();
   const router = useRouter();
@@ -92,6 +145,15 @@ export default function PagesPage() {
   const [runningDiscovery, setRunningDiscovery] = useState(false);
   const [reconciling, setReconciling] = useState(false);
   const [health, setHealth] = useState<PageDataHealth | null>(null);
+  const [detailPageId, setDetailPageId] = useState<number | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailData, setDetailData] = useState<PageInsightsResponse | null>(null);
+  const [keywordData, setKeywordData] = useState<PageKeywordsResponse | null>(null);
+  const [keywordSearch, setKeywordSearch] = useState('');
+  const [primaryKeywordId, setPrimaryKeywordId] = useState<number | null>(null);
+  const [secondaryKeywordIds, setSecondaryKeywordIds] = useState<number[]>([]);
+  const [savingKeywords, setSavingKeywords] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -160,6 +222,16 @@ export default function PagesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user, activeProjectId, viewMode, discoverySource, discoveryReason]);
 
+  useEffect(() => {
+    setDetailPageId(null);
+    setDetailData(null);
+    setKeywordData(null);
+    setDetailError(null);
+    setKeywordSearch('');
+    setPrimaryKeywordId(null);
+    setSecondaryKeywordIds([]);
+  }, [activeProjectId]);
+
   const discoveryStats = useMemo(() => {
     let candidates = 0;
     let excluded = 0;
@@ -173,14 +245,6 @@ export default function PagesPage() {
       excluded,
     };
   }, [discoveryRows]);
-
-  if (authLoading || !user) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-background">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
 
   const handleAddPage = async () => {
     if (!activeProjectId || !newUrl.trim()) return;
@@ -318,6 +382,115 @@ export default function PagesPage() {
       setReconciling(false);
     }
   };
+
+  const loadPageDetails = async (pageId: number) => {
+    setDetailLoading(true);
+    setDetailError(null);
+    try {
+      const [insightsRes, keywordsRes] = await Promise.all([
+        fetch(`/api/pages/${pageId}/insights?days=180`),
+        fetch(`/api/pages/${pageId}/keywords?limit=500`),
+      ]);
+
+      const insightsPayload = await insightsRes.json().catch(() => null);
+      const keywordsPayload = await keywordsRes.json().catch(() => null);
+
+      if (!insightsRes.ok) {
+        setDetailError(insightsPayload?.error || 'Failed to load page insights.');
+        setDetailData(null);
+        setKeywordData(null);
+        return;
+      }
+
+      setDetailData(insightsPayload as PageInsightsResponse);
+
+      if (keywordsRes.ok) {
+        const keywordResponse = keywordsPayload as PageKeywordsResponse;
+        setKeywordData(keywordResponse);
+        const nextPrimary =
+          keywordResponse.primaryKeywordId ??
+          keywordResponse.mappings.find((entry) => entry.mappingType === 'primary')?.keywordId ??
+          null;
+        setPrimaryKeywordId(nextPrimary);
+        setSecondaryKeywordIds(
+          keywordResponse.mappings
+            .filter((entry) => entry.mappingType === 'secondary')
+            .map((entry) => entry.keywordId)
+        );
+      } else {
+        setKeywordData(null);
+      }
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const handleOpenDetails = async (pageId: number) => {
+    setDetailPageId(pageId);
+    setKeywordSearch('');
+    await loadPageDetails(pageId);
+  };
+
+  const handleCloseDetails = () => {
+    setDetailPageId(null);
+    setDetailData(null);
+    setKeywordData(null);
+    setDetailError(null);
+    setKeywordSearch('');
+    setPrimaryKeywordId(null);
+    setSecondaryKeywordIds([]);
+  };
+
+  const toggleSecondaryKeyword = (keywordId: number) => {
+    setSecondaryKeywordIds((current) => {
+      if (current.includes(keywordId)) {
+        return current.filter((id) => id !== keywordId);
+      }
+      return [...current, keywordId];
+    });
+  };
+
+  const handleSaveKeywordMappings = async () => {
+    if (!detailPageId) return;
+    setSavingKeywords(true);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/pages/${detailPageId}/keywords`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          primaryKeywordId,
+          secondaryKeywordIds: secondaryKeywordIds.filter((id) => id !== primaryKeywordId),
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setNotice(payload?.error || 'Failed to save page keyword mappings.');
+        return;
+      }
+      setNotice('Page keyword mappings updated.');
+      await loadPageDetails(detailPageId);
+    } finally {
+      setSavingKeywords(false);
+    }
+  };
+
+  const filteredKeywordOptions = useMemo(() => {
+    const options = keywordData?.availableKeywords || [];
+    if (!keywordSearch.trim()) return options.slice(0, 80);
+    const query = keywordSearch.trim().toLowerCase();
+    return options
+      .filter((option) => option.keyword.toLowerCase().includes(query))
+      .slice(0, 80);
+  }, [keywordData?.availableKeywords, keywordSearch]);
+
+  if (authLoading || !user) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-background">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -479,6 +652,13 @@ export default function PagesPage() {
                           <Button
                             size="sm"
                             variant="outline"
+                            onClick={() => void handleOpenDetails(page.id)}
+                          >
+                            Details
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
                             onClick={() => void handleCreateTopic(page.id)}
                             disabled={topicBusyId === page.id}
                           >
@@ -608,6 +788,199 @@ export default function PagesPage() {
           </section>
         </main>
       </div>
+
+      {detailPageId !== null && (
+        <>
+          <button
+            type="button"
+            aria-label="Close details panel"
+            className="fixed inset-0 z-40 bg-black/20"
+            onClick={handleCloseDetails}
+          />
+          <aside className="fixed inset-y-0 right-0 z-50 w-full max-w-xl border-l border-border bg-card shadow-xl overflow-y-auto">
+            <div className="p-4 border-b border-border flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h3 className="font-semibold truncate">
+                  {detailData?.page.title || detailData?.page.url || 'Page Details'}
+                </h3>
+                <p className="text-xs text-muted-foreground truncate">
+                  {detailData?.page.url || 'Loading...'}
+                </p>
+              </div>
+              <Button size="icon" variant="ghost" onClick={handleCloseDetails}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="p-4 space-y-6">
+              {detailLoading ? (
+                <div className="py-12 flex items-center justify-center text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                </div>
+              ) : detailError ? (
+                <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+                  {detailError}
+                </div>
+              ) : detailData ? (
+                <>
+                  <section className="space-y-2">
+                    <h4 className="text-sm font-semibold">Performance (180d)</h4>
+                    {detailData.performance.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No Search Console data yet.</p>
+                    ) : (
+                      <div className="h-56 w-full rounded-md border border-border p-2">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={detailData.performance}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis
+                              dataKey="date"
+                              tick={{ fontSize: 11 }}
+                              tickFormatter={(value) => String(value).slice(5)}
+                            />
+                            <YAxis yAxisId="left" tick={{ fontSize: 11 }} />
+                            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} />
+                            <Tooltip />
+                            <Line
+                              yAxisId="left"
+                              type="monotone"
+                              dataKey="clicks"
+                              stroke="#16a34a"
+                              strokeWidth={2}
+                              dot={false}
+                              name="Clicks"
+                            />
+                            <Line
+                              yAxisId="right"
+                              type="monotone"
+                              dataKey="impressions"
+                              stroke="#2563eb"
+                              strokeWidth={2}
+                              dot={false}
+                              name="Impressions"
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-sm font-semibold">Keyword Mapping</h4>
+                      <Button
+                        size="sm"
+                        onClick={() => void handleSaveKeywordMappings()}
+                        disabled={savingKeywords}
+                      >
+                        {savingKeywords ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
+                        Save Mapping
+                      </Button>
+                    </div>
+                    <div className="rounded-md border border-border p-3 space-y-3">
+                      <div>
+                        <label className="text-xs font-medium mb-1 block">Primary Keyword</label>
+                        <select
+                          className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                          value={primaryKeywordId ?? ''}
+                          onChange={(event) =>
+                            setPrimaryKeywordId(
+                              event.target.value ? Number.parseInt(event.target.value, 10) : null
+                            )
+                          }
+                        >
+                          <option value="">Unassigned</option>
+                          {(keywordData?.availableKeywords || []).map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.keyword}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-xs font-medium mb-1 block">Secondary Keywords</label>
+                        <Input
+                          placeholder="Filter keywords"
+                          value={keywordSearch}
+                          onChange={(event) => setKeywordSearch(event.target.value)}
+                        />
+                        <div className="mt-2 max-h-52 overflow-y-auto space-y-1 pr-1">
+                          {filteredKeywordOptions.map((option) => {
+                            const checked =
+                              option.id !== primaryKeywordId && secondaryKeywordIds.includes(option.id);
+                            return (
+                              <label
+                                key={option.id}
+                                className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1 text-xs"
+                              >
+                                <span className="min-w-0 truncate">{option.keyword}</span>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={option.id === primaryKeywordId}
+                                  onChange={() => toggleSecondaryKeyword(option.id)}
+                                />
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-2">
+                          One primary keyword per page. Secondary keywords can be many.
+                        </p>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="space-y-2">
+                    <h4 className="text-sm font-semibold">Task Annotations</h4>
+                    {detailData.annotations.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No task annotations linked to this page yet.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {detailData.annotations.map((annotation) => (
+                          <div key={`${annotation.taskId}-${annotation.linkType}`} className="rounded-md border border-border p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-medium truncate">{annotation.title}</p>
+                              <Badge variant="outline">{annotation.status}</Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {annotation.linkType} · {annotation.annotationDate ? new Date(annotation.annotationDate).toLocaleString() : 'No timestamp'}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="space-y-2">
+                    <h4 className="text-sm font-semibold">Linked Content</h4>
+                    {detailData.linkedDocuments.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No documents linked to this page.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {detailData.linkedDocuments.map((doc) => (
+                          <Link
+                            key={`${doc.documentId}-${doc.relationType}`}
+                            href={withProjectScope(doc.previewUrl, activeProjectId)}
+                            className="block rounded-md border border-border p-2 hover:bg-accent/40"
+                          >
+                            <p className="text-sm font-medium">{doc.title}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {doc.status} · {doc.relationType}
+                            </p>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">Select a page to inspect details.</p>
+              )}
+            </div>
+          </aside>
+        </>
+      )}
     </div>
   );
 }

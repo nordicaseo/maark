@@ -6,6 +6,12 @@ import { runDiscoveryForProject } from '@/lib/discovery/discovery-runner';
 import { enqueueCrawlJob, processDueCrawlJobs } from '@/lib/discovery/crawl-queue';
 import { normalizeUrlForInventory } from '@/lib/discovery/url-policy';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
+import { createTrafficDropTasksForProject } from '@/lib/gsc/task-generation';
+import {
+  markGscSyncFailure,
+  resolveGscSyncDaysBack,
+  syncGscPerformanceForProject,
+} from '@/lib/gsc/sync';
 
 function isCronAuthorized(req: NextRequest): boolean {
   if (req.headers.get('x-vercel-cron')) return true;
@@ -38,6 +44,10 @@ export async function POST(req: NextRequest) {
     siteId: number;
     discoveryRun: boolean;
     discoveryWarnings: number;
+    gscRowsUpserted: number;
+    gscError: string | null;
+    trafficTasksCreated: number;
+    trafficTasksReused: number;
     queued: number;
     processed: number;
   }> = [];
@@ -45,6 +55,37 @@ export async function POST(req: NextRequest) {
   for (const site of allSites) {
     try {
       let discoveryWarnings = 0;
+      let gscRowsUpserted = 0;
+      let gscError: string | null = null;
+      let trafficTasksCreated = 0;
+      let trafficTasksReused = 0;
+
+      const autoGsc = site.autoGscEnabled === 1 || site.autoGscEnabled === true;
+      if (autoGsc && site.gscProperty) {
+        try {
+          const daysBack = await resolveGscSyncDaysBack(site.projectId);
+          const gscSync = await syncGscPerformanceForProject({
+            projectId: site.projectId,
+            daysBack,
+          });
+          gscRowsUpserted = gscSync.rowsUpserted;
+        } catch (error) {
+          gscError = error instanceof Error ? error.message : 'Unknown GSC sync error';
+          await markGscSyncFailure(site.projectId, gscError);
+          await logAlertEvent({
+            source: 'gsc',
+            eventType: 'scheduled_sync_failed',
+            severity: 'warning',
+            message: 'Scheduled GSC sync failed for project.',
+            projectId: site.projectId,
+            resourceId: site.id,
+            metadata: {
+              error: gscError,
+            },
+          });
+        }
+      }
+
       if (site.autoGscEnabled === 1 || site.autoGscEnabled === true || site.autoCrawlEnabled === 1 || site.autoCrawlEnabled === true) {
         const discovery = await runDiscoveryForProject({
           projectId: site.projectId,
@@ -52,6 +93,14 @@ export async function POST(req: NextRequest) {
           gscTopPagesLimit: 2000,
         });
         discoveryWarnings = discovery.warnings.length;
+      }
+
+      if (autoGsc) {
+        const trafficTasking = await createTrafficDropTasksForProject({
+          projectId: site.projectId,
+        });
+        trafficTasksCreated = trafficTasking.created;
+        trafficTasksReused = trafficTasking.reused;
       }
 
       let queued = 0;
@@ -114,6 +163,10 @@ export async function POST(req: NextRequest) {
         siteId: site.id,
         discoveryRun: true,
         discoveryWarnings,
+        gscRowsUpserted,
+        gscError,
+        trafficTasksCreated,
+        trafficTasksReused,
         queued,
         processed: worker.processedCount,
       });

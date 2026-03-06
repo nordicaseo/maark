@@ -106,3 +106,28 @@ export interface PageDataHealth {
     pendingQueue: number;
   };
 }
+
+export interface PagePerformancePoint {
+  date: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+export interface PageTaskAnnotation {
+  taskId: string;
+  title: string;
+  status: string;
+  annotationDate: string | null;
+  linkType: string;
+}
+
+export interface PageKeywordMappingRecord {
+  keywordId: number;
+  keyword: string;
+  mappingType: 'primary' | 'secondary';
+  clusterKey: string | null;
+  volume: number | null;
+  difficulty: number | null;
+}

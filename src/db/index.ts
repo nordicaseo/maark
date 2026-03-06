@@ -308,6 +308,9 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       domain TEXT NOT NULL,
       sitemap_url TEXT,
       gsc_property TEXT,
+      gsc_access_token TEXT,
+      gsc_refresh_token TEXT,
+      gsc_token_expires_at TIMESTAMP,
       gsc_connected_at TIMESTAMP,
       gsc_last_sync_at TIMESTAMP,
       gsc_last_sync_status VARCHAR(24) NOT NULL DEFAULT 'never',
@@ -328,6 +331,9 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
   await sql.query(`
     ALTER TABLE sites ADD COLUMN IF NOT EXISTS sitemap_url TEXT;
     ALTER TABLE sites ADD COLUMN IF NOT EXISTS gsc_property TEXT;
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS gsc_access_token TEXT;
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS gsc_refresh_token TEXT;
+    ALTER TABLE sites ADD COLUMN IF NOT EXISTS gsc_token_expires_at TIMESTAMP;
     ALTER TABLE sites ADD COLUMN IF NOT EXISTS gsc_connected_at TIMESTAMP;
     ALTER TABLE sites ADD COLUMN IF NOT EXISTS gsc_last_sync_at TIMESTAMP;
     ALTER TABLE sites ADD COLUMN IF NOT EXISTS gsc_last_sync_status VARCHAR(24) NOT NULL DEFAULT 'never';
@@ -513,6 +519,38 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
     );
     CREATE UNIQUE INDEX IF NOT EXISTS task_page_links_unique
       ON task_page_links(task_id, page_id, link_type);
+
+    CREATE TABLE IF NOT EXISTS gsc_page_daily_metrics (
+      id SERIAL PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+      page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
+      date TEXT NOT NULL,
+      url TEXT NOT NULL,
+      normalized_url TEXT NOT NULL,
+      clicks REAL NOT NULL DEFAULT 0,
+      impressions REAL NOT NULL DEFAULT 0,
+      ctr REAL NOT NULL DEFAULT 0,
+      position REAL NOT NULL DEFAULT 0,
+      source VARCHAR(24) NOT NULL DEFAULT 'gsc',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS gsc_metrics_unique_project_date_url
+      ON gsc_page_daily_metrics(project_id, date, normalized_url);
+
+    CREATE TABLE IF NOT EXISTS page_keyword_mappings (
+      id SERIAL PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      keyword_id INTEGER NOT NULL REFERENCES keywords(id) ON DELETE CASCADE,
+      mapping_type VARCHAR(24) NOT NULL DEFAULT 'secondary',
+      cluster_key TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS page_keyword_mappings_unique
+      ON page_keyword_mappings(page_id, keyword_id, mapping_type);
   `);
 
   // ── Observability tables ──
@@ -843,6 +881,9 @@ function createDb() {
       domain TEXT NOT NULL,
       sitemap_url TEXT,
       gsc_property TEXT,
+      gsc_access_token TEXT,
+      gsc_refresh_token TEXT,
+      gsc_token_expires_at TEXT,
       gsc_connected_at TEXT,
       gsc_last_sync_at TEXT,
       gsc_last_sync_status TEXT NOT NULL DEFAULT 'never',
@@ -861,6 +902,9 @@ function createDb() {
   `);
   addColumnSafe(sqlite, 'sites', 'sitemap_url', 'TEXT');
   addColumnSafe(sqlite, 'sites', 'gsc_property', 'TEXT');
+  addColumnSafe(sqlite, 'sites', 'gsc_access_token', 'TEXT');
+  addColumnSafe(sqlite, 'sites', 'gsc_refresh_token', 'TEXT');
+  addColumnSafe(sqlite, 'sites', 'gsc_token_expires_at', 'TEXT');
   addColumnSafe(sqlite, 'sites', 'gsc_connected_at', 'TEXT');
   addColumnSafe(sqlite, 'sites', 'gsc_last_sync_at', 'TEXT');
   addColumnSafe(sqlite, 'sites', "gsc_last_sync_status", "TEXT NOT NULL DEFAULT 'never'");
@@ -1036,6 +1080,38 @@ function createDb() {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS task_page_links_unique
       ON task_page_links(task_id, page_id, link_type);
+
+    CREATE TABLE IF NOT EXISTS gsc_page_daily_metrics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+      page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
+      date TEXT NOT NULL,
+      url TEXT NOT NULL,
+      normalized_url TEXT NOT NULL,
+      clicks REAL NOT NULL DEFAULT 0,
+      impressions REAL NOT NULL DEFAULT 0,
+      ctr REAL NOT NULL DEFAULT 0,
+      position REAL NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'gsc',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS gsc_metrics_unique_project_date_url
+      ON gsc_page_daily_metrics(project_id, date, normalized_url);
+
+    CREATE TABLE IF NOT EXISTS page_keyword_mappings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      keyword_id INTEGER NOT NULL REFERENCES keywords(id) ON DELETE CASCADE,
+      mapping_type TEXT NOT NULL DEFAULT 'secondary',
+      cluster_key TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS page_keyword_mappings_unique
+      ON page_keyword_mappings(page_id, keyword_id, mapping_type);
   `);
 
   // ── Observability tables ──

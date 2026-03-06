@@ -251,6 +251,9 @@ export const sites = pgTable('sites', {
   domain: text('domain').notNull(),
   sitemapUrl: text('sitemap_url'),
   gscProperty: text('gsc_property'),
+  gscAccessToken: text('gsc_access_token'),
+  gscRefreshToken: text('gsc_refresh_token'),
+  gscTokenExpiresAt: timestamp('gsc_token_expires_at'),
   gscConnectedAt: timestamp('gsc_connected_at'),
   gscLastSyncAt: timestamp('gsc_last_sync_at'),
   gscLastSyncStatus: varchar('gsc_last_sync_status', { length: 24 }).notNull().default('never'),
@@ -266,6 +269,25 @@ export const sites = pgTable('sites', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => [
   uniqueIndex('sites_project_domain_unique').on(table.projectId, table.domain),
+]);
+
+export const gscPageDailyMetrics = pgTable('gsc_page_daily_metrics', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  siteId: integer('site_id').references(() => sites.id, { onDelete: 'set null' }),
+  pageId: integer('page_id').references(() => pages.id, { onDelete: 'set null' }),
+  date: text('date').notNull(),
+  url: text('url').notNull(),
+  normalizedUrl: text('normalized_url').notNull(),
+  clicks: real('clicks').notNull().default(0),
+  impressions: real('impressions').notNull().default(0),
+  ctr: real('ctr').notNull().default(0),
+  position: real('position').notNull().default(0),
+  source: varchar('source', { length: 24 }).notNull().default('gsc'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('gsc_metrics_unique_project_date_url').on(table.projectId, table.date, table.normalizedUrl),
 ]);
 
 // ── Pages & Crawls ────────────────────────────────────────────────
@@ -411,6 +433,19 @@ export const taskPageLinks = pgTable('task_page_links', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => [
   uniqueIndex('task_page_links_unique').on(table.taskId, table.pageId, table.linkType),
+]);
+
+export const pageKeywordMappings = pgTable('page_keyword_mappings', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  pageId: integer('page_id').notNull().references(() => pages.id, { onDelete: 'cascade' }),
+  keywordId: integer('keyword_id').notNull().references(() => keywords.id, { onDelete: 'cascade' }),
+  mappingType: varchar('mapping_type', { length: 24 }).notNull().default('secondary'),
+  clusterKey: text('cluster_key'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('page_keyword_mappings_unique').on(table.pageId, table.keywordId, table.mappingType),
 ]);
 
 // ── Observability ─────────────────────────────────────────────────
