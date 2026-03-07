@@ -33,6 +33,7 @@ import {
   pageSubtypeLabel,
   pageTypeLabel,
   resolveDefaultContentType,
+  resolveLaneFromPageSelection,
   type BlogSubtype,
   type CollectionSubtype,
   type PageType,
@@ -149,6 +150,7 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
     try {
       const parsedProjectId = projectId;
       const resolvedContentType = resolveDefaultContentType(pageType, selectedSubtype);
+      const resolvedLaneKey = resolveLaneFromPageSelection(pageType, selectedSubtype);
       const typeTags = getPageSelectionTags(pageType, selectedSubtype);
 
       // For content/edit tasks, auto-create a linked document in the editor
@@ -195,6 +197,7 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
             entryPoint: 'mission_control',
             skillId: effectiveSkillId,
             contentType: resolvedContentType,
+            laneKey: resolvedLaneKey,
             options: {
               outlineReviewOptional: true,
               seoReviewRequired: true,

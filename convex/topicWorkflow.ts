@@ -20,6 +20,8 @@ type TopicStageKey =
   | "final_review"
   | "complete";
 
+type AgentLaneKey = "blog" | "collection" | "product" | "landing";
+
 const stageValidator = v.union(
   v.literal("research"),
   v.literal("seo_intel_review"),
@@ -29,6 +31,13 @@ const stageValidator = v.union(
   v.literal("writing"),
   v.literal("final_review"),
   v.literal("complete")
+);
+
+const laneValidator = v.union(
+  v.literal("blog"),
+  v.literal("collection"),
+  v.literal("product"),
+  v.literal("landing")
 );
 
 const artifactValidator = v.object({
@@ -133,6 +142,38 @@ const WORKFLOW_ROLE_SEEDS: Array<{
   },
 ];
 
+const WRITER_LANE_SEEDS: Array<{
+  laneKey: AgentLaneKey;
+  name: string;
+  specialization: string;
+  skills: string[];
+}> = [
+  {
+    laneKey: "blog",
+    name: "Atlas Blog",
+    specialization: "Blog and editorial SEO writing",
+    skills: ["SEO blog writing", "editorial flow", "search intent coverage"],
+  },
+  {
+    laneKey: "collection",
+    name: "Atlas Collection",
+    specialization: "Collection and category page writing",
+    skills: ["collection copy", "category optimization", "taxonomy clarity"],
+  },
+  {
+    laneKey: "product",
+    name: "Atlas Product",
+    specialization: "Product and PDP writing",
+    skills: ["product copy", "feature-to-benefit writing", "conversion copy"],
+  },
+  {
+    laneKey: "landing",
+    name: "Atlas Landing",
+    specialization: "Landing, homepage, and FAQ writing",
+    skills: ["landing page copy", "CTA messaging", "FAQ structuring"],
+  },
+];
+
 type AgentStatus = "ONLINE" | "IDLE" | "WORKING" | "OFFLINE";
 
 function normalizeAgentStatus(status: string | null | undefined): AgentStatus {
@@ -170,6 +211,33 @@ function strictProjectAgentPoolsEnabled(): boolean {
   return !["legacy", "shared", "global", "0", "false", "off"].includes(mode);
 }
 
+function isAgentLaneKey(value: unknown): value is AgentLaneKey {
+  return value === "blog" || value === "collection" || value === "product" || value === "landing";
+}
+
+function resolveLaneFromContentType(contentType?: string): AgentLaneKey {
+  const normalized = String(contentType || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "product_category") return "collection";
+  if (normalized === "product_description") return "product";
+  return "blog";
+}
+
+function resolveLaneFromTags(tags?: string[]): AgentLaneKey {
+  const lowered = (tags || []).map((tag) => String(tag).toLowerCase());
+  if (lowered.some((tag) => tag === "page:collection")) return "collection";
+  if (lowered.some((tag) => tag === "page:product")) return "product";
+  if (
+    lowered.some(
+      (tag) => tag === "page:landing_page" || tag === "page:homepage" || tag === "page:faq"
+    )
+  ) {
+    return "landing";
+  }
+  return "blog";
+}
+
 function isAgentRoutableForProject(
   agent: Doc<"agents">,
   projectId: number | undefined
@@ -184,6 +252,21 @@ function isAgentRoutableForProject(
   if (projectId === undefined) return false;
   if (agent.projectId !== projectId) return false;
   if (agent.isDedicated === false) return false;
+  return true;
+}
+
+function isAgentRoutableForStage(args: {
+  agent: Doc<"agents">;
+  stage: TopicStageKey;
+  projectId: number | undefined;
+  laneKey?: AgentLaneKey;
+}): boolean {
+  if (!isAgentRoutableForProject(args.agent, args.projectId)) return false;
+  if (args.stage === "writing") {
+    if (!args.laneKey) return false;
+    if (!isAgentLaneKey(args.agent.laneKey)) return false;
+    return args.agent.laneKey === args.laneKey;
+  }
   return true;
 }
 
@@ -276,6 +359,42 @@ async function seedMissingWorkflowRoles(
 
   for (const template of WORKFLOW_ROLE_SEEDS) {
     if (wanted && !wanted.has(template.role.toLowerCase())) continue;
+    if (strictPools && template.role.toLowerCase() === "writer" && projectId !== undefined) {
+      let seededAnyWriter = false;
+      for (const writerSeed of WRITER_LANE_SEEDS) {
+        const hasLaneWriter = existing.some(
+          (agent) =>
+            agent.role.toLowerCase() === "writer" &&
+            agent.projectId === projectId &&
+            agent.laneKey === writerSeed.laneKey &&
+            isAgentRoutableForProject(agent, projectId)
+        );
+        if (hasLaneWriter) continue;
+        await ctx.db.insert("agents", {
+          name: writerSeed.name,
+          role: "writer",
+          specialization: writerSeed.specialization,
+          skills: writerSeed.skills,
+          status: "ONLINE",
+          projectId,
+          isDedicated: true,
+          capacityWeight: 1,
+          laneKey: writerSeed.laneKey,
+          laneProfileKey: `writer:${writerSeed.laneKey}`,
+          slotKey: `p${projectId}:writer:${writerSeed.laneKey}:1`,
+          assignmentHealth: { routable: true, strictIsolation: true },
+          tasksCompleted: 0,
+          createdAt: now,
+          updatedAt: now,
+        });
+        seededAnyWriter = true;
+      }
+      if (seededAnyWriter || !seededRoles.includes(template.role)) {
+        seededRoles.push(template.role);
+      }
+      continue;
+    }
+
     const hasRoleAlready = strictPools
       ? existing.some(
           (agent) =>
@@ -297,6 +416,8 @@ async function seedMissingWorkflowRoles(
       projectId: strictPools ? projectId : undefined,
       isDedicated: strictPools ? true : false,
       capacityWeight: 1,
+      laneKey: undefined,
+      laneProfileKey: undefined,
       slotKey,
       assignmentHealth: strictPools
         ? { routable: true, strictIsolation: true }
@@ -313,7 +434,8 @@ async function seedMissingWorkflowRoles(
 
 async function healWriterAvailability(
   ctx: MutationCtx,
-  projectId?: number
+  projectId?: number,
+  laneKey?: AgentLaneKey
 ): Promise<{
   healed: boolean;
   assignableWriterId: Id<"agents"> | null;
@@ -330,11 +452,15 @@ async function healWriterAvailability(
     writerOffline: number;
   };
 }> {
+  const needsLane = strictProjectAgentPoolsEnabled();
+  const laneMatcher = (agent: Doc<"agents">) =>
+    !needsLane || (laneKey ? agent.laneKey === laneKey : true);
   const allAgents = await ctx.db.query("agents").collect();
   let writers = allAgents.filter(
     (agent) =>
       agent.role.toLowerCase() === "writer" &&
-      isAgentRoutableForProject(agent, projectId)
+      isAgentRoutableForProject(agent, projectId) &&
+      laneMatcher(agent)
   );
 
   if (writers.length === 0) {
@@ -343,7 +469,8 @@ async function healWriterAvailability(
     writers = refreshed.filter(
       (agent) =>
         agent.role.toLowerCase() === "writer" &&
-        isAgentRoutableForProject(agent, projectId)
+        isAgentRoutableForProject(agent, projectId) &&
+        laneMatcher(agent)
     );
     const assignableWriterId = pickAssignableWriterId(writers);
     return {
@@ -432,7 +559,8 @@ async function healWriterAvailability(
   const refreshedWriters = refreshed.filter(
     (agent) =>
       agent.role.toLowerCase() === "writer" &&
-      isAgentRoutableForProject(agent, projectId)
+      isAgentRoutableForProject(agent, projectId) &&
+      laneMatcher(agent)
   );
   const assignableWriterId = pickAssignableWriterId(refreshedWriters);
   const hasAssignable = Boolean(assignableWriterId);
@@ -501,7 +629,8 @@ async function hasValidOutlineArtifact(
 async function resolveStageOwnerAgent(
   ctx: MutationCtx,
   stage: TopicStageKey,
-  projectId?: number
+  projectId?: number,
+  laneKey?: AgentLaneKey
 ): Promise<{ agent: Doc<"agents">; requestedRole: string; matchedRole: string } | null> {
   const chain = stageOwnerChains[stage] || [];
   if (chain.length === 0) return null;
@@ -515,7 +644,12 @@ async function resolveStageOwnerAgent(
     const byRole = allAgents.filter(
       (agent) =>
         candidates.includes(agent.role.toLowerCase()) &&
-        isAgentRoutableForProject(agent, projectId)
+        isAgentRoutableForStage({
+          agent,
+          stage,
+          projectId,
+          laneKey,
+        })
     );
     const online = byRole.find((agent) => normalizeAgentStatus(agent.status) === "ONLINE");
     if (online) {
@@ -587,6 +721,14 @@ async function insertWorkflowEvent(
   }
 ) {
   const createdAt = Date.now();
+  const task = await ctx.db.get(args.taskId);
+  const laneKey = isAgentLaneKey(task?.workflowLaneKey) ? task?.workflowLaneKey : undefined;
+  const mergedPayload =
+    args.payload && typeof args.payload === "object"
+      ? { laneKey: laneKey || null, ...(args.payload as Record<string, unknown>) }
+      : laneKey
+        ? { laneKey, value: args.payload }
+        : args.payload;
   await ctx.db.insert("taskWorkflowEvents", {
     taskId: args.taskId,
     projectId: args.projectId,
@@ -598,7 +740,7 @@ async function insertWorkflowEvent(
     actorId: args.actorId,
     actorName: args.actorName,
     summary: args.summary,
-    payload: args.payload,
+    payload: mergedPayload,
     createdAt,
   });
 
@@ -654,6 +796,7 @@ async function assignStageOwner(
     taskId: Id<"tasks">;
     projectId?: number;
     stageKey: TopicStageKey;
+    laneKey?: AgentLaneKey;
   }
 ) {
   const currentTask = await ctx.db.get(args.taskId);
@@ -684,22 +827,30 @@ async function assignStageOwner(
   }
 
   const now = Date.now();
-  let assignment = await resolveStageOwnerAgent(ctx, args.stageKey, args.projectId);
+  const laneKey =
+    args.laneKey ||
+    (isAgentLaneKey(currentTask.workflowLaneKey) ? currentTask.workflowLaneKey : undefined);
+  let assignment = await resolveStageOwnerAgent(ctx, args.stageKey, args.projectId, laneKey);
   let assignmentDiagnostics: Record<string, unknown> | undefined;
   let writerHealResult: Awaited<ReturnType<typeof healWriterAvailability>> | undefined;
 
   if (!assignment && args.stageKey === "writing") {
-    const healResult = await healWriterAvailability(ctx, args.projectId);
+    const healResult = await healWriterAvailability(ctx, args.projectId, laneKey);
     writerHealResult = healResult;
     assignmentDiagnostics = {
       reasonCode: healResult.reasonCode,
       ...healResult.diagnostics,
       healed: healResult.healed,
+      laneKey: laneKey || null,
     };
-    assignment = await resolveStageOwnerAgent(ctx, args.stageKey, args.projectId);
+    assignment = await resolveStageOwnerAgent(ctx, args.stageKey, args.projectId, laneKey);
     if (!assignment && healResult.assignableWriterId) {
       const healedWriter = await ctx.db.get(healResult.assignableWriterId);
-      if (healedWriter && normalizedRoleCandidates("writer").includes(healedWriter.role.toLowerCase())) {
+      if (
+        healedWriter &&
+        normalizedRoleCandidates("writer").includes(healedWriter.role.toLowerCase()) &&
+        (!laneKey || healedWriter.laneKey === laneKey)
+      ) {
         assignment = {
           agent: healedWriter,
           requestedRole: "writer",
@@ -721,9 +872,9 @@ async function assignStageOwner(
 
     const reasonCode =
       (assignmentDiagnostics?.reasonCode as string | undefined) ||
-      (args.stageKey === "writing" ? "writer_unavailable" : "assignment_unavailable");
+      (args.stageKey === "writing" ? "writer_lane_unavailable" : "assignment_unavailable");
     const summary = queueWriting
-      ? `PM writer queue: waiting for available writer on ${args.stageKey}. owner chain: ${stageOwnerSummary(args.stageKey)}.`
+      ? `PM writer queue: waiting for available ${laneKey || "writer"} lane writer on ${args.stageKey}. owner chain: ${stageOwnerSummary(args.stageKey)}.`
       : `PM assignment blocked: no available agent for ${args.stageKey}. required owner chain: ${stageOwnerSummary(args.stageKey)}.`;
     await insertWorkflowEvent(ctx, {
       taskId: args.taskId,
@@ -734,10 +885,11 @@ async function assignStageOwner(
       actorName: "Workflow PM",
       summary,
       payload: {
-        reasonCode: queueWriting ? "writer_queue_waiting" : reasonCode,
+        reasonCode: queueWriting ? "writer_lane_unavailable" : reasonCode,
         requiredOwnerChain: stageOwnerChains[args.stageKey],
         strictProjectPools: strictProjectAgentPoolsEnabled(),
         projectId: args.projectId,
+        laneKey: laneKey || null,
         diagnostics: assignmentDiagnostics,
         writerHealResult,
       },
@@ -779,6 +931,7 @@ async function assignStageOwner(
       assignedAgentName: assignment.agent.name,
       requestedRole: assignment.requestedRole,
       matchedRole: assignment.matchedRole,
+      laneKey: laneKey || null,
     },
   });
 
@@ -879,6 +1032,8 @@ export const createTopicFromSource = mutation({
     requestedByUserId: v.optional(v.string()),
     documentId: v.optional(v.number()),
     skillId: v.optional(v.number()),
+    laneKey: v.optional(laneValidator),
+    contentType: v.optional(v.string()),
     options: v.optional(
       v.object({
         outlineReviewOptional: v.optional(v.boolean()),
@@ -890,6 +1045,9 @@ export const createTopicFromSource = mutation({
   handler: async (ctx, args) => {
     const now = Date.now();
     const topicKey = normalizeTopicKey(args.topic);
+    const laneKey = isAgentLaneKey(args.laneKey)
+      ? args.laneKey
+      : resolveLaneFromContentType(args.contentType);
     await seedMissingWorkflowRoles(ctx, undefined, args.projectId);
 
     const projectTasks = await ctx.db
@@ -910,6 +1068,9 @@ export const createTopicFromSource = mutation({
         taskId: existing._id,
         contentDocumentId: existing.documentId,
         workflowStage: (existing.workflowCurrentStageKey || "research") as TopicStageKey,
+        laneKey: isAgentLaneKey(existing.workflowLaneKey)
+          ? existing.workflowLaneKey
+          : resolveLaneFromTags(existing.tags),
         reused: true,
       };
     }
@@ -934,7 +1095,7 @@ export const createTopicFromSource = mutation({
       documentId: args.documentId,
       projectId: args.projectId,
       skillId: args.skillId,
-      tags: ["topic", "workflow", args.entryPoint],
+      tags: ["topic", "workflow", args.entryPoint, `lane:${laneKey}`],
       createdAt: now,
       updatedAt: now,
       workflowTemplateKey: WORKFLOW_TEMPLATE_KEY,
@@ -952,6 +1113,7 @@ export const createTopicFromSource = mutation({
       workflowLastEventAt: now,
       workflowLastEventText: initialSummary,
       workflowRunNotBeforeAt: runNotBeforeAt,
+      workflowLaneKey: laneKey,
       topicKey,
     });
 
@@ -971,6 +1133,7 @@ export const createTopicFromSource = mutation({
         keywordId: args.keywordId,
         keywordClusterId: args.keywordClusterId,
         workflowStartDelayMs: startDelayMs,
+        laneKey,
       },
     });
 
@@ -993,6 +1156,7 @@ export const createTopicFromSource = mutation({
       taskId,
       contentDocumentId: args.documentId,
       workflowStage: initialStage,
+      laneKey,
       reused: false,
     };
   },
@@ -1026,6 +1190,52 @@ export const ensureStageOwner = mutation({
       queued: Boolean(assignment?.queued),
       assignedAgentId: assignment?.assignedAgentId ?? null,
       assignedAgentName: assignment?.assignedAgentName ?? null,
+    };
+  },
+});
+
+export const backfillWorkflowLanes = mutation({
+  args: {
+    projectId: v.optional(v.number()),
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const tasks =
+      args.projectId !== undefined
+        ? await ctx.db
+            .query("tasks")
+            .withIndex("by_project", (q) => q.eq("projectId", args.projectId as number))
+            .collect()
+        : await ctx.db.query("tasks").collect();
+
+    let scanned = 0;
+    let updated = 0;
+    const sample: Array<{ taskId: string; laneKey: AgentLaneKey }> = [];
+
+    for (const task of tasks) {
+      if (task.workflowTemplateKey !== WORKFLOW_TEMPLATE_KEY) continue;
+      scanned += 1;
+      if (isAgentLaneKey(task.workflowLaneKey)) continue;
+      const laneKey = resolveLaneFromTags(task.tags);
+      if (!args.dryRun) {
+        await ctx.db.patch(task._id, {
+          workflowLaneKey: laneKey,
+          tags: Array.from(new Set([...(task.tags || []), `lane:${laneKey}`])),
+          updatedAt: Date.now(),
+        });
+      }
+      updated += 1;
+      if (sample.length < 20) {
+        sample.push({ taskId: String(task._id), laneKey });
+      }
+    }
+
+    return {
+      ok: true,
+      scanned,
+      updated,
+      dryRun: Boolean(args.dryRun),
+      sample,
     };
   },
 });

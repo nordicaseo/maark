@@ -1,3 +1,5 @@
+import type { AgentLaneKey } from './agent-runtime';
+
 export const FIXED_AGENT_ROLES = [
   'researcher',
   'outliner',
@@ -72,6 +74,44 @@ export interface ProjectAgentProfile {
 export interface UpsertProjectAgentProfileInput {
   projectId: number;
   role: AgentRole;
+  displayName?: string;
+  emoji?: string | null;
+  avatarUrl?: string | null;
+  shortDescription?: string | null;
+  mission?: string | null;
+  isEnabled?: boolean;
+  fileBundle?: Partial<ProjectAgentFileBundle>;
+  skillIds?: number[];
+  modelOverrides?: ProjectAgentModelOverrides;
+  heartbeatMeta?: ProjectAgentHeartbeatMeta;
+  userId?: string | null;
+}
+
+export interface ProjectAgentLaneProfile {
+  id: number;
+  projectId: number;
+  role: AgentRole;
+  laneKey: AgentLaneKey;
+  displayName: string;
+  emoji: string | null;
+  avatarUrl: string | null;
+  shortDescription: string | null;
+  mission: string | null;
+  isEnabled: boolean;
+  fileBundle: ProjectAgentFileBundle;
+  skillIds: number[];
+  modelOverrides: ProjectAgentModelOverrides;
+  heartbeatMeta: ProjectAgentHeartbeatMeta;
+  createdById: string | null;
+  updatedById: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertProjectAgentLaneProfileInput {
+  projectId: number;
+  role: AgentRole;
+  laneKey: AgentLaneKey;
   displayName?: string;
   emoji?: string | null;
   avatarUrl?: string | null;

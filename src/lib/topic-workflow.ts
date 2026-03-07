@@ -7,6 +7,7 @@ import { userCanAccessProject } from '@/lib/access';
 import { getWorkflowOpsSettings } from '@/lib/workflow/ops-settings';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { TopicStageKey } from '@/lib/content-workflow-taxonomy';
+import type { AgentLaneKey } from '@/types/agent-runtime';
 
 export type { TopicStageKey } from '@/lib/content-workflow-taxonomy';
 
@@ -32,6 +33,7 @@ export interface CreateTopicWorkflowInput {
   pageId?: number;
   keywordId?: number;
   keywordClusterId?: number;
+  laneKey?: AgentLaneKey;
   options?: {
     outlineReviewOptional?: boolean;
     seoReviewRequired?: boolean;
@@ -74,6 +76,7 @@ export async function createTopicWorkflow(input: CreateTopicWorkflowInput) {
     pageId: input.pageId,
     keywordId: input.keywordId,
     keywordClusterId: input.keywordClusterId,
+    laneKey: input.laneKey,
     requestedByUserId: input.user.id,
     documentId: input.documentId,
     skillId: input.skillId,
@@ -113,6 +116,7 @@ export async function createTopicWorkflow(input: CreateTopicWorkflowInput) {
   return {
     taskId: String(created.taskId),
     workflowStage: created.workflowStage,
+    laneKey: created.laneKey as AgentLaneKey | undefined,
     contentDocumentId,
     reused: Boolean(created.reused),
   };

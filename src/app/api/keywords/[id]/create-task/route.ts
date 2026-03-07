@@ -18,6 +18,7 @@ import {
   isCollectionSubtype,
   isPageType,
   resolveDefaultContentType,
+  resolveLaneFromPageSelection,
 } from '@/lib/content-workflow-taxonomy';
 
 function parseId(id: string): number | null {
@@ -65,6 +66,7 @@ export async function POST(
           ? (isCollectionSubtype(body.subtype) ? body.subtype : DEFAULT_COLLECTION_SUBTYPE)
           : 'standard';
     const contentType = resolveDefaultContentType(pageType, subtype);
+    const laneKey = resolveLaneFromPageSelection(pageType, subtype);
 
     let serpWarmStatus: 'cache_hit' | 'fetched' | 'timeout' | 'failed' | 'skipped' = 'skipped';
     if (keyword.keyword && keyword.keyword.trim().length > 0) {
@@ -93,6 +95,7 @@ export async function POST(
       keywordId: keyword.id,
       targetKeyword: keyword.keyword,
       contentType,
+      laneKey,
       options: {
         outlineReviewOptional: true,
         seoReviewRequired: true,
@@ -154,6 +157,7 @@ export async function POST(
         pageType,
         subtype,
         contentType,
+        laneKey,
         reused: created.reused,
         linkedPageId,
         serpWarmStatus,

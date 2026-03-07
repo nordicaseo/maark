@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { api } from '../../../../../convex/_generated/api';
 import type { Id } from '../../../../../convex/_generated/dataModel';
+import { eq } from 'drizzle-orm';
 import { db, ensureDb } from '@/db';
 import { projects } from '@/db/schema';
 import { requireRole, type AppUser } from '@/lib/auth';
@@ -13,6 +14,10 @@ import {
 import { getConvexClient } from '@/lib/convex/server';
 import { runTopicWorkflow } from '@/lib/topic-workflow-runner';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
+import {
+  autoScaleProjectWriterLanes,
+  parseProjectRuntimeSettings,
+} from '@/lib/agents/runtime-agent-pools';
 import type { TopicStageKey } from '@/lib/content-workflow-taxonomy';
 import {
   getDefaultWorkflowOpsSettings,
@@ -358,6 +363,29 @@ async function executeAutoResume(req: NextRequest) {
       watchdogBlocked += 1;
     }
 
+    const laneScalingByProject = new Map<number, { scaledUp: number; scaledDown: number }>();
+    for (const projectId of projectIds) {
+      const [projectRow] = await db
+        .select({ settings: projects.settings })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .limit(1);
+      const runtimeSettings = parseProjectRuntimeSettings(projectRow?.settings ?? {});
+      const scaled = await autoScaleProjectWriterLanes({
+        projectId,
+        laneCapacity: runtimeSettings.laneCapacity,
+      });
+      laneScalingByProject.set(projectId, scaled);
+    }
+    const scaledUpWriters = Array.from(laneScalingByProject.values()).reduce(
+      (sum, item) => sum + item.scaledUp,
+      0
+    );
+    const scaledDownWriters = Array.from(laneScalingByProject.values()).reduce(
+      (sum, item) => sum + item.scaledDown,
+      0
+    );
+
     const queuedWritingTasks = workflowTasks
       .filter((task) => {
         if (task.workflowCurrentStageKey !== 'writing') return false;
@@ -483,6 +511,9 @@ async function executeAutoResume(req: NextRequest) {
         blockedAfterRetries,
         watchdogBlocked,
         watchdogMaxRetries,
+        scaledUpWriters,
+        scaledDownWriters,
+        laneScalingByProject: Object.fromEntries(laneScalingByProject.entries()),
         failures,
         projectSettings: Object.fromEntries(
           Array.from(settingsByProject.entries()).map(([projectId, settings]) => [
@@ -508,6 +539,8 @@ async function executeAutoResume(req: NextRequest) {
       retried,
       blockedAfterRetries,
       watchdogBlocked,
+      scaledUpWriters,
+      scaledDownWriters,
       failures,
     });
   } catch (error) {

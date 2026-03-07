@@ -30,9 +30,16 @@ import {
   type AgentFileKey,
   type AgentRole,
   type ProjectAgentFileBundle,
+  type ProjectAgentLaneProfile,
   type ProjectAgentModelOverrides,
   type ProjectAgentProfile,
 } from '@/types/agent-profile';
+import {
+  AGENT_WRITER_LANES,
+  DEFAULT_LANE_CAPACITY_SETTINGS,
+  type AgentLaneKey,
+  type ProjectLaneCapacitySettings,
+} from '@/types/agent-runtime';
 
 interface Project {
   id: number;
@@ -58,6 +65,12 @@ interface AgentProfilesResponse {
   profiles: ProjectAgentProfile[];
 }
 
+interface AgentLaneProfilesResponse {
+  projectId: number;
+  seededLaneProfiles: Array<{ role: AgentRole; laneKey: AgentLaneKey }>;
+  profiles: ProjectAgentLaneProfile[];
+}
+
 interface RuntimePoolHealth {
   projectId: number;
   totalAgents: number;
@@ -71,6 +84,16 @@ interface RuntimePoolHealth {
     status: string;
     lockHealth: string;
     currentTaskId: string | null;
+    laneKey: AgentLaneKey | null;
+    isTemporary?: boolean;
+  }>;
+  laneHealth: Array<{
+    laneKey: AgentLaneKey;
+    totalWriters: number;
+    availableWriters: number;
+    workingWriters: number;
+    queuedWriting: number;
+    oldestQueueAgeSec: number;
   }>;
 }
 
@@ -115,6 +138,10 @@ function roleLabel(role: AgentRole): string {
     .join(' ');
 }
 
+function laneLabel(lane: AgentLaneKey): string {
+  return lane.charAt(0).toUpperCase() + lane.slice(1);
+}
+
 function formatDate(value?: string | null) {
   if (!value) return '—';
   const parsed = new Date(value);
@@ -154,9 +181,13 @@ export default function AdminAgentsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [profiles, setProfiles] = useState<ProjectAgentProfile[]>([]);
+  const [laneProfiles, setLaneProfiles] = useState<ProjectAgentLaneProfile[]>([]);
   const [seededRoles, setSeededRoles] = useState<AgentRole[]>([]);
+  const [seededLanes, setSeededLanes] = useState<Array<{ role: AgentRole; laneKey: AgentLaneKey }>>([]);
   const [selectedRole, setSelectedRole] = useState<AgentRole>('researcher');
+  const [selectedLane, setSelectedLane] = useState<AgentLaneKey>('blog');
   const [activeFile, setActiveFile] = useState<AgentFileKey>('SOUL');
+  const [laneActiveFile, setLaneActiveFile] = useState<AgentFileKey>('SOUL');
   const [sharedUserContent, setSharedUserContent] = useState('');
   const [heartbeatResult, setHeartbeatResult] = useState<HeartbeatResponse | null>(null);
   const [runtimeHealth, setRuntimeHealth] = useState<RuntimePoolHealth | null>(null);
@@ -164,22 +195,43 @@ export default function AdminAgentsPage() {
   const [heartbeatRunning, setHeartbeatRunning] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [savingLaneProfile, setSavingLaneProfile] = useState(false);
+  const [syncingLaneRuntime, setSyncingLaneRuntime] = useState(false);
   const [savingSharedUser, setSavingSharedUser] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [laneCapacity, setLaneCapacity] = useState<ProjectLaneCapacitySettings>({
+    ...DEFAULT_LANE_CAPACITY_SETTINGS,
+  });
 
   const selectedProfile = useMemo(
     () => profiles.find((profile) => profile.role === selectedRole) ?? null,
     [profiles, selectedRole]
   );
+  const selectedLaneProfile = useMemo(
+    () =>
+      laneProfiles.find(
+        (profile) => profile.role === 'writer' && profile.laneKey === selectedLane
+      ) ?? null,
+    [laneProfiles, selectedLane]
+  );
 
   const [draft, setDraft] = useState<ProfileDraft>(() => mapProfileToDraft(null));
   const [modelOverridesJson, setModelOverridesJson] = useState('{}');
+  const [laneDraft, setLaneDraft] = useState<ProfileDraft>(() => mapProfileToDraft(null));
+  const [laneModelOverridesJson, setLaneModelOverridesJson] = useState('{}');
 
   useEffect(() => {
     setDraft(mapProfileToDraft(selectedProfile));
     setModelOverridesJson(JSON.stringify(selectedProfile?.modelOverrides || {}, null, 2));
   }, [selectedProfile]);
+
+  useEffect(() => {
+    setLaneDraft(mapProfileToDraft(selectedLaneProfile));
+    setLaneModelOverridesJson(
+      JSON.stringify(selectedLaneProfile?.modelOverrides || {}, null, 2)
+    );
+  }, [selectedLaneProfile]);
 
   const fetchProjects = useCallback(async () => {
     const res = await fetch('/api/projects');
@@ -218,6 +270,45 @@ export default function AdminAgentsPage() {
     }
   }, [selectedRole]);
 
+  const fetchLaneProfiles = useCallback(async (projectId: number) => {
+    const res = await fetch(`/api/admin/agents/lanes?projectId=${projectId}`);
+    if (!res.ok) {
+      throw new Error('Failed to load lane profiles');
+    }
+    const data = (await res.json()) as AgentLaneProfilesResponse;
+    setLaneProfiles(data.profiles || []);
+    setSeededLanes(data.seededLaneProfiles || []);
+  }, []);
+
+  const fetchProjectRuntimeSettings = useCallback(async (projectId: number) => {
+    const res = await fetch(`/api/projects/${projectId}`);
+    if (!res.ok) return;
+    const project = (await res.json()) as {
+      settings?: {
+        agentRuntime?: {
+          laneCapacity?: Partial<ProjectLaneCapacitySettings>;
+        };
+      };
+    };
+    const runtimeLane = project.settings?.agentRuntime?.laneCapacity;
+    if (!runtimeLane) {
+      setLaneCapacity({ ...DEFAULT_LANE_CAPACITY_SETTINGS });
+      return;
+    }
+    setLaneCapacity({
+      minWritersPerLane:
+        Number(runtimeLane.minWritersPerLane) || DEFAULT_LANE_CAPACITY_SETTINGS.minWritersPerLane,
+      maxWritersPerLane:
+        Number(runtimeLane.maxWritersPerLane) || DEFAULT_LANE_CAPACITY_SETTINGS.maxWritersPerLane,
+      scaleUpQueueAgeSec:
+        Number(runtimeLane.scaleUpQueueAgeSec) ||
+        DEFAULT_LANE_CAPACITY_SETTINGS.scaleUpQueueAgeSec,
+      scaleDownIdleSec:
+        Number(runtimeLane.scaleDownIdleSec) ||
+        DEFAULT_LANE_CAPACITY_SETTINGS.scaleDownIdleSec,
+    });
+  }, []);
+
   const fetchRuntimeHealth = useCallback(async (projectId: number) => {
     const res = await fetch('/api/admin/agents', {
       method: 'POST',
@@ -247,12 +338,25 @@ export default function AdminAgentsPage() {
   useEffect(() => {
     if (!activeProjectId) return;
     setLoading(true);
-    Promise.all([fetchProfiles(activeProjectId), fetchSkills(activeProjectId), fetchRuntimeHealth(activeProjectId)])
+    Promise.all([
+      fetchProfiles(activeProjectId),
+      fetchLaneProfiles(activeProjectId),
+      fetchSkills(activeProjectId),
+      fetchRuntimeHealth(activeProjectId),
+      fetchProjectRuntimeSettings(activeProjectId),
+    ])
       .catch((err) => {
         setError(err instanceof Error ? err.message : 'Failed to load project agent data');
       })
       .finally(() => setLoading(false));
-  }, [activeProjectId, fetchProfiles, fetchSkills, fetchRuntimeHealth]);
+  }, [
+    activeProjectId,
+    fetchProfiles,
+    fetchLaneProfiles,
+    fetchSkills,
+    fetchRuntimeHealth,
+    fetchProjectRuntimeSettings,
+  ]);
 
   const toggleSkill = useCallback((skillId: number, checked: boolean) => {
     setDraft((prev) => {
@@ -331,6 +435,90 @@ export default function AdminAgentsPage() {
     }
   }, [activeProjectId, draft, fetchProfiles, modelOverridesJson, selectedRole]);
 
+  const saveLaneProfile = useCallback(async () => {
+    if (!activeProjectId) return;
+    setSavingLaneProfile(true);
+    setError(null);
+    setNotice(null);
+    try {
+      let parsedModelOverrides: ProjectAgentModelOverrides = {};
+      try {
+        parsedModelOverrides = JSON.parse(laneModelOverridesJson) as ProjectAgentModelOverrides;
+      } catch {
+        throw new Error('Lane model overrides must be valid JSON.');
+      }
+      if (!parsedModelOverrides || typeof parsedModelOverrides !== 'object') {
+        throw new Error('Lane model overrides must be a JSON object.');
+      }
+
+      const res = await fetch('/api/admin/agents/lanes', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: activeProjectId,
+          role: 'writer',
+          laneKey: selectedLane,
+          displayName: laneDraft.displayName,
+          emoji: laneDraft.emoji,
+          avatarUrl: laneDraft.avatarUrl,
+          shortDescription: laneDraft.shortDescription,
+          mission: laneDraft.mission,
+          isEnabled: laneDraft.isEnabled,
+          fileBundle: laneDraft.fileBundle,
+          skillIds: laneDraft.skillIds,
+          modelOverrides: parsedModelOverrides,
+        }),
+      });
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || 'Failed to save lane profile');
+      }
+
+      await fetchLaneProfiles(activeProjectId);
+      setNotice(`${laneLabel(selectedLane)} lane profile updated.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save lane profile');
+    } finally {
+      setSavingLaneProfile(false);
+    }
+  }, [
+    activeProjectId,
+    fetchLaneProfiles,
+    laneDraft,
+    laneModelOverridesJson,
+    selectedLane,
+  ]);
+
+  const syncLaneRuntime = useCallback(async () => {
+    if (!activeProjectId) return;
+    setSyncingLaneRuntime(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch('/api/admin/agents/lanes/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: activeProjectId,
+          laneCapacity,
+        }),
+      });
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || 'Failed to sync lane runtime');
+      }
+      await Promise.all([
+        fetchLaneProfiles(activeProjectId),
+        fetchRuntimeHealth(activeProjectId),
+      ]);
+      setNotice('Lane runtime synced and writer pools refreshed.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sync lane runtime');
+    } finally {
+      setSyncingLaneRuntime(false);
+    }
+  }, [activeProjectId, laneCapacity, fetchLaneProfiles, fetchRuntimeHealth]);
+
   const runHeartbeat = useCallback(async () => {
     if (!activeProjectId) return;
     setHeartbeatRunning(true);
@@ -375,14 +563,18 @@ export default function AdminAgentsPage() {
         const payload = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(payload.error || 'Failed to sync runtime team');
       }
-      await Promise.all([fetchProfiles(activeProjectId), fetchRuntimeHealth(activeProjectId)]);
+      await Promise.all([
+        fetchProfiles(activeProjectId),
+        fetchLaneProfiles(activeProjectId),
+        fetchRuntimeHealth(activeProjectId),
+      ]);
       setNotice('Project runtime agent pool synced.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sync runtime team');
     } finally {
       setRuntimeBusy(false);
     }
-  }, [activeProjectId, fetchProfiles, fetchRuntimeHealth]);
+  }, [activeProjectId, fetchProfiles, fetchLaneProfiles, fetchRuntimeHealth]);
 
   if (loading) {
     return (
@@ -555,13 +747,66 @@ export default function AdminAgentsPage() {
                 <p>Stale writer locks: {runtimeHealth.staleLocks}</p>
                 {runtimeHealth.writerRows.slice(0, 4).map((writer) => (
                   <p key={writer.id} className="truncate">
-                    {writer.name} · {writer.status} · {writer.lockHealth}
+                    {writer.name}
+                    {writer.laneKey ? ` (${laneLabel(writer.laneKey)})` : ''}
+                    {' · '}
+                    {writer.status}
+                    {writer.isTemporary ? ' · temporary' : ''}
+                    {' · '}
+                    {writer.lockHealth}
                   </p>
                 ))}
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">No runtime health loaded.</p>
             )}
+          </div>
+
+          <div className="border border-border rounded-lg bg-card p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-sm">Writer Lanes</h2>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => activeProjectId && fetchLaneProfiles(activeProjectId)}
+                disabled={!activeProjectId}
+              >
+                <RefreshCcw className="h-3.5 w-3.5 mr-1" />
+                Refresh
+              </Button>
+            </div>
+            {seededLanes.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Seeded lanes: {seededLanes.map((item) => laneLabel(item.laneKey)).join(', ')}
+              </p>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              {AGENT_WRITER_LANES.map((lane) => {
+                const laneProfile = laneProfiles.find((profile) => profile.laneKey === lane);
+                const health = runtimeHealth?.laneHealth?.find((item) => item.laneKey === lane);
+                const active = selectedLane === lane;
+                return (
+                  <button
+                    key={lane}
+                    onClick={() => setSelectedLane(lane)}
+                    className={`rounded-md border px-3 py-2 text-left transition-colors ${
+                      active ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent/40'
+                    }`}
+                  >
+                    <p className="text-sm font-medium truncate">
+                      {laneProfile?.emoji ? `${laneProfile.emoji} ` : ''}
+                      {laneLabel(lane)}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      {laneProfile?.displayName || `Writer ${laneLabel(lane)}`}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      avail {health?.availableWriters ?? 0} · queued {health?.queuedWriting ?? 0}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -732,6 +977,255 @@ export default function AdminAgentsPage() {
                 </TabsContent>
               ))}
             </Tabs>
+          </div>
+
+          <div className="border border-border rounded-lg bg-card p-4 space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h3 className="font-semibold text-sm">
+                  Writer Lane Profile: {laneLabel(selectedLane)}
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Full file profile, skill mapping, and model overrides for the {laneLabel(selectedLane)} lane.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={syncLaneRuntime}
+                  disabled={!activeProjectId || syncingLaneRuntime}
+                >
+                  {syncingLaneRuntime ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                  ) : (
+                    <ShieldCheck className="h-4 w-4 mr-1" />
+                  )}
+                  Sync Lanes
+                </Button>
+                <Button onClick={saveLaneProfile} disabled={savingLaneProfile || !activeProjectId}>
+                  {savingLaneProfile ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                  ) : (
+                    <Save className="h-4 w-4 mr-1" />
+                  )}
+                  Save Lane
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-4 gap-3">
+              <div>
+                <label className="text-xs font-medium mb-1 block">Min/Lane</label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={laneCapacity.minWritersPerLane}
+                  onChange={(e) =>
+                    setLaneCapacity((prev) => ({
+                      ...prev,
+                      minWritersPerLane: Math.max(1, Math.min(5, Number(e.target.value) || 1)),
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium mb-1 block">Max/Lane</label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={8}
+                  value={laneCapacity.maxWritersPerLane}
+                  onChange={(e) =>
+                    setLaneCapacity((prev) => ({
+                      ...prev,
+                      maxWritersPerLane: Math.max(
+                        prev.minWritersPerLane,
+                        Math.min(8, Number(e.target.value) || prev.minWritersPerLane)
+                      ),
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium mb-1 block">Scale Up Queue Age (sec)</label>
+                <Input
+                  type="number"
+                  min={30}
+                  max={3600}
+                  value={laneCapacity.scaleUpQueueAgeSec}
+                  onChange={(e) =>
+                    setLaneCapacity((prev) => ({
+                      ...prev,
+                      scaleUpQueueAgeSec: Math.max(
+                        30,
+                        Math.min(3600, Number(e.target.value) || prev.scaleUpQueueAgeSec)
+                      ),
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium mb-1 block">Scale Down Idle (sec)</label>
+                <Input
+                  type="number"
+                  min={300}
+                  max={86400}
+                  value={laneCapacity.scaleDownIdleSec}
+                  onChange={(e) =>
+                    setLaneCapacity((prev) => ({
+                      ...prev,
+                      scaleDownIdleSec: Math.max(
+                        300,
+                        Math.min(86400, Number(e.target.value) || prev.scaleDownIdleSec)
+                      ),
+                    }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs font-medium mb-1 block">Display Name</label>
+                <Input
+                  value={laneDraft.displayName}
+                  onChange={(e) =>
+                    setLaneDraft((prev) => ({ ...prev, displayName: e.target.value }))
+                  }
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium mb-1 block">Emoji</label>
+                <Input
+                  value={laneDraft.emoji}
+                  onChange={(e) =>
+                    setLaneDraft((prev) => ({ ...prev, emoji: e.target.value }))
+                  }
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium mb-1 block">Avatar URL</label>
+                <Input
+                  value={laneDraft.avatarUrl}
+                  placeholder="https://..."
+                  onChange={(e) =>
+                    setLaneDraft((prev) => ({ ...prev, avatarUrl: e.target.value }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium mb-1 block">Short Description</label>
+                <Input
+                  value={laneDraft.shortDescription}
+                  onChange={(e) =>
+                    setLaneDraft((prev) => ({ ...prev, shortDescription: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="flex items-end">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="lane-enabled"
+                    checked={laneDraft.isEnabled}
+                    onCheckedChange={(checked) =>
+                      setLaneDraft((prev) => ({ ...prev, isEnabled: checked === true }))
+                    }
+                  />
+                  <label htmlFor="lane-enabled" className="text-sm">
+                    Lane enabled
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium mb-1 block">Mission</label>
+              <Textarea
+                value={laneDraft.mission}
+                onChange={(e) =>
+                  setLaneDraft((prev) => ({ ...prev, mission: e.target.value }))
+                }
+                className="min-h-[72px]"
+              />
+            </div>
+
+            <div>
+              <h4 className="font-semibold text-sm mb-2">Lane Skill Mapping</h4>
+              <div className="grid md:grid-cols-2 gap-2">
+                {skills.map((skill) => {
+                  const checked = laneDraft.skillIds.includes(skill.id);
+                  return (
+                    <label
+                      key={`lane-${skill.id}`}
+                      className="flex items-center gap-2 border border-border rounded-md px-2 py-2 text-sm"
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(value) => {
+                          const set = new Set(laneDraft.skillIds);
+                          if (value === true) set.add(skill.id);
+                          else set.delete(skill.id);
+                          setLaneDraft((prev) => ({ ...prev, skillIds: Array.from(set) }));
+                        }}
+                      />
+                      <span className="truncate">{skill.name}</span>
+                      {skill.isGlobal === 1 && (
+                        <Badge variant="outline" className="ml-auto text-[10px]">
+                          Global
+                        </Badge>
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-semibold text-sm mb-2">Lane Model Overrides (JSON)</h4>
+              <Textarea
+                value={laneModelOverridesJson}
+                onChange={(e) => setLaneModelOverridesJson(e.target.value)}
+                className="min-h-[160px] font-mono text-xs"
+              />
+            </div>
+
+            <div>
+              <h4 className="font-semibold text-sm mb-2">Lane Workspace Files</h4>
+              <Tabs
+                value={laneActiveFile}
+                onValueChange={(value) => setLaneActiveFile(value as AgentFileKey)}
+              >
+                <TabsList className="grid grid-cols-4 h-auto gap-1 bg-muted/70 p-1">
+                  {AGENT_FILE_KEYS.map((key) => (
+                    <TabsTrigger key={`lane-tab-${key}`} value={key} className="text-[11px] px-2 py-1.5">
+                      {key}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+                {AGENT_FILE_KEYS.map((key) => (
+                  <TabsContent key={`lane-content-${key}`} value={key} className="mt-3">
+                    <p className="text-xs text-muted-foreground mb-2">{FILE_HINTS[key]}</p>
+                    <Textarea
+                      value={laneDraft.fileBundle[key]}
+                      onChange={(e) =>
+                        setLaneDraft((prev) => ({
+                          ...prev,
+                          fileBundle: {
+                            ...prev.fileBundle,
+                            [key]: e.target.value,
+                          },
+                        }))
+                      }
+                      className="min-h-[220px] font-mono text-xs"
+                    />
+                  </TabsContent>
+                ))}
+              </Tabs>
+            </div>
           </div>
 
           {heartbeatResult && (

@@ -1,15 +1,32 @@
 import type { AgentRole } from './agent-profile';
 
 export const AGENT_STAFFING_TEMPLATES = ['small', 'standard', 'premium'] as const;
+export const AGENT_WRITER_LANES = ['blog', 'collection', 'product', 'landing'] as const;
 
 export type AgentStaffingTemplate = (typeof AGENT_STAFFING_TEMPLATES)[number];
+export type AgentLaneKey = (typeof AGENT_WRITER_LANES)[number];
 
 export type AgentRoleCounts = Partial<Record<AgentRole, number>>;
+
+export interface ProjectLaneCapacitySettings {
+  minWritersPerLane: number;
+  maxWritersPerLane: number;
+  scaleUpQueueAgeSec: number;
+  scaleDownIdleSec: number;
+}
+
+export const DEFAULT_LANE_CAPACITY_SETTINGS: ProjectLaneCapacitySettings = {
+  minWritersPerLane: 1,
+  maxWritersPerLane: 3,
+  scaleUpQueueAgeSec: 120,
+  scaleDownIdleSec: 1800,
+};
 
 export interface ProjectAgentRuntimeSettings {
   staffingTemplate: AgentStaffingTemplate;
   roleCounts: AgentRoleCounts;
   strictIsolation: boolean;
+  laneCapacity: ProjectLaneCapacitySettings;
 }
 
 export interface ProjectAgentPoolHealth {
@@ -31,8 +48,18 @@ export interface ProjectAgentPoolHealth {
     id: string;
     name: string;
     status: 'ONLINE' | 'IDLE' | 'WORKING' | 'OFFLINE';
-    lockHealth: 'healthy' | 'stale' | 'unknown_task' | 'idle' | 'offline';
+      lockHealth: 'healthy' | 'stale' | 'unknown_task' | 'idle' | 'offline';
     currentTaskId: string | null;
+    laneKey: AgentLaneKey | null;
+    isTemporary?: boolean;
+  }>;
+  laneHealth: Array<{
+    laneKey: AgentLaneKey;
+    totalWriters: number;
+    availableWriters: number;
+    workingWriters: number;
+    queuedWriting: number;
+    oldestQueueAgeSec: number;
   }>;
 }
 

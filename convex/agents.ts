@@ -16,6 +16,7 @@ export const list = query({
     status: v.optional(v.string()),
     projectId: v.optional(v.number()),
     role: v.optional(v.string()),
+    laneKey: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -34,6 +35,9 @@ export const list = query({
       }
       if (args.projectId !== undefined && agent.projectId !== args.projectId) return false;
       if (args.role && agent.role.toLowerCase() !== args.role.toLowerCase()) return false;
+      if (args.laneKey && String(agent.laneKey || "").toLowerCase() !== args.laneKey.toLowerCase()) {
+        return false;
+      }
       return true;
     });
     return filtered.slice(0, limit);
@@ -64,6 +68,8 @@ export const register = mutation({
     isDedicated: v.optional(v.boolean()),
     capacityWeight: v.optional(v.number()),
     slotKey: v.optional(v.string()),
+    laneKey: v.optional(v.string()),
+    laneProfileKey: v.optional(v.string()),
     assignmentHealth: v.optional(v.any()),
     specialization: v.optional(v.string()),
     skills: v.optional(v.array(v.string())),
@@ -140,6 +146,8 @@ export const updateRuntime = mutation({
     isDedicated: v.optional(v.boolean()),
     capacityWeight: v.optional(v.number()),
     slotKey: v.optional(v.union(v.string(), v.null())),
+    laneKey: v.optional(v.union(v.string(), v.null())),
+    laneProfileKey: v.optional(v.union(v.string(), v.null())),
     assignmentHealth: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
@@ -150,7 +158,16 @@ export const updateRuntime = mutation({
     if (args.isDedicated !== undefined) updates.isDedicated = args.isDedicated;
     if (args.capacityWeight !== undefined) updates.capacityWeight = args.capacityWeight;
     if (args.slotKey !== undefined) updates.slotKey = args.slotKey ?? undefined;
+    if (args.laneKey !== undefined) updates.laneKey = args.laneKey ?? undefined;
+    if (args.laneProfileKey !== undefined) updates.laneProfileKey = args.laneProfileKey ?? undefined;
     if (args.assignmentHealth !== undefined) updates.assignmentHealth = args.assignmentHealth;
     await ctx.db.patch(args.id, updates);
+  },
+});
+
+export const remove = mutation({
+  args: { id: v.id("agents") },
+  handler: async (ctx, args) => {
+    await ctx.db.delete(args.id);
   },
 });

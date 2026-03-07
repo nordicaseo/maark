@@ -12,7 +12,8 @@ import {
   parseProjectRuntimeSettings,
   syncProjectDedicatedAgentPool,
 } from '@/lib/agents/runtime-agent-pools';
-import type { AgentRoleCounts } from '@/types/agent-runtime';
+import type { AgentRoleCounts, ProjectLaneCapacitySettings } from '@/types/agent-runtime';
+import { DEFAULT_LANE_CAPACITY_SETTINGS } from '@/types/agent-runtime';
 
 function parseProjectId(value: unknown): number | null {
   const n = Number.parseInt(String(value ?? ''), 10);
@@ -94,6 +95,53 @@ function sanitizeRoleCounts(input: unknown): AgentRoleCounts | undefined {
     out[role] = Math.max(1, Math.min(10, Number.parseInt(String(raw), 10) || 1));
   }
   return out;
+}
+
+function sanitizeLaneCapacity(input: unknown): ProjectLaneCapacitySettings | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const source = input as Record<string, unknown>;
+  const minWritersPerLane = Math.max(
+    1,
+    Math.min(
+      5,
+      Number.parseInt(
+        String(source.minWritersPerLane ?? DEFAULT_LANE_CAPACITY_SETTINGS.minWritersPerLane),
+        10
+      ) || DEFAULT_LANE_CAPACITY_SETTINGS.minWritersPerLane
+    )
+  );
+  const maxRaw =
+    Number.parseInt(
+      String(source.maxWritersPerLane ?? DEFAULT_LANE_CAPACITY_SETTINGS.maxWritersPerLane),
+      10
+    ) || DEFAULT_LANE_CAPACITY_SETTINGS.maxWritersPerLane;
+  const maxWritersPerLane = Math.max(minWritersPerLane, Math.min(8, maxRaw));
+  const scaleUpQueueAgeSec = Math.max(
+    30,
+    Math.min(
+      3600,
+      Number.parseInt(
+        String(source.scaleUpQueueAgeSec ?? DEFAULT_LANE_CAPACITY_SETTINGS.scaleUpQueueAgeSec),
+        10
+      ) || DEFAULT_LANE_CAPACITY_SETTINGS.scaleUpQueueAgeSec
+    )
+  );
+  const scaleDownIdleSec = Math.max(
+    300,
+    Math.min(
+      86400,
+      Number.parseInt(
+        String(source.scaleDownIdleSec ?? DEFAULT_LANE_CAPACITY_SETTINGS.scaleDownIdleSec),
+        10
+      ) || DEFAULT_LANE_CAPACITY_SETTINGS.scaleDownIdleSec
+    )
+  );
+  return {
+    minWritersPerLane,
+    maxWritersPerLane,
+    scaleUpQueueAgeSec,
+    scaleDownIdleSec,
+  };
 }
 
 export async function GET(req: NextRequest) {
@@ -231,10 +279,12 @@ export async function POST(req: NextRequest) {
         body.staffingTemplate ?? runtime.staffingTemplate
       );
       const roleCounts = sanitizeRoleCounts(body.roleCounts) ?? runtime.roleCounts;
+      const laneCapacity = sanitizeLaneCapacity(body.laneCapacity) ?? runtime.laneCapacity;
       const synced = await syncProjectDedicatedAgentPool({
         projectId,
         template,
         roleCounts,
+        laneCapacity,
       });
       const health = await getProjectAgentPoolHealth(projectId);
       await logAuditEvent({
@@ -246,6 +296,7 @@ export async function POST(req: NextRequest) {
         metadata: {
           template,
           roleCounts,
+          laneCapacity,
           created: synced.created,
           updated: synced.updated,
         },
@@ -254,6 +305,7 @@ export async function POST(req: NextRequest) {
         projectId,
         template,
         roleCounts,
+        laneCapacity,
         synced,
         health,
       });

@@ -15,6 +15,7 @@ import {
   isCollectionSubtype,
   isPageType,
   resolveDefaultContentType,
+  resolveLaneFromPageSelection,
 } from '@/lib/content-workflow-taxonomy';
 
 function parseId(id: string): number | null {
@@ -84,6 +85,7 @@ export async function POST(
           ? (isCollectionSubtype(body.subtype) ? body.subtype : DEFAULT_COLLECTION_SUBTYPE)
           : 'standard';
     const contentType = resolveDefaultContentType(pageType, subtype);
+    const laneKey = resolveLaneFromPageSelection(pageType, subtype);
 
     const mappedPrimaryKeyword = primaryMapping?.keyword ? String(primaryMapping.keyword) : null;
     const explicitTargetKeyword = typeof body.targetKeyword === 'string' && body.targetKeyword.trim()
@@ -98,6 +100,7 @@ export async function POST(
       pageId: page.id,
       keywordId: primaryMapping?.keywordId ? Number(primaryMapping.keywordId) : undefined,
       contentType,
+      laneKey,
       targetKeyword: explicitTargetKeyword || mappedPrimaryKeyword,
       options: {
         outlineReviewOptional: true,
@@ -133,6 +136,7 @@ export async function POST(
         pageType,
         subtype,
         contentType,
+        laneKey,
         primaryKeywordId: primaryMapping?.keywordId ? Number(primaryMapping.keywordId) : null,
         primaryKeyword: mappedPrimaryKeyword,
         taskId: created.taskId,

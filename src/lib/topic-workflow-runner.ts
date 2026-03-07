@@ -11,7 +11,10 @@ import {
   getWorkflowTaskForUser,
   type TopicStageKey,
 } from '@/lib/topic-workflow';
-import { TOPIC_STAGE_OWNER_CHAINS } from '@/lib/content-workflow-taxonomy';
+import {
+  isAgentLaneKey,
+  TOPIC_STAGE_OWNER_CHAINS,
+} from '@/lib/content-workflow-taxonomy';
 import {
   resolveProviderForAction,
   type ModelOverride,
@@ -19,6 +22,7 @@ import {
 import {
   appendMemoryEntry,
   buildRolePromptContext,
+  resolveRoleSkillIds,
   resolveProjectRoleModelOverride,
   setWorkingState,
 } from '@/lib/agents/project-agent-profiles';
@@ -40,6 +44,7 @@ import { applyStyleGuard, styleGuardPassed } from '@/lib/workflow/style-guard';
 import { resolveTemplatePolicy } from '@/lib/workflow/content-templates';
 import { getWorkflowOpsSettings } from '@/lib/workflow/ops-settings';
 import type { AgentRole } from '@/types/agent-profile';
+import type { AgentLaneKey } from '@/types/agent-runtime';
 import type { AIAction } from '@/types/ai';
 import type {
   OutlineConstraintPolicy,
@@ -82,6 +87,7 @@ interface SkillContext {
 
 interface StageProfileContext {
   role: AgentRole;
+  laneKey?: AgentLaneKey;
   promptText: string;
   profileUpdatedAt?: string;
   profileName?: string;
@@ -459,6 +465,16 @@ function isRoleAllowedForStage(stage: TopicStageKey, role: string): boolean {
   return false;
 }
 
+function resolveTaskLaneKey(task: Doc<'tasks'>): AgentLaneKey {
+  if (isAgentLaneKey(task.workflowLaneKey)) return task.workflowLaneKey;
+  const laneFromTag = (task.tags || [])
+    .map((tag) => String(tag))
+    .find((tag) => tag.startsWith('lane:'));
+  const laneKey = laneFromTag ? laneFromTag.split(':')[1] : '';
+  if (isAgentLaneKey(laneKey)) return laneKey;
+  return 'blog';
+}
+
 
 async function buildSkillContext(
   task: Doc<'tasks'>,
@@ -810,15 +826,23 @@ function normalizeAgentStatus(status: string | null | undefined): 'ONLINE' | 'ID
 }
 
 async function getWriterAvailabilityDiagnostics(
-  convex: NonNullable<ReturnType<typeof getConvexClient>>
+  convex: NonNullable<ReturnType<typeof getConvexClient>>,
+  projectId?: number | null,
+  laneKey?: AgentLaneKey
 ): Promise<{
   writerCount: number;
   writerOnline: number;
   writerIdle: number;
   writerWorking: number;
   writerOffline: number;
+  laneKey: AgentLaneKey | null;
 }> {
-  const allAgents = await convex.query(api.agents.list, { limit: 300 });
+  const allAgents = await convex.query(api.agents.list, {
+    limit: 300,
+    projectId: projectId ?? undefined,
+    role: 'writer',
+    laneKey: laneKey ?? undefined,
+  });
   const writers = allAgents.filter((agent) => agent.role.toLowerCase() === 'writer');
   return {
     writerCount: writers.length,
@@ -826,6 +850,7 @@ async function getWriterAvailabilityDiagnostics(
     writerIdle: writers.filter((agent) => normalizeAgentStatus(agent.status) === 'IDLE').length,
     writerWorking: writers.filter((agent) => normalizeAgentStatus(agent.status) === 'WORKING').length,
     writerOffline: writers.filter((agent) => normalizeAgentStatus(agent.status) === 'OFFLINE').length,
+    laneKey: laneKey ?? null,
   };
 }
 
@@ -1959,9 +1984,11 @@ async function resolveStageProfileContext(
   stage: TopicStageKey
 ): Promise<StageProfileContext> {
   const role = STAGE_PRIMARY_ROLE[stage] || 'lead';
+  const laneKey = resolveTaskLaneKey(task);
   if (!task.projectId) {
     return {
       role,
+      laneKey,
       promptText: '',
       roleSkillIds: [],
       profileName: role,
@@ -1969,7 +1996,20 @@ async function resolveStageProfileContext(
   }
 
   try {
-    const context = await buildRolePromptContext(task.projectId, role);
+    const context = await buildRolePromptContext(
+      task.projectId,
+      role,
+      role === 'writer' ? laneKey : undefined
+    );
+    const laneSkillIds = await resolveRoleSkillIds(task.projectId, 'writer', laneKey);
+    const roleSkillIds =
+      role === 'writer'
+        ? context.roleSkillIds
+        : Array.from(new Set([...laneSkillIds, ...context.roleSkillIds]));
+    const laneContextBlock = `Lane context: ${laneKey} (apply lane specialization for this task).`;
+    const promptText = context.promptContext
+      ? `${context.promptContext}\n\n${laneContextBlock}`
+      : laneContextBlock;
     const stageAction = stageActionKey(stage);
     const legacyAction = legacyActionKeyForStage(stage);
     const actionKeys = Array.from(
@@ -1989,8 +2029,9 @@ async function resolveStageProfileContext(
 
     return {
       role,
-      promptText: context.promptContext,
-      roleSkillIds: context.roleSkillIds,
+      laneKey,
+      promptText,
+      roleSkillIds,
       profileName: context.profile.displayName,
       profileUpdatedAt: context.profile.updatedAt,
       projectRoleModelOverride,
@@ -1999,6 +2040,7 @@ async function resolveStageProfileContext(
     console.error('Non-fatal stage profile context load error:', error);
     return {
       role,
+      laneKey,
       promptText: '',
       roleSkillIds: [],
       profileName: role,
@@ -2010,13 +2052,14 @@ async function recordRoleProfileActivity(
   projectId: number | null | undefined,
   role: AgentRole,
   memoryEntry: string,
-  workingState?: string
+  workingState?: string,
+  laneKey?: AgentLaneKey
 ) {
   if (!projectId) return;
   try {
-    await appendMemoryEntry(projectId, role, memoryEntry, null);
+    await appendMemoryEntry(projectId, role, memoryEntry, { userId: null, laneKey });
     if (workingState) {
-      await setWorkingState(projectId, role, workingState, null);
+      await setWorkingState(projectId, role, workingState, { userId: null, laneKey });
     }
   } catch (error) {
     console.error('Non-fatal role profile memory update error:', error);
@@ -2210,9 +2253,14 @@ export async function runTopicWorkflow(
       !assignedAgentIdForStage;
 
     if (waitingWriterQueue) {
-      const writerAvailability = await getWriterAvailabilityDiagnostics(convex);
+      const writerAvailability = await getWriterAvailabilityDiagnostics(
+        convex,
+        currentTask.projectId ?? null,
+        stageProfileContext.laneKey
+      );
       const queueSummary =
-        'Writing queued: waiting for an available writer. The task remains in writer queue and will resume when a writer is online.';
+        `Writing queued: waiting for an available ${stageProfileContext.laneKey || 'writer'} lane writer. ` +
+        'The task remains in writer queue and will resume when a writer is online.';
       await convex.mutation(api.topicWorkflow.recordStageProgress, {
         taskId: currentTask._id,
         stageKey: stage,
@@ -2224,12 +2272,14 @@ export async function runTopicWorkflow(
           status: 'queued',
           reason: 'writer_queue_waiting',
           stage,
+          laneKey: stageProfileContext.laneKey ?? null,
           ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
           writerAvailability,
           roleProfile: {
             role: stageProfileContext.role,
             profileName: stageProfileContext.profileName ?? null,
             profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+            laneKey: stageProfileContext.laneKey ?? null,
           },
         },
       });
@@ -2237,7 +2287,8 @@ export async function runTopicWorkflow(
         currentTask.projectId ?? null,
         stageProfileContext.role,
         queueSummary,
-        queueSummary
+        queueSummary,
+        stageProfileContext.laneKey
       );
       runs.push({ stage, summary: queueSummary });
       stoppedReason = queueSummary;
@@ -2246,9 +2297,16 @@ export async function runTopicWorkflow(
 
     if (Boolean(ensuredOwnerResult.blocked) || !assignedAgentIdForStage) {
       const writerAvailability =
-        stage === 'writing' ? await getWriterAvailabilityDiagnostics(convex) : undefined;
+        stage === 'writing'
+          ? await getWriterAvailabilityDiagnostics(
+              convex,
+              currentTask.projectId ?? null,
+              stageProfileContext.laneKey
+            )
+          : undefined;
       const blockedSummary =
-        `Stage ${stage} blocked: no available owner in ` +
+        `Stage ${stage} blocked: no available owner` +
+        `${stage === 'writing' ? ` for lane ${stageProfileContext.laneKey || 'unknown'}` : ''} in ` +
         `${(TOPIC_STAGE_OWNER_CHAINS[stage] || []).join(' -> ')}.`;
       await convex.mutation(api.topicWorkflow.recordStageProgress, {
         taskId: currentTask._id,
@@ -2261,12 +2319,14 @@ export async function runTopicWorkflow(
           status: 'blocked',
           reason: 'assignment_blocked',
           stage,
+          laneKey: stageProfileContext.laneKey ?? null,
           ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
           writerAvailability,
           roleProfile: {
             role: stageProfileContext.role,
             profileName: stageProfileContext.profileName ?? null,
             profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+            laneKey: stageProfileContext.laneKey ?? null,
           },
         },
       });
@@ -2274,7 +2334,8 @@ export async function runTopicWorkflow(
         currentTask.projectId ?? null,
         stageProfileContext.role,
         blockedSummary,
-        blockedSummary
+        blockedSummary,
+        stageProfileContext.laneKey
       );
       await logAlertEvent({
         source: 'topic_workflow',
@@ -2297,7 +2358,11 @@ export async function runTopicWorkflow(
     let assignedAgent = await convex.query(api.agents.get, {
       id: assignedAgentIdForStage as Id<'agents'>,
     });
-    if (!assignedAgent || !isRoleAllowedForStage(stage, assignedAgent.role)) {
+    const laneMismatch =
+      stage === 'writing'
+        ? !stageProfileContext.laneKey || assignedAgent?.laneKey !== stageProfileContext.laneKey
+        : false;
+    if (!assignedAgent || !isRoleAllowedForStage(stage, assignedAgent.role) || laneMismatch) {
       const reEnsuredOwner = await convex.mutation(api.topicWorkflow.ensureStageOwner, {
         taskId: currentTask._id,
         stageKey: stage,
@@ -2313,8 +2378,20 @@ export async function runTopicWorkflow(
         });
       }
     }
-    if (!assignedAgent || !isRoleAllowedForStage(stage, assignedAgent.role)) {
-      const blockedSummary = `Stage ${stage} blocked: assigned role ${assignedAgent?.role || 'unknown'} is not allowed for this stage.`;
+    const laneMismatchAfterHealing =
+      stage === 'writing'
+        ? !stageProfileContext.laneKey || assignedAgent?.laneKey !== stageProfileContext.laneKey
+        : false;
+    if (
+      !assignedAgent ||
+      !isRoleAllowedForStage(stage, assignedAgent.role) ||
+      laneMismatchAfterHealing
+    ) {
+      const blockedSummary = laneMismatchAfterHealing
+        ? `Stage ${stage} blocked: assigned writer lane ${
+            assignedAgent?.laneKey || 'unknown'
+          } does not match task lane ${stageProfileContext.laneKey || 'unknown'}.`
+        : `Stage ${stage} blocked: assigned role ${assignedAgent?.role || 'unknown'} is not allowed for this stage.`;
       await convex.mutation(api.tasks.update, {
         id: currentTask._id,
         expectedProjectId: currentTask.projectId ?? undefined,
@@ -2331,17 +2408,20 @@ export async function runTopicWorkflow(
         actorName: 'Workflow PM',
         payload: {
           status: 'blocked',
-          reason: 'owner_role_mismatch',
+          reason: laneMismatchAfterHealing ? 'owner_lane_mismatch' : 'owner_role_mismatch',
           stage,
           ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
           assignedAgentId: assignedAgentIdForStage,
           assignedAgentName: assignedAgent?.name ?? null,
           assignedAgentRole: assignedAgent?.role ?? null,
+          assignedAgentLaneKey: assignedAgent?.laneKey ?? null,
+          requiredLaneKey: stageProfileContext.laneKey ?? null,
           assignmentHealingAttempted: true,
           roleProfile: {
             role: stageProfileContext.role,
             profileName: stageProfileContext.profileName ?? null,
             profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+            laneKey: stageProfileContext.laneKey ?? null,
           },
         },
       });
@@ -2349,7 +2429,8 @@ export async function runTopicWorkflow(
         currentTask.projectId ?? null,
         stageProfileContext.role,
         blockedSummary,
-        blockedSummary
+        blockedSummary,
+        stageProfileContext.laneKey
       );
       await logAlertEvent({
         source: 'topic_workflow',
@@ -2429,6 +2510,7 @@ export async function runTopicWorkflow(
           role: stageProfileContext.role,
           profileName: stageProfileContext.profileName ?? null,
           profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+          laneKey: stageProfileContext.laneKey ?? null,
           mappedSkillIds: stageProfileContext.roleSkillIds,
         },
       },
@@ -2437,7 +2519,8 @@ export async function runTopicWorkflow(
       currentTask.projectId ?? null,
       stageProfileContext.role,
       startedSummary,
-      `${startedSummary}\nTask: ${currentTask.title}`
+      `${startedSummary}\nTask: ${currentTask.title}`,
+      stageProfileContext.laneKey
     );
 
     let stageResult: StageRunResult;
@@ -2496,6 +2579,7 @@ export async function runTopicWorkflow(
               role: stageProfileContext.role,
               profileName: stageProfileContext.profileName ?? null,
               profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+              laneKey: stageProfileContext.laneKey ?? null,
             },
           },
         });
@@ -2529,6 +2613,7 @@ export async function runTopicWorkflow(
             role: stageProfileContext.role,
             profileName: stageProfileContext.profileName ?? null,
             profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+            laneKey: stageProfileContext.laneKey ?? null,
           },
           diagnostics: incompleteDraftError
             ? {
@@ -2546,7 +2631,8 @@ export async function runTopicWorkflow(
         currentTask.projectId ?? null,
         stageProfileContext.role,
         failedSummary,
-        failedSummary
+        failedSummary,
+        stageProfileContext.laneKey
       );
       if (blockedBySafety) {
         await logAlertEvent({
@@ -2618,6 +2704,7 @@ export async function runTopicWorkflow(
           role: stageProfileContext.role,
           profileName: stageProfileContext.profileName ?? null,
           profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+          laneKey: stageProfileContext.laneKey ?? null,
           mappedSkillIds: stageProfileContext.roleSkillIds,
         },
       },
@@ -2626,7 +2713,8 @@ export async function runTopicWorkflow(
       currentTask.projectId ?? null,
       stageProfileContext.role,
       stageSummary,
-      `${stageSummary}\nTask: ${currentTask.title}`
+      `${stageSummary}\nTask: ${currentTask.title}`,
+      stageProfileContext.laneKey
     );
 
     const runRecord: WorkflowStageRun = {

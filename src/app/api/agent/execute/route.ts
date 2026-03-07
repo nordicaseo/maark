@@ -27,6 +27,7 @@ import {
 import { resolveTaskLinkedPageCleanContent } from '@/lib/pages/artifacts';
 import { applyStyleGuard, styleGuardPassed } from '@/lib/workflow/style-guard';
 import { resolveTemplatePolicy } from '@/lib/workflow/content-templates';
+import { isAgentLaneKey, resolveLaneFromContentType } from '@/lib/content-workflow-taxonomy';
 import type { ContentFormat } from '@/types/document';
 
 /**
@@ -167,6 +168,11 @@ export async function POST(req: NextRequest) {
         (doc as { projectId?: number | null }).projectId ??
           (projectId ?? null)
       ) || null;
+    const writerLaneKey = isAgentLaneKey(body.laneKey)
+      ? body.laneKey
+      : resolveLaneFromContentType(
+          (doc as { contentType?: string | null }).contentType || contentType
+        );
 
     let writerRolePromptContext = '';
     let writerRoleProfileName = 'Writer';
@@ -174,7 +180,11 @@ export async function POST(req: NextRequest) {
 
     if (effectiveProjectId) {
       try {
-        const writerContext = await buildRolePromptContext(effectiveProjectId, 'writer');
+        const writerContext = await buildRolePromptContext(
+          effectiveProjectId,
+          'writer',
+          writerLaneKey
+        );
         writerRolePromptContext = writerContext.promptContext;
         writerRoleProfileName = writerContext.profile.displayName || writerRoleProfileName;
         projectRoleOverride = resolveProjectRoleModelOverride(writerContext.profile, [
@@ -198,7 +208,7 @@ export async function POST(req: NextRequest) {
           effectiveProjectId,
           'writer',
           `Manual writing blocked for "${title}": outline missing or invalid.`,
-          auth.user.id
+          { userId: auth.user.id, laneKey: writerLaneKey }
         );
       }
       return NextResponse.json(
@@ -314,13 +324,13 @@ ${trimTo(linkedPageContext.text, 1500)}`
         effectiveProjectId,
         'writer',
         `${writerRoleProfileName} started manual writing for "${title}" (task ${String(taskId)}).`,
-        auth.user.id
+        { userId: auth.user.id, laneKey: writerLaneKey }
       );
       await appendMemoryEntry(
         effectiveProjectId,
         'writer',
         `${writerRoleProfileName} started manual writing for "${title}" using model ${model}.`,
-        auth.user.id
+        { userId: auth.user.id, laneKey: writerLaneKey }
       );
     }
 
@@ -557,13 +567,13 @@ ${trimTo(linkedPageContext.text, 1500)}`
           effectiveProjectId,
           'writer',
           incompleteSummary,
-          auth.user.id
+          { userId: auth.user.id, laneKey: writerLaneKey }
         );
         await setWorkingState(
           effectiveProjectId,
           'writer',
           incompleteSummary,
-          auth.user.id
+          { userId: auth.user.id, laneKey: writerLaneKey }
         );
       }
       return NextResponse.json(
@@ -683,13 +693,13 @@ ${trimTo(linkedPageContext.text, 1500)}`
         effectiveProjectId,
         'writer',
         successSummary,
-        auth.user.id
+        { userId: auth.user.id, laneKey: writerLaneKey }
       );
       await setWorkingState(
         effectiveProjectId,
         'writer',
         `${successSummary}\nPreview: /preview/${previewToken}`,
-        auth.user.id
+        { userId: auth.user.id, laneKey: writerLaneKey }
       );
     }
 

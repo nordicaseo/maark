@@ -1,4 +1,5 @@
 import type { ContentFormat, DocumentStatus } from '@/types/document';
+import type { AgentLaneKey } from '@/types/agent-runtime';
 
 export const TASK_STATUS_ORDER = [
   'BACKLOG',
@@ -238,6 +239,36 @@ export function resolveDefaultContentType(pageType: PageType, subtype: string): 
   if (pageType === 'homepage') return 'blog_post';
   if (pageType === 'faq') return 'blog_how_to';
   return 'blog_post';
+}
+
+export function resolveLaneFromPageSelection(
+  pageType: PageType,
+  subtype: PageSubtype
+): AgentLaneKey {
+  if (pageType === 'collection') return 'collection';
+  if (pageType === 'product') return 'product';
+  if (pageType === 'landing_page' || pageType === 'homepage' || pageType === 'faq') {
+    return 'landing';
+  }
+  if (pageType === 'blog') {
+    if (subtype === 'standard') return 'blog';
+    return 'blog';
+  }
+  return 'blog';
+}
+
+export function resolveLaneFromContentType(contentType: ContentFormat | string | null | undefined): AgentLaneKey {
+  const value = String(contentType || '').trim().toLowerCase();
+  if (value === 'product_category') return 'collection';
+  if (value === 'product_description') return 'product';
+  if (value === 'blog_how_to' || value === 'blog_listicle' || value === 'blog_buying_guide' || value === 'blog_review' || value === 'blog_post' || value === 'comparison' || value === 'news_article') {
+    return 'blog';
+  }
+  return 'blog';
+}
+
+export function isAgentLaneKey(value: unknown): value is AgentLaneKey {
+  return value === 'blog' || value === 'collection' || value === 'product' || value === 'landing';
 }
 
 export function isPageType(value: unknown): value is PageType {

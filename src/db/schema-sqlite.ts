@@ -145,6 +145,33 @@ export const projectAgentProfiles = sqliteTable('project_agent_profiles', {
   uniqueIndex('project_agent_profiles_unique_project_role').on(table.projectId, table.role),
 ]);
 
+export const projectAgentLaneProfiles = sqliteTable('project_agent_lane_profiles', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  role: text('role').notNull(),
+  laneKey: text('lane_key').notNull(),
+  displayName: text('display_name').notNull(),
+  emoji: text('emoji'),
+  avatarUrl: text('avatar_url'),
+  shortDescription: text('short_description'),
+  mission: text('mission'),
+  isEnabled: integer('is_enabled').notNull().default(1),
+  fileBundle: text('file_bundle', { mode: 'json' }),
+  skillIds: text('skill_ids', { mode: 'json' }),
+  modelOverrides: text('model_overrides', { mode: 'json' }),
+  heartbeatMeta: text('heartbeat_meta', { mode: 'json' }),
+  createdById: text('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+  updatedById: text('updated_by_id').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('project_agent_lane_profiles_unique_project_role_lane').on(
+    table.projectId,
+    table.role,
+    table.laneKey
+  ),
+]);
+
 export const agentSharedProfiles = sqliteTable('agent_shared_profiles', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   key: text('key').notNull().unique(),

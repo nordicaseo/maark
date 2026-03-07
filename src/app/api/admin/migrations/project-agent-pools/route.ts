@@ -3,11 +3,14 @@ import { db, ensureDb } from '@/db';
 import { projects } from '@/db/schema';
 import { requireRole } from '@/lib/auth';
 import { logAuditEvent } from '@/lib/observability';
+import { api } from '../../../../../../convex/_generated/api';
 import {
   markLegacyGlobalAgentsNonRoutable,
   parseProjectRuntimeSettings,
   syncProjectDedicatedAgentPool,
 } from '@/lib/agents/runtime-agent-pools';
+import { seedProjectAgentLaneProfiles } from '@/lib/agents/project-agent-profiles';
+import { getConvexClient } from '@/lib/convex/server';
 
 export async function POST(_req: NextRequest) {
   await ensureDb();
@@ -24,22 +27,33 @@ export async function POST(_req: NextRequest) {
   const results: Array<{
     projectId: number;
     template: string;
+    seededLaneProfiles: number;
     created: number;
     updated: number;
+    laneBackfilled?: number;
   }> = [];
+
+  const convex = getConvexClient();
 
   for (const row of rows) {
     const runtime = parseProjectRuntimeSettings(row.settings);
+    const laneSeeded = await seedProjectAgentLaneProfiles(row.id, auth.user.id);
     const synced = await syncProjectDedicatedAgentPool({
       projectId: row.id,
       template: runtime.staffingTemplate,
       roleCounts: runtime.roleCounts,
+      laneCapacity: runtime.laneCapacity,
     });
+    const backfill = convex
+      ? await convex.mutation(api.topicWorkflow.backfillWorkflowLanes, { projectId: row.id })
+      : null;
     results.push({
       projectId: row.id,
       template: runtime.staffingTemplate,
+      seededLaneProfiles: laneSeeded.seededLaneProfiles.length,
       created: synced.created,
       updated: synced.updated,
+      laneBackfilled: backfill?.updated ?? 0,
     });
   }
 

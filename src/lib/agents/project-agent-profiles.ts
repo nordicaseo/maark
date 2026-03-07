@@ -2,16 +2,23 @@ import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { api } from '../../../convex/_generated/api';
 import { db, ensureDb } from '@/db';
 import { dbNow } from '@/db/utils';
-import { agentSharedProfiles, projectAgentProfiles, skills } from '@/db/schema';
+import {
+  agentSharedProfiles,
+  projectAgentLaneProfiles,
+  projectAgentProfiles,
+  skills,
+} from '@/db/schema';
 import { getConvexClient } from '@/lib/convex/server';
 import type {
   AgentRole,
   HeartbeatRunResult,
   ProjectAgentFileBundle,
   ProjectAgentHeartbeatMeta,
+  ProjectAgentLaneProfile,
   ProjectAgentModelOverrides,
   ProjectAgentProfile,
   SharedAgentProfileKey,
+  UpsertProjectAgentLaneProfileInput,
   UpsertProjectAgentProfileInput,
 } from '@/types/agent-profile';
 import {
@@ -19,14 +26,49 @@ import {
   FIXED_AGENT_ROLES,
   SHARED_AGENT_PROFILE_KEYS,
 } from '@/types/agent-profile';
+import { AGENT_WRITER_LANES, type AgentLaneKey } from '@/types/agent-runtime';
 
 export interface RolePromptContext {
   role: AgentRole;
-  profile: ProjectAgentProfile;
+  laneKey?: AgentLaneKey;
+  profile: ProjectAgentProfile | ProjectAgentLaneProfile;
   promptContext: string;
   roleSkillIds: number[];
   sharedUserProfile: string;
 }
+
+const WRITER_LANE_PROFILE_DEFAULTS: Record<
+  AgentLaneKey,
+  { displayName: string; missionSuffix: string; shortDescription: string; emoji: string }
+> = {
+  blog: {
+    displayName: 'Atlas Blog',
+    missionSuffix: 'Focus on editorial blog quality, search intent depth, and narrative flow.',
+    shortDescription: 'Blog lane writer',
+    emoji: '✍️',
+  },
+  collection: {
+    displayName: 'Atlas Collection',
+    missionSuffix:
+      'Specialize in collection/category pages with category intent coverage and merchandising clarity.',
+    shortDescription: 'Collection lane writer',
+    emoji: '🗂️',
+  },
+  product: {
+    displayName: 'Atlas Product',
+    missionSuffix:
+      'Specialize in product page copy with feature-to-benefit clarity and conversion intent.',
+    shortDescription: 'Product lane writer',
+    emoji: '📦',
+  },
+  landing: {
+    displayName: 'Atlas Landing',
+    missionSuffix:
+      'Specialize in landing/home/FAQ style pages with concise value props and CTA structure.',
+    shortDescription: 'Landing lane writer',
+    emoji: '🎯',
+  },
+};
 
 const ROLE_DEFAULTS: Record<
   AgentRole,
@@ -110,6 +152,11 @@ const PROMPT_CONTEXT_MAX_CHARS = 14000;
 function normalizeRole(value: unknown): AgentRole | null {
   if (typeof value !== 'string') return null;
   return FIXED_AGENT_ROLES.find((role) => role === value) ?? null;
+}
+
+function normalizeLaneKey(value: unknown): AgentLaneKey | null {
+  if (typeof value !== 'string') return null;
+  return AGENT_WRITER_LANES.find((lane) => lane === value) ?? null;
 }
 
 function toIsoDate(value: unknown): string {
@@ -282,6 +329,66 @@ function mapProfileRow(row: Record<string, unknown>): ProjectAgentProfile {
   };
 }
 
+function laneProfileDefaults(role: AgentRole, laneKey: AgentLaneKey) {
+  const roleDefaults = roleDisplay(role);
+  if (role !== 'writer') return roleDefaults;
+  const laneDefaults = WRITER_LANE_PROFILE_DEFAULTS[laneKey];
+  return {
+    displayName: laneDefaults.displayName,
+    emoji: laneDefaults.emoji,
+    shortDescription: laneDefaults.shortDescription,
+    mission: `${roleDefaults.mission} ${laneDefaults.missionSuffix}`.trim(),
+  };
+}
+
+function mapLaneProfileRow(row: Record<string, unknown>): ProjectAgentLaneProfile {
+  const role = normalizeRole(row.role) || 'writer';
+  const laneKey = normalizeLaneKey(row.laneKey) || 'blog';
+  const defaults = laneProfileDefaults(role, laneKey);
+  const displayName =
+    typeof row.displayName === 'string' && row.displayName.trim()
+      ? row.displayName
+      : defaults.displayName;
+  const emoji =
+    typeof row.emoji === 'string' && row.emoji.trim() ? row.emoji : defaults.emoji;
+  const mission =
+    typeof row.mission === 'string' && row.mission.trim()
+      ? row.mission
+      : defaults.mission;
+  const shortDescription =
+    typeof row.shortDescription === 'string' && row.shortDescription.trim()
+      ? row.shortDescription.trim()
+      : defaults.shortDescription;
+  const avatarUrl =
+    typeof row.avatarUrl === 'string' && row.avatarUrl.trim()
+      ? row.avatarUrl.trim()
+      : null;
+
+  return {
+    id: Number(row.id),
+    projectId: Number(row.projectId),
+    role,
+    laneKey,
+    displayName,
+    emoji: emoji || null,
+    avatarUrl,
+    shortDescription: shortDescription || null,
+    mission: mission || null,
+    isEnabled:
+      typeof row.isEnabled === 'boolean'
+        ? row.isEnabled
+        : Number(row.isEnabled ?? 1) === 1,
+    fileBundle: normalizeFileBundle(role, displayName, emoji, mission, row.fileBundle),
+    skillIds: normalizeSkillIds(row.skillIds),
+    modelOverrides: normalizeModelOverrides(row.modelOverrides),
+    heartbeatMeta: normalizeHeartbeatMeta(row.heartbeatMeta),
+    createdById: (row.createdById as string | null) ?? null,
+    updatedById: (row.updatedById as string | null) ?? null,
+    createdAt: toIsoDate(row.createdAt),
+    updatedAt: toIsoDate(row.updatedAt),
+  };
+}
+
 function sortProfilesByRoleOrder(profiles: ProjectAgentProfile[]) {
   return [...profiles].sort((a, b) => {
     const ai = ROLE_ORDER.get(a.role) ?? 999;
@@ -316,6 +423,40 @@ async function getProjectProfileRow(projectId: number, role: AgentRole) {
       and(
         eq(projectAgentProfiles.projectId, projectId),
         eq(projectAgentProfiles.role, role)
+      )
+    )
+    .limit(1);
+  return row as Record<string, unknown> | undefined;
+}
+
+async function getProjectLaneProfileRow(projectId: number, role: AgentRole, laneKey: AgentLaneKey) {
+  const [row] = await db
+    .select({
+      id: projectAgentLaneProfiles.id,
+      projectId: projectAgentLaneProfiles.projectId,
+      role: projectAgentLaneProfiles.role,
+      laneKey: projectAgentLaneProfiles.laneKey,
+      displayName: projectAgentLaneProfiles.displayName,
+      emoji: projectAgentLaneProfiles.emoji,
+      avatarUrl: projectAgentLaneProfiles.avatarUrl,
+      shortDescription: projectAgentLaneProfiles.shortDescription,
+      mission: projectAgentLaneProfiles.mission,
+      isEnabled: projectAgentLaneProfiles.isEnabled,
+      fileBundle: projectAgentLaneProfiles.fileBundle,
+      skillIds: projectAgentLaneProfiles.skillIds,
+      modelOverrides: projectAgentLaneProfiles.modelOverrides,
+      heartbeatMeta: projectAgentLaneProfiles.heartbeatMeta,
+      createdById: projectAgentLaneProfiles.createdById,
+      updatedById: projectAgentLaneProfiles.updatedById,
+      createdAt: projectAgentLaneProfiles.createdAt,
+      updatedAt: projectAgentLaneProfiles.updatedAt,
+    })
+    .from(projectAgentLaneProfiles)
+    .where(
+      and(
+        eq(projectAgentLaneProfiles.projectId, projectId),
+        eq(projectAgentLaneProfiles.role, role),
+        eq(projectAgentLaneProfiles.laneKey, laneKey)
       )
     )
     .limit(1);
@@ -374,6 +515,66 @@ export async function seedProjectAgentProfiles(
   return { seededRoles, profiles };
 }
 
+export async function seedProjectAgentLaneProfiles(
+  projectId: number,
+  userId?: string | null
+): Promise<{ seededLaneProfiles: Array<{ role: AgentRole; laneKey: AgentLaneKey }>; profiles: ProjectAgentLaneProfile[] }> {
+  await ensureDb();
+  await seedProjectAgentProfiles(projectId, userId ?? null);
+
+  const existingRows = (await db
+    .select({
+      role: projectAgentLaneProfiles.role,
+      laneKey: projectAgentLaneProfiles.laneKey,
+    })
+    .from(projectAgentLaneProfiles)
+    .where(eq(projectAgentLaneProfiles.projectId, projectId))) as Array<{
+    role: string;
+    laneKey: string;
+  }>;
+
+  const existing = new Set(
+    existingRows
+      .map((row) => {
+        const role = normalizeRole(row.role);
+        const laneKey = normalizeLaneKey(row.laneKey);
+        if (!role || !laneKey) return null;
+        return `${role}:${laneKey}`;
+      })
+      .filter((value): value is string => Boolean(value))
+  );
+
+  const seededLaneProfiles: Array<{ role: AgentRole; laneKey: AgentLaneKey }> = [];
+  for (const laneKey of AGENT_WRITER_LANES) {
+    const role: AgentRole = 'writer';
+    const key = `${role}:${laneKey}`;
+    if (existing.has(key)) continue;
+    const defaults = laneProfileDefaults(role, laneKey);
+    await db.insert(projectAgentLaneProfiles).values({
+      projectId,
+      role,
+      laneKey,
+      displayName: defaults.displayName,
+      emoji: defaults.emoji,
+      shortDescription: defaults.shortDescription,
+      mission: defaults.mission,
+      isEnabled: true,
+      fileBundle: buildDefaultFileBundle(role, defaults.displayName, defaults.emoji, defaults.mission),
+      skillIds: [],
+      modelOverrides: {},
+      heartbeatMeta: {},
+      createdById: userId ?? null,
+      updatedById: userId ?? null,
+      createdAt: dbNow(),
+      updatedAt: dbNow(),
+    });
+    seededLaneProfiles.push({ role, laneKey });
+  }
+
+  const profiles = await listProjectAgentLaneProfiles(projectId, 'writer');
+  return { seededLaneProfiles, profiles };
+}
+
 export async function listProjectAgentProfiles(
   projectId: number
 ): Promise<ProjectAgentProfile[]> {
@@ -404,6 +605,45 @@ export async function listProjectAgentProfiles(
   return sortProfilesByRoleOrder(rows.map(mapProfileRow));
 }
 
+export async function listProjectAgentLaneProfiles(
+  projectId: number,
+  role: AgentRole = 'writer'
+): Promise<ProjectAgentLaneProfile[]> {
+  await ensureDb();
+  const rows = (await db
+    .select({
+      id: projectAgentLaneProfiles.id,
+      projectId: projectAgentLaneProfiles.projectId,
+      role: projectAgentLaneProfiles.role,
+      laneKey: projectAgentLaneProfiles.laneKey,
+      displayName: projectAgentLaneProfiles.displayName,
+      emoji: projectAgentLaneProfiles.emoji,
+      avatarUrl: projectAgentLaneProfiles.avatarUrl,
+      shortDescription: projectAgentLaneProfiles.shortDescription,
+      mission: projectAgentLaneProfiles.mission,
+      isEnabled: projectAgentLaneProfiles.isEnabled,
+      fileBundle: projectAgentLaneProfiles.fileBundle,
+      skillIds: projectAgentLaneProfiles.skillIds,
+      modelOverrides: projectAgentLaneProfiles.modelOverrides,
+      heartbeatMeta: projectAgentLaneProfiles.heartbeatMeta,
+      createdById: projectAgentLaneProfiles.createdById,
+      updatedById: projectAgentLaneProfiles.updatedById,
+      createdAt: projectAgentLaneProfiles.createdAt,
+      updatedAt: projectAgentLaneProfiles.updatedAt,
+    })
+    .from(projectAgentLaneProfiles)
+    .where(
+      and(
+        eq(projectAgentLaneProfiles.projectId, projectId),
+        eq(projectAgentLaneProfiles.role, role)
+      )
+    )) as Array<Record<string, unknown>>;
+
+  return rows
+    .map(mapLaneProfileRow)
+    .sort((a, b) => AGENT_WRITER_LANES.indexOf(a.laneKey) - AGENT_WRITER_LANES.indexOf(b.laneKey));
+}
+
 export async function getProjectAgentProfile(
   projectId: number,
   role: AgentRole
@@ -411,6 +651,16 @@ export async function getProjectAgentProfile(
   await ensureDb();
   const row = await getProjectProfileRow(projectId, role);
   return row ? mapProfileRow(row) : null;
+}
+
+export async function getProjectAgentLaneProfile(
+  projectId: number,
+  role: AgentRole,
+  laneKey: AgentLaneKey
+): Promise<ProjectAgentLaneProfile | null> {
+  await ensureDb();
+  const row = await getProjectLaneProfileRow(projectId, role, laneKey);
+  return row ? mapLaneProfileRow(row) : null;
 }
 
 export async function upsertProjectAgentProfile(
@@ -514,6 +764,108 @@ export async function upsertProjectAgentProfile(
   return updated;
 }
 
+export async function upsertProjectAgentLaneProfile(
+  input: UpsertProjectAgentLaneProfileInput
+): Promise<ProjectAgentLaneProfile> {
+  await ensureDb();
+
+  const existingRow = await getProjectLaneProfileRow(input.projectId, input.role, input.laneKey);
+  const defaults = laneProfileDefaults(input.role, input.laneKey);
+  const displayName = (input.displayName || '').trim() || defaults.displayName;
+  const emoji = (input.emoji || '').trim() || defaults.emoji;
+  const avatarUrlInput =
+    typeof input.avatarUrl === 'string' ? input.avatarUrl.trim() : undefined;
+  const shortDescriptionInput =
+    typeof input.shortDescription === 'string' ? input.shortDescription.trim() : undefined;
+  const mission = (input.mission || '').trim() || defaults.mission;
+  const createAvatarUrl = avatarUrlInput !== undefined ? avatarUrlInput || null : null;
+  const createShortDescription =
+    shortDescriptionInput !== undefined
+      ? shortDescriptionInput || defaults.shortDescription
+      : defaults.shortDescription;
+
+  if (!existingRow) {
+    await db.insert(projectAgentLaneProfiles).values({
+      projectId: input.projectId,
+      role: input.role,
+      laneKey: input.laneKey,
+      displayName,
+      emoji,
+      avatarUrl: createAvatarUrl,
+      shortDescription: createShortDescription,
+      mission,
+      isEnabled: input.isEnabled !== false,
+      fileBundle: normalizeFileBundle(
+        input.role,
+        displayName,
+        emoji,
+        mission,
+        input.fileBundle || {}
+      ),
+      skillIds: input.skillIds || [],
+      modelOverrides: input.modelOverrides || {},
+      heartbeatMeta: input.heartbeatMeta || {},
+      createdById: input.userId ?? null,
+      updatedById: input.userId ?? null,
+      createdAt: dbNow(),
+      updatedAt: dbNow(),
+    });
+
+    const created = await getProjectAgentLaneProfile(input.projectId, input.role, input.laneKey);
+    if (!created) {
+      throw new Error('Failed to create project lane agent profile');
+    }
+    return created;
+  }
+
+  const existing = mapLaneProfileRow(existingRow);
+  const avatarUrl =
+    avatarUrlInput !== undefined
+      ? avatarUrlInput || null
+      : existing.avatarUrl || null;
+  const shortDescription =
+    shortDescriptionInput !== undefined
+      ? shortDescriptionInput || defaults.shortDescription
+      : existing.shortDescription || defaults.shortDescription;
+  const mergedFileBundle = {
+    ...existing.fileBundle,
+    ...(input.fileBundle || {}),
+  };
+  const mergedSkillIds =
+    input.skillIds !== undefined ? Array.from(new Set(input.skillIds)) : existing.skillIds;
+  const mergedModelOverrides = input.modelOverrides ?? existing.modelOverrides;
+  const mergedHeartbeatMeta = input.heartbeatMeta
+    ? { ...existing.heartbeatMeta, ...input.heartbeatMeta }
+    : existing.heartbeatMeta;
+
+  await db
+    .update(projectAgentLaneProfiles)
+    .set({
+      displayName,
+      emoji,
+      avatarUrl,
+      shortDescription,
+      mission,
+      isEnabled:
+        input.isEnabled !== undefined
+          ? input.isEnabled
+          : existing.isEnabled,
+      fileBundle: mergedFileBundle,
+      skillIds: mergedSkillIds,
+      modelOverrides: mergedModelOverrides,
+      heartbeatMeta: mergedHeartbeatMeta,
+      updatedById: input.userId ?? null,
+      updatedAt: dbNow(),
+    })
+    .where(eq(projectAgentLaneProfiles.id, existing.id));
+
+  const updated = await getProjectAgentLaneProfile(input.projectId, input.role, input.laneKey);
+  if (!updated) {
+    throw new Error('Failed to update project lane agent profile');
+  }
+  return updated;
+}
+
 export async function getSharedProfile(
   key: SharedAgentProfileKey
 ): Promise<string> {
@@ -569,9 +921,14 @@ export async function setSharedUserProfile(
 
 export async function resolveRoleSkillIds(
   projectId: number,
-  role: AgentRole
+  role: AgentRole,
+  laneKey?: AgentLaneKey
 ): Promise<number[]> {
-  const profile = await getProjectAgentProfile(projectId, role);
+  const laneProfile =
+    role === 'writer' && laneKey
+      ? await getProjectAgentLaneProfile(projectId, role, laneKey)
+      : null;
+  const profile = laneProfile ?? (await getProjectAgentProfile(projectId, role));
   if (!profile || profile.skillIds.length === 0) return [];
 
   const wanted = profile.skillIds.filter((id) => Number.isFinite(id) && id > 0);
@@ -599,22 +956,35 @@ export async function resolveRoleSkillIds(
 
 export async function buildRolePromptContext(
   projectId: number,
-  role: AgentRole
+  role: AgentRole,
+  laneKey?: AgentLaneKey
 ): Promise<RolePromptContext> {
   await ensureDb();
 
-  let profile = await getProjectAgentProfile(projectId, role);
+  let profile =
+    role === 'writer' && laneKey
+      ? await getProjectAgentLaneProfile(projectId, role, laneKey)
+      : await getProjectAgentProfile(projectId, role);
   if (!profile) {
     await seedProjectAgentProfiles(projectId, null);
-    profile = await getProjectAgentProfile(projectId, role);
+    if (role === 'writer' && laneKey) {
+      await seedProjectAgentLaneProfiles(projectId, null);
+      profile = await getProjectAgentLaneProfile(projectId, role, laneKey);
+    } else {
+      profile = await getProjectAgentProfile(projectId, role);
+    }
   }
 
   if (!profile) {
-    const defaults = roleDisplay(role);
+    const defaults =
+      role === 'writer' && laneKey
+        ? laneProfileDefaults(role, laneKey)
+        : roleDisplay(role);
     profile = {
       id: -1,
       projectId,
       role,
+      ...(role === 'writer' && laneKey ? { laneKey } : {}),
       displayName: defaults.displayName,
       emoji: defaults.emoji,
       avatarUrl: null,
@@ -642,10 +1012,11 @@ export async function buildRolePromptContext(
     sections.push(`# USER\n${sharedUserProfile.trim()}`);
   }
   const promptContext = trimTo(sections.join('\n\n---\n\n'), PROMPT_CONTEXT_MAX_CHARS);
-  const roleSkillIds = await resolveRoleSkillIds(projectId, role);
+  const roleSkillIds = await resolveRoleSkillIds(projectId, role, laneKey);
 
   return {
     role,
+    laneKey,
     profile,
     promptContext,
     roleSkillIds,
@@ -657,41 +1028,94 @@ export async function appendMemoryEntry(
   projectId: number,
   role: AgentRole,
   entry: string,
-  userId?: string | null
+  userIdOrOptions?:
+    | string
+    | null
+    | {
+        userId?: string | null;
+        laneKey?: AgentLaneKey;
+      }
 ) {
-  const profile = await getProjectAgentProfile(projectId, role);
+  const userId =
+    typeof userIdOrOptions === 'string' || userIdOrOptions === null
+      ? userIdOrOptions
+      : userIdOrOptions?.userId;
+  const laneKey =
+    typeof userIdOrOptions === 'object' && userIdOrOptions !== null
+      ? userIdOrOptions.laneKey
+      : undefined;
+  const profile =
+    role === 'writer' && laneKey
+      ? await getProjectAgentLaneProfile(projectId, role, laneKey)
+      : await getProjectAgentProfile(projectId, role);
   const existingText = profile?.fileBundle.MEMORY || '# MEMORY';
   const nowIso = new Date().toISOString();
   const addition = `- [${nowIso}] ${entry.trim()}`;
   const merged = trimTo(`${existingText.trim()}\n${addition}\n`, MAX_MEMORY_CHARS);
-  await upsertProjectAgentProfile({
-    projectId,
-    role,
-    userId: userId ?? null,
-    fileBundle: { MEMORY: merged },
-    heartbeatMeta: { lastMemoryUpdateAt: nowIso },
-  });
+  if (role === 'writer' && laneKey) {
+    await upsertProjectAgentLaneProfile({
+      projectId,
+      role,
+      laneKey,
+      userId: userId ?? null,
+      fileBundle: { MEMORY: merged },
+      heartbeatMeta: { lastMemoryUpdateAt: nowIso },
+    });
+  } else {
+    await upsertProjectAgentProfile({
+      projectId,
+      role,
+      userId: userId ?? null,
+      fileBundle: { MEMORY: merged },
+      heartbeatMeta: { lastMemoryUpdateAt: nowIso },
+    });
+  }
 }
 
 export async function setWorkingState(
   projectId: number,
   role: AgentRole,
   stateText: string,
-  userId?: string | null
+  userIdOrOptions?:
+    | string
+    | null
+    | {
+        userId?: string | null;
+        laneKey?: AgentLaneKey;
+      }
 ) {
+  const userId =
+    typeof userIdOrOptions === 'string' || userIdOrOptions === null
+      ? userIdOrOptions
+      : userIdOrOptions?.userId;
+  const laneKey =
+    typeof userIdOrOptions === 'object' && userIdOrOptions !== null
+      ? userIdOrOptions.laneKey
+      : undefined;
   const nowIso = new Date().toISOString();
   const content = trimTo(`# WORKING\n${stateText.trim()}\nUpdated: ${nowIso}`, MAX_WORKING_CHARS);
-  await upsertProjectAgentProfile({
-    projectId,
-    role,
-    userId: userId ?? null,
-    fileBundle: { WORKING: content },
-    heartbeatMeta: { lastWorkingUpdateAt: nowIso },
-  });
+  if (role === 'writer' && laneKey) {
+    await upsertProjectAgentLaneProfile({
+      projectId,
+      role,
+      laneKey,
+      userId: userId ?? null,
+      fileBundle: { WORKING: content },
+      heartbeatMeta: { lastWorkingUpdateAt: nowIso },
+    });
+  } else {
+    await upsertProjectAgentProfile({
+      projectId,
+      role,
+      userId: userId ?? null,
+      fileBundle: { WORKING: content },
+      heartbeatMeta: { lastWorkingUpdateAt: nowIso },
+    });
+  }
 }
 
 export function resolveProjectRoleModelOverride(
-  profile: ProjectAgentProfile | null | undefined,
+  profile: Pick<ProjectAgentProfile, 'modelOverrides'> | Pick<ProjectAgentLaneProfile, 'modelOverrides'> | null | undefined,
   actionKeys: string[]
 ) {
   if (!profile?.modelOverrides) return undefined;

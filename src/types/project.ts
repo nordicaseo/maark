@@ -1,5 +1,9 @@
 import type { ContentFormat } from './document';
-import type { AgentRoleCounts, AgentStaffingTemplate } from './agent-runtime';
+import type {
+  AgentRoleCounts,
+  AgentStaffingTemplate,
+  ProjectLaneCapacitySettings,
+} from './agent-runtime';
 
 export interface Project {
   id: number;
@@ -19,6 +23,7 @@ export interface ProjectSettings {
     staffingTemplate?: AgentStaffingTemplate;
     roleCounts?: AgentRoleCounts;
     strictIsolation?: boolean;
+    laneCapacity?: ProjectLaneCapacitySettings;
   };
 }
 

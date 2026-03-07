@@ -14,6 +14,7 @@ import {
   createTopicWorkflow,
   type TopicWorkflowEntryPoint,
 } from '@/lib/topic-workflow';
+import { isAgentLaneKey, resolveLaneFromContentType } from '@/lib/content-workflow-taxonomy';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 
 const ENTRY_POINTS = new Set<TopicWorkflowEntryPoint>([
@@ -139,6 +140,9 @@ export async function POST(req: NextRequest) {
       documentId,
       skillId,
       contentType: typeof body.contentType === 'string' ? body.contentType : undefined,
+      laneKey: isAgentLaneKey(body.laneKey)
+        ? body.laneKey
+        : resolveLaneFromContentType(typeof body.contentType === 'string' ? body.contentType : undefined),
       targetKeyword: typeof body.targetKeyword === 'string' ? body.targetKeyword : null,
       siteId,
       pageId,
@@ -157,6 +161,7 @@ export async function POST(req: NextRequest) {
         entryPoint,
         topic,
         workflowStage: result.workflowStage,
+        laneKey: result.laneKey ?? null,
         taskId: result.taskId,
         contentDocumentId: result.contentDocumentId ?? null,
         reused: result.reused,

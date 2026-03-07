@@ -3,10 +3,16 @@ import type { Id } from '../../../convex/_generated/dataModel';
 import { getConvexClient } from '@/lib/convex/server';
 import { FIXED_AGENT_ROLES, type AgentRole } from '@/types/agent-profile';
 import type {
+  AgentLaneKey,
   AgentRoleCounts,
   AgentStaffingTemplate,
+  ProjectLaneCapacitySettings,
   ProjectAgentPoolHealth,
   ProjectAgentRuntimeSettings,
+} from '@/types/agent-runtime';
+import {
+  AGENT_WRITER_LANES,
+  DEFAULT_LANE_CAPACITY_SETTINGS,
 } from '@/types/agent-runtime';
 
 type ConvexAgent = {
@@ -18,8 +24,11 @@ type ConvexAgent = {
   isDedicated?: boolean;
   capacityWeight?: number;
   slotKey?: string;
+  laneKey?: string;
+  laneProfileKey?: string;
   assignmentHealth?: Record<string, unknown>;
   currentTaskId?: Id<'tasks'>;
+  updatedAt?: number;
 };
 
 type ConvexTask = {
@@ -27,6 +36,9 @@ type ConvexTask = {
   status: string;
   workflowCurrentStageKey?: string;
   workflowStageStatus?: string;
+  workflowLaneKey?: string;
+  workflowLastEventAt?: number | null;
+  updatedAt?: number | null;
 };
 
 const ROLE_SEED_DEFAULTS: Record<
@@ -73,6 +85,13 @@ const ROLE_SEED_DEFAULTS: Record<
     specialization: 'Editorial lead and escalation fallback',
     skills: ['quality oversight', 'final decisions', 'workflow escalation'],
   },
+};
+
+const WRITER_LANE_NAMES: Record<AgentLaneKey, string> = {
+  blog: 'Atlas Blog',
+  collection: 'Atlas Collection',
+  product: 'Atlas Product',
+  landing: 'Atlas Landing',
 };
 
 const TEMPLATE_COUNTS: Record<AgentStaffingTemplate, Record<AgentRole, number>> = {
@@ -123,6 +142,14 @@ function normalizeTemplate(value: unknown): AgentStaffingTemplate {
   return 'small';
 }
 
+function isAgentLaneKey(value: unknown): value is AgentLaneKey {
+  return AGENT_WRITER_LANES.includes(value as AgentLaneKey);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
 function parseRoleCounts(input: unknown): AgentRoleCounts {
   if (!input || typeof input !== 'object') return {};
   const source = input as Record<string, unknown>;
@@ -134,6 +161,38 @@ function parseRoleCounts(input: unknown): AgentRoleCounts {
     out[role] = value;
   }
   return out;
+}
+
+function parseLaneCapacity(input: unknown): ProjectLaneCapacitySettings {
+  const source = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
+  const min = clamp(
+    Number.parseInt(String(source.minWritersPerLane ?? DEFAULT_LANE_CAPACITY_SETTINGS.minWritersPerLane), 10) ||
+      DEFAULT_LANE_CAPACITY_SETTINGS.minWritersPerLane,
+    1,
+    5
+  );
+  const maxRaw =
+    Number.parseInt(String(source.maxWritersPerLane ?? DEFAULT_LANE_CAPACITY_SETTINGS.maxWritersPerLane), 10) ||
+    DEFAULT_LANE_CAPACITY_SETTINGS.maxWritersPerLane;
+  const max = clamp(Math.max(min, maxRaw), min, 8);
+  const scaleUpQueueAgeSec = clamp(
+    Number.parseInt(String(source.scaleUpQueueAgeSec ?? DEFAULT_LANE_CAPACITY_SETTINGS.scaleUpQueueAgeSec), 10) ||
+      DEFAULT_LANE_CAPACITY_SETTINGS.scaleUpQueueAgeSec,
+    30,
+    3600
+  );
+  const scaleDownIdleSec = clamp(
+    Number.parseInt(String(source.scaleDownIdleSec ?? DEFAULT_LANE_CAPACITY_SETTINGS.scaleDownIdleSec), 10) ||
+      DEFAULT_LANE_CAPACITY_SETTINGS.scaleDownIdleSec,
+    300,
+    86_400
+  );
+  return {
+    minWritersPerLane: min,
+    maxWritersPerLane: max,
+    scaleUpQueueAgeSec,
+    scaleDownIdleSec,
+  };
 }
 
 export function parseProjectRuntimeSettings(settings: unknown): ProjectAgentRuntimeSettings {
@@ -148,6 +207,7 @@ export function parseProjectRuntimeSettings(settings: unknown): ProjectAgentRunt
     roleCounts: parseRoleCounts(runtime.roleCounts),
     strictIsolation:
       runtime.strictIsolation === undefined ? true : String(runtime.strictIsolation) !== 'false',
+    laneCapacity: parseLaneCapacity(runtime.laneCapacity),
   };
 }
 
@@ -168,6 +228,14 @@ function roleSlotKey(projectId: number, role: AgentRole, ordinal: number): strin
   return `p${projectId}:${role}:${ordinal}`;
 }
 
+function writerLaneSlotKey(projectId: number, laneKey: AgentLaneKey, ordinal: number): string {
+  return `p${projectId}:writer:${laneKey}:${ordinal}`;
+}
+
+function writerLaneAutoSlotKey(projectId: number, laneKey: AgentLaneKey, ordinal: number): string {
+  return `p${projectId}:writer:${laneKey}:auto:${ordinal}`;
+}
+
 function buildAgentName(role: AgentRole, ordinal: number): string {
   const base = ROLE_SEED_DEFAULTS[role].name;
   return ordinal <= 1 ? base : `${base} ${ordinal}`;
@@ -177,11 +245,13 @@ export async function syncProjectDedicatedAgentPool(args: {
   projectId: number;
   template: AgentStaffingTemplate;
   roleCounts?: AgentRoleCounts;
+  laneCapacity?: Partial<ProjectLaneCapacitySettings>;
 }): Promise<{
   created: number;
   updated: number;
   totalDedicated: number;
   targetByRole: Record<AgentRole, number>;
+  targetWriterByLane: Record<AgentLaneKey, number>;
 }> {
   const convex = getConvexClient();
   if (!convex) {
@@ -189,6 +259,10 @@ export async function syncProjectDedicatedAgentPool(args: {
   }
 
   const targetByRole = buildRoleCounts(args.template, args.roleCounts);
+  const laneCapacity = parseLaneCapacity(args.laneCapacity);
+  const targetWriterByLane = Object.fromEntries(
+    AGENT_WRITER_LANES.map((laneKey) => [laneKey, laneCapacity.minWritersPerLane])
+  ) as Record<AgentLaneKey, number>;
   const allAgents = (await convex.query(api.agents.list, { limit: 2000 })) as ConvexAgent[];
   const projectAgents = allAgents.filter((agent) => Number(agent.projectId) === args.projectId);
   const bySlot = new Map<string, ConvexAgent>();
@@ -200,6 +274,7 @@ export async function syncProjectDedicatedAgentPool(args: {
   let updated = 0;
 
   for (const role of FIXED_AGENT_ROLES) {
+    if (role === 'writer') continue;
     const count = targetByRole[role];
     for (let idx = 1; idx <= count; idx += 1) {
       const slotKey = roleSlotKey(args.projectId, role, idx);
@@ -235,6 +310,8 @@ export async function syncProjectDedicatedAgentPool(args: {
       const needsUpdate =
         existing.projectId !== args.projectId ||
         existing.isDedicated !== true ||
+        existing.laneKey !== undefined ||
+        existing.laneProfileKey !== undefined ||
         Number(existing.capacityWeight || 1) !== 1;
       if (needsUpdate || hasHealthDiff) {
         await convex.mutation(api.agents.updateRuntime, {
@@ -243,6 +320,8 @@ export async function syncProjectDedicatedAgentPool(args: {
           isDedicated: true,
           capacityWeight: 1,
           slotKey,
+          laneKey: null,
+          laneProfileKey: null,
           assignmentHealth,
         });
         updated += 1;
@@ -250,11 +329,89 @@ export async function syncProjectDedicatedAgentPool(args: {
     }
   }
 
+  for (const laneKey of AGENT_WRITER_LANES) {
+    const targetCount = targetWriterByLane[laneKey];
+    for (let idx = 1; idx <= targetCount; idx += 1) {
+      const slotKey = writerLaneSlotKey(args.projectId, laneKey, idx);
+      const existing = bySlot.get(slotKey);
+      if (!existing) {
+        await convex.mutation(api.agents.register, {
+          name: idx <= 1 ? WRITER_LANE_NAMES[laneKey] : `${WRITER_LANE_NAMES[laneKey]} ${idx}`,
+          role: 'writer',
+          specialization: `Lane writer (${laneKey})`,
+          skills: ROLE_SEED_DEFAULTS.writer.skills,
+          projectId: args.projectId,
+          isDedicated: true,
+          capacityWeight: 1,
+          slotKey,
+          laneKey,
+          laneProfileKey: `writer:${laneKey}`,
+          assignmentHealth: {
+            routable: true,
+            strictIsolation: true,
+            temporary: false,
+          },
+        });
+        created += 1;
+        continue;
+      }
+
+      const existingHealth = (existing.assignmentHealth || {}) as Record<string, unknown>;
+      const assignmentHealth = {
+        ...existingHealth,
+        routable: true,
+        strictIsolation: true,
+        temporary: existingHealth.temporary === true,
+      };
+      const needsUpdate =
+        existing.projectId !== args.projectId ||
+        existing.isDedicated !== true ||
+        existing.laneKey !== laneKey ||
+        existing.laneProfileKey !== `writer:${laneKey}` ||
+        Number(existing.capacityWeight || 1) !== 1;
+      const hasHealthDiff =
+        existingHealth.routable !== true ||
+        existingHealth.strictIsolation !== true;
+      if (needsUpdate || hasHealthDiff) {
+        await convex.mutation(api.agents.updateRuntime, {
+          id: existing._id,
+          projectId: args.projectId,
+          isDedicated: true,
+          capacityWeight: 1,
+          slotKey,
+          laneKey,
+          laneProfileKey: `writer:${laneKey}`,
+          assignmentHealth,
+        });
+        updated += 1;
+      }
+    }
+  }
+
+  const staleGenericWriters = projectAgents.filter(
+    (agent) =>
+      agent.role.toLowerCase() === 'writer' &&
+      !agent.laneKey &&
+      ((agent.assignmentHealth || {}) as Record<string, unknown>).routable !== false
+  );
+  for (const writer of staleGenericWriters) {
+    await convex.mutation(api.agents.updateRuntime, {
+      id: writer._id,
+      assignmentHealth: {
+        ...((writer.assignmentHealth || {}) as Record<string, unknown>),
+        routable: false,
+        writerLaneRequired: true,
+      },
+    });
+    updated += 1;
+  }
+
   return {
     created,
     updated,
     totalDedicated: projectAgents.filter((agent) => agent.isDedicated !== false).length + created,
     targetByRole,
+    targetWriterByLane,
   };
 }
 
@@ -296,6 +453,7 @@ export async function getProjectAgentPoolHealth(projectId: number): Promise<Proj
   const tasks = (await convex.query(api.tasks.list, { projectId, limit: 1200 })) as ConvexTask[];
   const taskMap = new Map<string, ConvexTask>(tasks.map((task) => [String(task._id), task]));
   const writers = allAgents.filter((agent) => agent.role.toLowerCase() === 'writer');
+  const now = Date.now();
 
   let staleLocks = 0;
   const writerRows = writers.map((writer) => {
@@ -329,6 +487,8 @@ export async function getProjectAgentPoolHealth(projectId: number): Promise<Proj
       status,
       lockHealth,
       currentTaskId: taskId,
+      laneKey: isAgentLaneKey(writer.laneKey) ? writer.laneKey : null,
+      isTemporary: ((writer.assignmentHealth || {}) as Record<string, unknown>).temporary === true,
     };
   });
 
@@ -347,6 +507,39 @@ export async function getProjectAgentPoolHealth(projectId: number): Promise<Proj
   const queuedWriting = tasks.filter(
     (task) => task.workflowCurrentStageKey === 'writing' && task.workflowStageStatus === 'queued'
   ).length;
+  const laneHealth = AGENT_WRITER_LANES.map((laneKey) => {
+    const laneWriters = writers.filter((writer) => writer.laneKey === laneKey);
+    const availableWriters = laneWriters.filter((writer) => {
+      const status = normalizeStatus(writer.status);
+      return status === 'ONLINE' || status === 'IDLE';
+    }).length;
+    const workingWriters = laneWriters.filter(
+      (writer) => normalizeStatus(writer.status) === 'WORKING'
+    ).length;
+    const laneQueued = tasks.filter(
+      (task) =>
+        task.workflowCurrentStageKey === 'writing' &&
+        task.workflowStageStatus === 'queued' &&
+        task.workflowLaneKey === laneKey
+    );
+    const oldestQueueAgeSec =
+      laneQueued.length > 0
+        ? Math.max(
+            ...laneQueued.map((task) => {
+              const ts = task.workflowLastEventAt || task.updatedAt || now;
+              return Math.max(0, Math.floor((now - ts) / 1000));
+            })
+          )
+        : 0;
+    return {
+      laneKey,
+      totalWriters: laneWriters.length,
+      availableWriters,
+      workingWriters,
+      queuedWriting: laneQueued.length,
+      oldestQueueAgeSec,
+    };
+  });
 
   return {
     projectId,
@@ -360,5 +553,111 @@ export async function getProjectAgentPoolHealth(projectId: number): Promise<Proj
     staleLocks,
     byRole,
     writerRows,
+    laneHealth,
   };
+}
+
+export async function autoScaleProjectWriterLanes(args: {
+  projectId: number;
+  laneCapacity: ProjectLaneCapacitySettings;
+}): Promise<{
+  scaledUp: number;
+  scaledDown: number;
+}> {
+  const convex = getConvexClient();
+  if (!convex) {
+    throw new Error('Mission Control is not configured (Convex URL missing)');
+  }
+
+  const allAgents = (await convex.query(api.agents.list, {
+    projectId: args.projectId,
+    role: 'writer',
+    limit: 1200,
+  })) as ConvexAgent[];
+  const tasks = (await convex.query(api.tasks.list, {
+    projectId: args.projectId,
+    limit: 1200,
+  })) as ConvexTask[];
+  const now = Date.now();
+  let scaledUp = 0;
+  let scaledDown = 0;
+
+  for (const laneKey of AGENT_WRITER_LANES) {
+    const laneWriters = allAgents.filter(
+      (writer) => writer.role.toLowerCase() === 'writer' && writer.laneKey === laneKey
+    );
+    const laneQueued = tasks.filter(
+      (task) =>
+        task.workflowCurrentStageKey === 'writing' &&
+        task.workflowStageStatus === 'queued' &&
+        task.workflowLaneKey === laneKey
+    );
+    const oldestQueuedTs =
+      laneQueued.length > 0
+        ? Math.min(
+            ...laneQueued.map((task) => task.workflowLastEventAt || task.updatedAt || now)
+          )
+        : null;
+    const queueAgeSec =
+      oldestQueuedTs !== null ? Math.max(0, Math.floor((now - oldestQueuedTs) / 1000)) : 0;
+    const routableCount = laneWriters.filter(
+      (writer) => ((writer.assignmentHealth || {}) as Record<string, unknown>).routable !== false
+    ).length;
+
+    if (
+      laneQueued.length > 0 &&
+      queueAgeSec >= args.laneCapacity.scaleUpQueueAgeSec &&
+      routableCount < args.laneCapacity.maxWritersPerLane
+    ) {
+      const existingAutoOrdinals = laneWriters
+        .map((writer) => String(writer.slotKey || ''))
+        .filter((slotKey) => slotKey.includes(`:writer:${laneKey}:auto:`))
+        .map((slotKey) => Number.parseInt(slotKey.split(':').pop() || '', 10))
+        .filter((n) => Number.isFinite(n));
+      const nextOrdinal = existingAutoOrdinals.length > 0 ? Math.max(...existingAutoOrdinals) + 1 : 1;
+      await convex.mutation(api.agents.register, {
+        name: `${WRITER_LANE_NAMES[laneKey]} Auto ${nextOrdinal}`,
+        role: 'writer',
+        specialization: `Auto-scaled lane writer (${laneKey})`,
+        skills: ROLE_SEED_DEFAULTS.writer.skills,
+        projectId: args.projectId,
+        isDedicated: true,
+        capacityWeight: 1,
+        laneKey,
+        laneProfileKey: `writer:${laneKey}`,
+        slotKey: writerLaneAutoSlotKey(args.projectId, laneKey, nextOrdinal),
+        assignmentHealth: {
+          routable: true,
+          strictIsolation: true,
+          temporary: true,
+        },
+      });
+      scaledUp += 1;
+      continue;
+    }
+
+    if (laneQueued.length > 0) continue;
+    if (routableCount <= args.laneCapacity.minWritersPerLane) continue;
+
+    let laneScaledDown = 0;
+    const removable = laneWriters
+      .filter((writer) => ((writer.assignmentHealth || {}) as Record<string, unknown>).temporary === true)
+      .filter((writer) => {
+        const status = normalizeStatus(writer.status);
+        return status === 'ONLINE' || status === 'IDLE' || status === 'OFFLINE';
+      })
+      .filter((writer) => !writer.currentTaskId)
+      .sort((a, b) => Number(a.updatedAt || 0) - Number(b.updatedAt || 0));
+    for (const writer of removable) {
+      if (routableCount - laneScaledDown <= args.laneCapacity.minWritersPerLane) break;
+      const idleForSec = Math.max(0, Math.floor((now - Number(writer.updatedAt || now)) / 1000));
+      if (idleForSec < args.laneCapacity.scaleDownIdleSec) continue;
+      await convex.mutation(api.agents.remove, { id: writer._id });
+      laneScaledDown += 1;
+      scaledDown += 1;
+      break;
+    }
+  }
+
+  return { scaledUp, scaledDown };
 }

@@ -16,10 +16,12 @@ import {
 } from '@/lib/agents/runtime-agent-pools';
 import type {
   AgentRoleCounts,
+  ProjectLaneCapacitySettings,
   AgentStaffingTemplate,
   ProjectBootstrapStage,
   ProjectBootstrapStageState,
 } from '@/types/agent-runtime';
+import { DEFAULT_LANE_CAPACITY_SETTINGS } from '@/types/agent-runtime';
 
 const BOOTSTRAP_STAGE_LABELS: Record<ProjectBootstrapStage, string> = {
   seeding_agents: 'Seeding Agents',
@@ -56,6 +58,52 @@ function parseAgentRoleCounts(input: unknown): AgentRoleCounts {
     out[role] = count;
   }
   return out;
+}
+
+function parseLaneCapacity(input: unknown): ProjectLaneCapacitySettings {
+  const source = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
+  const minWritersPerLane = Math.max(
+    1,
+    Math.min(
+      5,
+      Number.parseInt(
+        String(source.minWritersPerLane ?? DEFAULT_LANE_CAPACITY_SETTINGS.minWritersPerLane),
+        10
+      ) || DEFAULT_LANE_CAPACITY_SETTINGS.minWritersPerLane
+    )
+  );
+  const maxCandidate =
+    Number.parseInt(
+      String(source.maxWritersPerLane ?? DEFAULT_LANE_CAPACITY_SETTINGS.maxWritersPerLane),
+      10
+    ) || DEFAULT_LANE_CAPACITY_SETTINGS.maxWritersPerLane;
+  const maxWritersPerLane = Math.max(minWritersPerLane, Math.min(8, maxCandidate));
+  const scaleUpQueueAgeSec = Math.max(
+    30,
+    Math.min(
+      3600,
+      Number.parseInt(
+        String(source.scaleUpQueueAgeSec ?? DEFAULT_LANE_CAPACITY_SETTINGS.scaleUpQueueAgeSec),
+        10
+      ) || DEFAULT_LANE_CAPACITY_SETTINGS.scaleUpQueueAgeSec
+    )
+  );
+  const scaleDownIdleSec = Math.max(
+    300,
+    Math.min(
+      86400,
+      Number.parseInt(
+        String(source.scaleDownIdleSec ?? DEFAULT_LANE_CAPACITY_SETTINGS.scaleDownIdleSec),
+        10
+      ) || DEFAULT_LANE_CAPACITY_SETTINGS.scaleDownIdleSec
+    )
+  );
+  return {
+    minWritersPerLane,
+    maxWritersPerLane,
+    scaleUpQueueAgeSec,
+    scaleDownIdleSec,
+  };
 }
 
 export async function GET(req: NextRequest) {
@@ -151,6 +199,7 @@ export async function POST(req: NextRequest) {
       crawlFrequencyHours,
       agentStaffingTemplate,
       agentRoleCounts,
+      laneCapacity,
     } = body;
 
     if (!name) {
@@ -177,6 +226,7 @@ export async function POST(req: NextRequest) {
     const normalizedAutoGscEnabled = autoGscEnabled === false ? 0 : 1;
     const normalizedStaffingTemplate = normalizeStaffingTemplate(agentStaffingTemplate);
     const normalizedRoleCounts = parseAgentRoleCounts(agentRoleCounts);
+    const normalizedLaneCapacity = parseLaneCapacity(laneCapacity);
     const resolvedRoleCounts = buildRoleCounts(normalizedStaffingTemplate, normalizedRoleCounts);
     const normalizedCrawlFrequency = Math.max(
       1,
@@ -191,6 +241,7 @@ export async function POST(req: NextRequest) {
       staffingTemplate: normalizedStaffingTemplate,
       roleCounts: resolvedRoleCounts,
       strictIsolation: true,
+      laneCapacity: normalizedLaneCapacity,
     };
 
     const [project] = await db
@@ -306,6 +357,7 @@ export async function POST(req: NextRequest) {
         projectId: project.id,
         template: normalizedStaffingTemplate,
         roleCounts: resolvedRoleCounts,
+        laneCapacity: normalizedLaneCapacity,
       });
       await setBootstrapStage('creating_mission_control', 'done', 'Dedicated Mission Control team ready.');
 

@@ -63,6 +63,7 @@ export default defineSchema({
     workflowLastEventAt: v.optional(v.number()),
     workflowLastEventText: v.optional(v.string()),
     workflowRunNotBeforeAt: v.optional(v.number()),
+    workflowLaneKey: v.optional(v.string()),
     topicKey: v.optional(v.string()),
   })
     .index("by_status", ["status"])
@@ -98,6 +99,8 @@ export default defineSchema({
     isDedicated: v.optional(v.boolean()),
     capacityWeight: v.optional(v.number()),
     slotKey: v.optional(v.string()),
+    laneKey: v.optional(v.string()),
+    laneProfileKey: v.optional(v.string()),
     assignmentHealth: v.optional(v.any()),
     specialization: v.optional(v.string()),
     skills: v.optional(v.array(v.string())),
@@ -126,6 +129,7 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_project", ["projectId"])
     .index("by_project_role", ["projectId", "role"])
+    .index("by_project_role_lane", ["projectId", "role", "laneKey"])
     .index("by_slot", ["slotKey"]),
 
   // ── Activities ────────────────────────────────────────────────────

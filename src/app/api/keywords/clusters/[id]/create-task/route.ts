@@ -8,6 +8,7 @@ import { createTopicWorkflow } from '@/lib/topic-workflow';
 import { dbNow } from '@/db/utils';
 import { logAuditEvent, logAlertEvent } from '@/lib/observability';
 import { getSerpIntelSnapshot } from '@/lib/serp/serp-intel';
+import { resolveLaneFromContentType } from '@/lib/content-workflow-taxonomy';
 
 function parseId(value: string): number | null {
   const parsed = Number.parseInt(value, 10);
@@ -88,6 +89,11 @@ export async function POST(
       typeof body.title === 'string' && body.title.trim().length > 0
         ? body.title.trim()
         : `${mainKeyword.keyword}`;
+    const contentType =
+      typeof body.contentType === 'string' && body.contentType.trim()
+        ? body.contentType.trim()
+        : 'blog_post';
+    const laneKey = resolveLaneFromContentType(contentType);
 
     let serpWarmStatus: 'cache_hit' | 'fetched' | 'timeout' | 'failed' | 'skipped' = 'skipped';
     if (mainKeyword.keyword && mainKeyword.keyword.trim().length > 0) {
@@ -116,6 +122,8 @@ export async function POST(
       keywordId: mainKeyword.id,
       keywordClusterId: cluster.id,
       targetKeyword: mainKeyword.keyword,
+      contentType,
+      laneKey,
       options: {
         outlineReviewOptional: true,
         seoReviewRequired: true,
@@ -149,6 +157,7 @@ export async function POST(
         reused: created.reused,
         mainKeywordId: mainKeyword.id,
         secondaryKeywords,
+        laneKey,
         serpWarmStatus,
       },
     });

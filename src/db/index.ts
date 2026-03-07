@@ -245,12 +245,46 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       );
     EXCEPTION WHEN duplicate_table THEN NULL;
     END $$;
+
+    DO $$ BEGIN
+      CREATE TABLE project_agent_lane_profiles (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        role VARCHAR(60) NOT NULL,
+        lane_key VARCHAR(40) NOT NULL,
+        display_name VARCHAR(200) NOT NULL,
+        emoji VARCHAR(16),
+        avatar_url TEXT,
+        short_description TEXT,
+        mission TEXT,
+        is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        file_bundle JSONB,
+        skill_ids JSONB,
+        model_overrides JSONB,
+        heartbeat_meta JSONB,
+        created_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        updated_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    EXCEPTION WHEN duplicate_table THEN NULL;
+    END $$;
+
+    DO $$ BEGIN
+      CREATE UNIQUE INDEX project_agent_lane_profiles_unique_project_role_lane
+        ON project_agent_lane_profiles(project_id, role, lane_key);
+    EXCEPTION WHEN duplicate_table OR duplicate_object THEN NULL;
+    END $$;
   `);
 
   await sql.query(`
     ALTER TABLE project_agent_profiles
       ADD COLUMN IF NOT EXISTS avatar_url TEXT;
     ALTER TABLE project_agent_profiles
+      ADD COLUMN IF NOT EXISTS short_description TEXT;
+    ALTER TABLE project_agent_lane_profiles
+      ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+    ALTER TABLE project_agent_lane_profiles
       ADD COLUMN IF NOT EXISTS short_description TEXT;
   `);
 
@@ -1115,9 +1149,34 @@ function createDb() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS project_agent_lane_profiles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      role TEXT NOT NULL,
+      lane_key TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      emoji TEXT,
+      avatar_url TEXT,
+      short_description TEXT,
+      mission TEXT,
+      is_enabled INTEGER NOT NULL DEFAULT 1,
+      file_bundle TEXT,
+      skill_ids TEXT,
+      model_overrides TEXT,
+      heartbeat_meta TEXT,
+      created_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      updated_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS project_agent_lane_profiles_unique_project_role_lane
+      ON project_agent_lane_profiles(project_id, role, lane_key);
   `);
   addColumnSafe(sqlite, 'project_agent_profiles', 'avatar_url', 'TEXT');
   addColumnSafe(sqlite, 'project_agent_profiles', 'short_description', 'TEXT');
+  addColumnSafe(sqlite, 'project_agent_lane_profiles', 'avatar_url', 'TEXT');
+  addColumnSafe(sqlite, 'project_agent_lane_profiles', 'short_description', 'TEXT');
 
   // ── Skill Parts ──
   sqlite.exec(`
