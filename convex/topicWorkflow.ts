@@ -716,7 +716,7 @@ async function healConfiguredWriterSlotAvailability(
 
   return {
     healed: true,
-    reasonCode: "configured_writer_recovered",
+    reasonCode: "configured_writer_stale_recovered",
     diagnostics: {
       slotKey: args.slotKey,
       writerId: writer._id,
@@ -1070,6 +1070,9 @@ async function assignStageOwner(
       queueReason: null as string | null,
       configuredSlotKey: null as string | null,
       configuredAgentName: null as string | null,
+      configuredWriterStatus: null as string | null,
+      repairAttempted: false,
+      repairOutcomeCode: null as string | null,
       assignedAgentId: null as Id<"agents"> | null,
       assignedAgentName: null as string | null,
     };
@@ -1096,6 +1099,9 @@ async function assignStageOwner(
       queueReason: null as string | null,
       configuredSlotKey: null as string | null,
       configuredAgentName: null as string | null,
+      configuredWriterStatus: null as string | null,
+      repairAttempted: false,
+      repairOutcomeCode: null as string | null,
       assignedAgentId: null as Id<"agents"> | null,
       assignedAgentName: null as string | null,
     };
@@ -1110,9 +1116,13 @@ async function assignStageOwner(
     configuredOwner.configured &&
     ROUTABLE_CONFIGURED_STAGES.has(args.stageKey as RoutableStageKey);
   const effectiveLaneKey = configuredOwner.laneKey || laneKey;
+  const strictConfiguredWriterStage = strictConfiguredStage && args.stageKey === "writing";
   let assignment = await resolveStageOwnerAgent(ctx, args.stageKey, args.projectId, laneKey);
   let assignmentDiagnostics: Record<string, unknown> | undefined;
   let writerHealResult: Awaited<ReturnType<typeof healWriterAvailability>> | undefined;
+  let configuredWriterStatus: string | null = null;
+  let repairAttempted = false;
+  let repairOutcomeCode: string | null = null;
 
   if (strictConfiguredStage) {
     assignment = null;
@@ -1137,16 +1147,36 @@ async function assignStageOwner(
         laneKey: effectiveLaneKey,
         slotKey: configuredOwner.slotKey,
       });
+      if (assignment && strictConfiguredWriterStage) {
+        configuredWriterStatus = normalizeAgentStatus(assignment.agent.status);
+      }
       if (!assignment) {
-        assignmentDiagnostics.reasonCode = "configured_agent_unavailable";
-        if (args.stageKey === "writing") {
+        assignmentDiagnostics.reasonCode = strictConfiguredWriterStage
+          ? "configured_writer_unavailable_after_repair"
+          : "configured_agent_unavailable";
+        if (strictConfiguredWriterStage) {
+          repairAttempted = true;
           const slotHeal = await healConfiguredWriterSlotAvailability(ctx, {
             task: currentTask,
             slotKey: configuredOwner.slotKey,
             projectId: args.projectId,
             laneKey: effectiveLaneKey,
           });
+          repairOutcomeCode = slotHeal.reasonCode;
+          const slotHealDiagnostics =
+            slotHeal.diagnostics && typeof slotHeal.diagnostics === "object"
+              ? (slotHeal.diagnostics as Record<string, unknown>)
+              : null;
+          configuredWriterStatus =
+            typeof slotHealDiagnostics?.status === "string"
+              ? String(slotHealDiagnostics.status)
+              : typeof slotHealDiagnostics?.previousStatus === "string"
+                ? String(slotHealDiagnostics.previousStatus)
+                : configuredWriterStatus;
           assignmentDiagnostics.slotHeal = slotHeal;
+          assignmentDiagnostics.repairAttempted = true;
+          assignmentDiagnostics.repairOutcomeCode = slotHeal.reasonCode;
+          assignmentDiagnostics.configuredWriterStatus = configuredWriterStatus;
           if (slotHeal.healed) {
             assignment = await resolveConfiguredStageOwnerAgent(ctx, {
               task: currentTask,
@@ -1156,8 +1186,16 @@ async function assignStageOwner(
               slotKey: configuredOwner.slotKey,
             });
             if (assignment) {
-              assignmentDiagnostics.reasonCode = "configured_writer_recovered";
+              assignmentDiagnostics.reasonCode = "configured_writer_stale_recovered";
+              configuredWriterStatus = normalizeAgentStatus(assignment.agent.status);
+              repairOutcomeCode = "configured_writer_stale_recovered";
             }
+          }
+          if (!assignment) {
+            assignmentDiagnostics.reasonCode =
+              slotHeal.reasonCode === "configured_writer_missing"
+                ? "configured_slot_missing"
+                : "configured_writer_unavailable_after_repair";
           }
         }
       }
@@ -1210,7 +1248,9 @@ async function assignStageOwner(
     const reasonCode =
       (assignmentDiagnostics?.reasonCode as string | undefined) ||
       (strictConfiguredStage
-        ? "configured_agent_unavailable"
+        ? strictConfiguredWriterStage
+          ? "configured_writer_unavailable_after_repair"
+          : "configured_agent_unavailable"
         : args.stageKey === "writing"
           ? "writer_lane_unavailable"
           : "assignment_unavailable");
@@ -1237,6 +1277,9 @@ async function assignStageOwner(
         configuredSlotKey: configuredOwner.slotKey,
         configuredAgentName: configuredOwner.agentName,
         configuredAgentRole: configuredOwner.agentRole,
+        configuredWriterStatus,
+        repairAttempted,
+        repairOutcomeCode,
         queueReason: reasonCode,
         diagnostics: assignmentDiagnostics,
         writerHealResult,
@@ -1249,6 +1292,9 @@ async function assignStageOwner(
       queueReason: reasonCode,
       configuredSlotKey: configuredOwner.slotKey,
       configuredAgentName: configuredOwner.agentName,
+      configuredWriterStatus,
+      repairAttempted,
+      repairOutcomeCode,
       assignedAgentId: null as Id<"agents"> | null,
       assignedAgentName: null as string | null,
     };
@@ -1287,6 +1333,10 @@ async function assignStageOwner(
       configuredSlotKey: configuredOwner.slotKey,
       configuredAgentName: configuredOwner.agentName,
       configuredAgentRole: configuredOwner.agentRole,
+      configuredWriterStatus:
+        configuredWriterStatus || normalizeAgentStatus(assignment.agent.status),
+      repairAttempted,
+      repairOutcomeCode,
     },
   });
 
@@ -1296,6 +1346,10 @@ async function assignStageOwner(
     queueReason: null as string | null,
     configuredSlotKey: configuredOwner.slotKey,
     configuredAgentName: configuredOwner.agentName,
+    configuredWriterStatus:
+      configuredWriterStatus || normalizeAgentStatus(assignment.agent.status),
+    repairAttempted,
+    repairOutcomeCode,
     assignedAgentId: assignment.agent._id,
     assignedAgentName: assignment.agent.name,
     requestedRole: assignment.requestedRole,
@@ -1579,6 +1633,15 @@ export const ensureStageOwner = mutation({
       queueReason: assignment?.queueReason ?? null,
       configuredSlotKey: assignment?.configuredSlotKey ?? null,
       configuredAgentName: assignment?.configuredAgentName ?? null,
+      configuredWriterStatus:
+        typeof assignment?.configuredWriterStatus === "string"
+          ? assignment.configuredWriterStatus
+          : null,
+      repairAttempted: Boolean(assignment?.repairAttempted),
+      repairOutcomeCode:
+        typeof assignment?.repairOutcomeCode === "string"
+          ? assignment.repairOutcomeCode
+          : null,
       assignedAgentId: assignment?.assignedAgentId ?? null,
       assignedAgentName: assignment?.assignedAgentName ?? null,
     };

@@ -10,7 +10,10 @@ import {
   syncProjectDedicatedAgentPool,
 } from '@/lib/agents/runtime-agent-pools';
 import { seedProjectAgentLaneProfiles } from '@/lib/agents/project-agent-profiles';
-import { backfillProjectTaskStagePlans } from '@/lib/workflow/stage-routing';
+import {
+  backfillProjectTaskStagePlans,
+  repairProjectWriterRoutes,
+} from '@/lib/workflow/stage-routing';
 import { getConvexClient } from '@/lib/convex/server';
 
 export async function POST(_req: NextRequest) {
@@ -35,6 +38,10 @@ export async function POST(_req: NextRequest) {
     stagePlanBackfilled?: number;
     stagePlanScanned?: number;
     stagePlanSkipped?: number;
+    writerRoutesHealthy?: number;
+    writerRoutesPatched?: number;
+    writerSlotsSeeded?: number;
+    staleWriterLocksRecovered?: number;
   }> = [];
 
   const convex = getConvexClient();
@@ -55,6 +62,11 @@ export async function POST(_req: NextRequest) {
       projectId: row.id,
       userId: auth.user.id,
     });
+    const repairedRoutes = await repairProjectWriterRoutes({
+      projectId: row.id,
+      userId: auth.user.id,
+      canonicalizeInvalidBlog: true,
+    });
     results.push({
       projectId: row.id,
       template: runtime.staffingTemplate,
@@ -65,6 +77,10 @@ export async function POST(_req: NextRequest) {
       stagePlanBackfilled: stagePlanBackfill.updated,
       stagePlanScanned: stagePlanBackfill.scanned,
       stagePlanSkipped: stagePlanBackfill.skipped,
+      writerRoutesHealthy: repairedRoutes.routesHealthy,
+      writerRoutesPatched: repairedRoutes.routesPatched,
+      writerSlotsSeeded: repairedRoutes.writersSeeded,
+      staleWriterLocksRecovered: repairedRoutes.staleLocksRecovered,
     });
   }
 

@@ -2468,6 +2468,9 @@ export async function runTopicWorkflow(
       queueReason?: string | null;
       configuredSlotKey?: string | null;
       configuredAgentName?: string | null;
+      configuredWriterStatus?: string | null;
+      repairAttempted?: boolean;
+      repairOutcomeCode?: string | null;
       assignedAgentId?: Id<'agents'> | null;
       assignedAgentName?: string | null;
     };
@@ -2510,11 +2513,15 @@ export async function runTopicWorkflow(
         payload: {
           status: 'queued',
           reason: ensuredOwnerResult.queueReason || 'configured_agent_unavailable',
+          reasonCode: ensuredOwnerResult.queueReason || 'configured_agent_unavailable',
           stage,
           laneKey: stageProfileContext.laneKey ?? null,
           ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
           configuredSlotKey: ensuredOwnerResult.configuredSlotKey ?? null,
           configuredAgentName: ensuredOwnerResult.configuredAgentName ?? null,
+          configuredWriterStatus: ensuredOwnerResult.configuredWriterStatus ?? null,
+          repairAttempted: Boolean(ensuredOwnerResult.repairAttempted),
+          repairOutcomeCode: ensuredOwnerResult.repairOutcomeCode ?? null,
           writerAvailability,
           roleProfile: {
             role: stageProfileContext.role,

@@ -18,6 +18,7 @@ import {
   autoScaleProjectWriterLanes,
   parseProjectRuntimeSettings,
 } from '@/lib/agents/runtime-agent-pools';
+import { repairProjectWriterRoutes } from '@/lib/workflow/stage-routing';
 import type { TopicStageKey } from '@/lib/content-workflow-taxonomy';
 import {
   getDefaultWorkflowOpsSettings,
@@ -408,6 +409,43 @@ async function executeAutoResume(req: NextRequest) {
       existing.push(task);
       queuedByProject.set(task.projectId, existing);
     }
+    const writerRouteRepairs: Record<
+      number,
+      {
+        routesHealthy: number;
+        routesPatched: number;
+        writersSeeded: number;
+        staleLocksRecovered: number;
+      }
+    > = {};
+    for (const [projectId, queued] of queuedByProject.entries()) {
+      if (queued.length === 0) continue;
+      try {
+        const repair = await repairProjectWriterRoutes({
+          projectId,
+          userId: actorUser.id,
+          canonicalizeInvalidBlog: true,
+        });
+        writerRouteRepairs[projectId] = {
+          routesHealthy: repair.routesHealthy,
+          routesPatched: repair.routesPatched,
+          writersSeeded: repair.writersSeeded,
+          staleLocksRecovered: repair.staleLocksRecovered,
+        };
+      } catch (error) {
+        await logAlertEvent({
+          source: 'topic_workflow',
+          eventType: 'writer_route_repair_failed',
+          severity: 'warning',
+          projectId,
+          message: `Failed to repair writer routes before auto-resume for ${queued.length} queued writing task(s).`,
+          metadata: {
+            queuedWriting: queued.length,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          },
+        });
+      }
+    }
     for (const [projectId, queued] of queuedByProject.entries()) {
       const writers = await convex.query(api.agents.list, {
         projectId,
@@ -516,6 +554,7 @@ async function executeAutoResume(req: NextRequest) {
         scaledUpWriters,
         scaledDownWriters,
         laneScalingByProject: Object.fromEntries(laneScalingByProject.entries()),
+        writerRouteRepairs,
         failures,
         projectSettings: Object.fromEntries(
           Array.from(settingsByProject.entries()).map(([projectId, settings]) => [
@@ -543,6 +582,7 @@ async function executeAutoResume(req: NextRequest) {
       watchdogBlocked,
       scaledUpWriters,
       scaledDownWriters,
+      writerRouteRepairs,
       failures,
     });
   } catch (error) {

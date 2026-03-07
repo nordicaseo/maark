@@ -3,9 +3,13 @@ import { api } from '../../../convex/_generated/api';
 import type { Id } from '../../../convex/_generated/dataModel';
 import { db, ensureDb } from '@/db';
 import { dbNow } from '@/db/utils';
-import { projectWorkflowStageRoutes } from '@/db/schema';
+import { projectWorkflowStageRoutes, projects } from '@/db/schema';
 import { getConvexClient } from '@/lib/convex/server';
 import { resolveLaneFromContentType } from '@/lib/content-workflow-taxonomy';
+import {
+  parseProjectRuntimeSettings,
+  syncProjectDedicatedAgentPool,
+} from '@/lib/agents/runtime-agent-pools';
 import type { AgentLaneKey } from '@/types/agent-runtime';
 import type { ContentFormat } from '@/types/document';
 import { CONTENT_FORMAT_LABELS } from '@/types/document';
@@ -27,6 +31,71 @@ const SUPPORTED_CONTENT_FORMATS: ContentFormat[] = [
   'comparison',
   'news_article',
 ];
+
+const BLOG_CONTENT_FORMATS = new Set<ContentFormat>([
+  'blog_post',
+  'blog_listicle',
+  'blog_buying_guide',
+  'blog_how_to',
+  'blog_review',
+]);
+
+const DEFAULT_WRITER_LOCK_TIMEOUT_MS = 25 * 60 * 1000;
+
+type RuntimeAgent = {
+  _id: Id<'agents'>;
+  name: string;
+  role: string;
+  status: string;
+  projectId?: number;
+  isDedicated?: boolean;
+  laneKey?: string;
+  slotKey?: string;
+  assignmentHealth?: unknown;
+  currentTaskId?: Id<'tasks'>;
+};
+
+type RuntimeTask = {
+  _id: Id<'tasks'>;
+  status: string;
+  workflowCurrentStageKey?: string;
+  workflowStageStatus?: string;
+  workflowLastEventAt?: number;
+  workflowUpdatedAt?: number;
+  updatedAt?: number;
+  workflowContentFormat?: string;
+};
+
+export type WritingSlotValidationCode =
+  | 'ok'
+  | 'invalid_slot'
+  | 'wrong_role'
+  | 'wrong_lane'
+  | 'slot_not_found';
+
+export interface WritingSlotValidationResult {
+  ok: boolean;
+  code: WritingSlotValidationCode;
+  slotKey: string;
+  laneKey: AgentLaneKey;
+  message: string;
+  agentId?: string | null;
+  agentName?: string | null;
+  writerStatus?: string | null;
+  staleLock?: boolean;
+  dedicated?: boolean;
+  routable?: boolean;
+}
+
+export interface WorkflowRouteHealthRow {
+  contentFormat: ContentFormat;
+  writingSlotKey: string;
+  exists: boolean;
+  writerStatus: string | null;
+  staleLock: boolean;
+  queueImpactCount: number;
+  validationCode: WritingSlotValidationCode;
+}
 
 type RouteRow = {
   id: number;
@@ -65,6 +134,52 @@ function normalizeLaneKey(value: unknown): AgentLaneKey {
     return value;
   }
   return 'blog';
+}
+
+function resolveWriterLockTimeoutMs(): number {
+  const parsed = Number.parseFloat(
+    String(process.env.WORKFLOW_WRITER_LOCK_TIMEOUT_MINUTES ?? '')
+  );
+  if (!Number.isFinite(parsed)) return DEFAULT_WRITER_LOCK_TIMEOUT_MS;
+  return Math.max(5, parsed) * 60 * 1000;
+}
+
+function normalizeAgentStatus(status: string | null | undefined): 'ONLINE' | 'IDLE' | 'WORKING' | 'OFFLINE' {
+  const normalized = String(status || '')
+    .trim()
+    .toUpperCase();
+  if (normalized === 'ONLINE') return 'ONLINE';
+  if (normalized === 'IDLE') return 'IDLE';
+  if (normalized === 'WORKING') return 'WORKING';
+  return 'OFFLINE';
+}
+
+function writerNameForLane(laneKey: AgentLaneKey, ordinal = 1): string {
+  const base =
+    laneKey === 'blog'
+      ? 'Atlas Blog'
+      : laneKey === 'collection'
+        ? 'Atlas Collection'
+        : laneKey === 'product'
+          ? 'Atlas Product'
+          : 'Atlas Landing';
+  return ordinal <= 1 ? base : `${base} ${ordinal}`;
+}
+
+function parseWriterSlotKey(slotKey: string): { projectId: number; laneKey: AgentLaneKey; ordinal: number } | null {
+  const match = /^p(\d+):writer:(blog|collection|product|landing):(\d+)$/.exec(slotKey.trim());
+  if (!match) return null;
+  return {
+    projectId: Number.parseInt(match[1], 10),
+    laneKey: normalizeLaneKey(match[2]),
+    ordinal: Number.parseInt(match[3], 10),
+  };
+}
+
+function isRoutable(assignmentHealth: unknown): boolean {
+  if (!assignmentHealth || typeof assignmentHealth !== 'object') return true;
+  const record = assignmentHealth as Record<string, unknown>;
+  return record.routable !== false;
 }
 
 function defaultStageSlots(projectId: number, laneKey: AgentLaneKey): Record<RoutableWorkflowStage, string> {
@@ -354,6 +469,447 @@ export async function upsertProjectWorkflowStageRoute(
   const updated = await getProjectWorkflowStageRoute(input.projectId, input.contentFormat);
   if (!updated) throw new Error('Failed to update workflow stage route.');
   return updated;
+}
+
+async function getProjectRuntimeAgents(projectId: number): Promise<RuntimeAgent[]> {
+  const convex = getConvexClient();
+  if (!convex) {
+    throw new Error('Mission Control is not configured (Convex URL missing)');
+  }
+  const rows = (await convex.query(api.agents.list, {
+    projectId,
+    limit: 2000,
+  })) as RuntimeAgent[];
+  return rows;
+}
+
+async function getRuntimeTaskById(
+  taskId: Id<'tasks'>,
+  projectId: number
+): Promise<RuntimeTask | null> {
+  const convex = getConvexClient();
+  if (!convex) return null;
+  return (await convex.query(api.tasks.get, {
+    id: taskId,
+    projectId,
+  })) as RuntimeTask | null;
+}
+
+async function detectStaleWriterLock(
+  agent: RuntimeAgent,
+  projectId: number
+): Promise<boolean> {
+  const status = normalizeAgentStatus(agent.status);
+  if (status !== 'WORKING') return false;
+  if (!agent.currentTaskId) return true;
+  const task = await getRuntimeTaskById(agent.currentTaskId, projectId);
+  if (!task) return true;
+
+  const stage = String(task.workflowCurrentStageKey || '').toLowerCase();
+  const stageStatus = String(task.workflowStageStatus || '').toLowerCase();
+  if (task.status !== 'IN_PROGRESS') return true;
+  if (stage !== 'writing') return true;
+  if (stageStatus !== 'in_progress') return true;
+
+  const now = Date.now();
+  const lockTimeoutMs = resolveWriterLockTimeoutMs();
+  const lastTouch =
+    task.workflowLastEventAt || task.workflowUpdatedAt || task.updatedAt || 0;
+  if (lastTouch > 0 && now - lastTouch > lockTimeoutMs) {
+    return true;
+  }
+  return false;
+}
+
+export async function validateConfiguredWritingSlot(args: {
+  projectId: number;
+  laneKey: AgentLaneKey;
+  slotKey: string;
+  runtimeAgents?: RuntimeAgent[];
+}): Promise<WritingSlotValidationResult> {
+  const normalizedSlot = String(args.slotKey || '').trim();
+  if (!normalizedSlot) {
+    return {
+      ok: false,
+      code: 'invalid_slot',
+      slotKey: normalizedSlot,
+      laneKey: args.laneKey,
+      message: 'Writing slot is empty.',
+    };
+  }
+
+  const agents = args.runtimeAgents ?? (await getProjectRuntimeAgents(args.projectId));
+  const agent = agents.find((row) => String(row.slotKey || '').trim() === normalizedSlot);
+  if (!agent) {
+    const parsedSlot = parseWriterSlotKey(normalizedSlot);
+    if (!parsedSlot) {
+      return {
+        ok: false,
+        code: 'invalid_slot',
+        slotKey: normalizedSlot,
+        laneKey: args.laneKey,
+        message: 'Configured writing slot key format is invalid.',
+      };
+    }
+    if (parsedSlot.projectId !== args.projectId) {
+      return {
+        ok: false,
+        code: 'invalid_slot',
+        slotKey: normalizedSlot,
+        laneKey: args.laneKey,
+        message: 'Configured writing slot belongs to a different project.',
+      };
+    }
+    if (parsedSlot.laneKey !== args.laneKey) {
+      return {
+        ok: false,
+        code: 'wrong_lane',
+        slotKey: normalizedSlot,
+        laneKey: args.laneKey,
+        message: `Configured writing slot lane mismatch. Expected ${args.laneKey}, got ${parsedSlot.laneKey}.`,
+      };
+    }
+    return {
+      ok: false,
+      code: 'slot_not_found',
+      slotKey: normalizedSlot,
+      laneKey: args.laneKey,
+      message: 'Configured writing slot does not exist in runtime agents.',
+    };
+  }
+
+  if (String(agent.role || '').toLowerCase() !== 'writer') {
+    return {
+      ok: false,
+      code: 'wrong_role',
+      slotKey: normalizedSlot,
+      laneKey: args.laneKey,
+      message: 'Configured slot points to a non-writer agent.',
+      agentId: String(agent._id),
+      agentName: agent.name,
+      writerStatus: normalizeAgentStatus(agent.status),
+    };
+  }
+
+  const agentLane = normalizeLaneKey(agent.laneKey);
+  if (agentLane !== args.laneKey) {
+    return {
+      ok: false,
+      code: 'wrong_lane',
+      slotKey: normalizedSlot,
+      laneKey: args.laneKey,
+      message: `Configured writer lane mismatch. Expected ${args.laneKey}, got ${agentLane}.`,
+      agentId: String(agent._id),
+      agentName: agent.name,
+      writerStatus: normalizeAgentStatus(agent.status),
+    };
+  }
+
+  const dedicated = agent.isDedicated !== false;
+  const routable = isRoutable(agent.assignmentHealth);
+  if (!dedicated || !routable) {
+    return {
+      ok: false,
+      code: 'invalid_slot',
+      slotKey: normalizedSlot,
+      laneKey: args.laneKey,
+      message: 'Configured writer slot is not routable/dedicated.',
+      agentId: String(agent._id),
+      agentName: agent.name,
+      writerStatus: normalizeAgentStatus(agent.status),
+      dedicated,
+      routable,
+    };
+  }
+
+  const staleLock = await detectStaleWriterLock(agent, args.projectId);
+  return {
+    ok: true,
+    code: 'ok',
+    slotKey: normalizedSlot,
+    laneKey: args.laneKey,
+    message: staleLock
+      ? 'Configured writing slot is valid but has a stale lock.'
+      : 'Configured writing slot is valid.',
+    agentId: String(agent._id),
+    agentName: agent.name,
+    writerStatus: normalizeAgentStatus(agent.status),
+    staleLock,
+    dedicated,
+    routable,
+  };
+}
+
+async function ensureWriterAgentAtSlot(args: {
+  projectId: number;
+  laneKey: AgentLaneKey;
+  slotKey: string;
+  runtimeAgents: RuntimeAgent[];
+}): Promise<{ created: boolean; outcomeCode: string }> {
+  const convex = getConvexClient();
+  if (!convex) {
+    throw new Error('Mission Control is not configured (Convex URL missing)');
+  }
+
+  const existing = args.runtimeAgents.find(
+    (agent) => String(agent.slotKey || '').trim() === args.slotKey
+  );
+  if (existing) return { created: false, outcomeCode: 'slot_exists' };
+
+  const parsed = parseWriterSlotKey(args.slotKey);
+  if (!parsed || parsed.projectId !== args.projectId || parsed.laneKey !== args.laneKey) {
+    return { created: false, outcomeCode: 'invalid_slot' };
+  }
+
+  await convex.mutation(api.agents.register, {
+    name: writerNameForLane(args.laneKey, parsed.ordinal),
+    role: 'writer',
+    specialization: `Lane writer (${args.laneKey})`,
+    skills: ['SEO writing', 'keyword research', 'content structure', 'blog posts'],
+    projectId: args.projectId,
+    isDedicated: true,
+    capacityWeight: 1,
+    slotKey: args.slotKey,
+    laneKey: args.laneKey,
+    laneProfileKey: `writer:${args.laneKey}`,
+    assignmentHealth: {
+      routable: true,
+      strictIsolation: true,
+      temporary: false,
+    },
+  });
+
+  return { created: true, outcomeCode: 'configured_writer_seeded' };
+}
+
+async function normalizeWriterAvailability(args: {
+  projectId: number;
+  slotKey: string;
+  runtimeAgents: RuntimeAgent[];
+}): Promise<{ repaired: boolean; outcomeCode: string; writerStatus: string | null }> {
+  const convex = getConvexClient();
+  if (!convex) {
+    throw new Error('Mission Control is not configured (Convex URL missing)');
+  }
+
+  const writer = args.runtimeAgents.find(
+    (agent) => String(agent.slotKey || '').trim() === args.slotKey
+  );
+  if (!writer) {
+    return { repaired: false, outcomeCode: 'slot_not_found', writerStatus: null };
+  }
+
+  const status = normalizeAgentStatus(writer.status);
+  if (status === 'OFFLINE') {
+    await convex.mutation(api.agents.updateStatus, {
+      id: writer._id,
+      status: 'IDLE',
+    });
+    return {
+      repaired: true,
+      outcomeCode: 'configured_writer_stale_recovered',
+      writerStatus: 'IDLE',
+    };
+  }
+
+  const staleLock = await detectStaleWriterLock(writer, args.projectId);
+  if (staleLock) {
+    await convex.mutation(api.agents.updateStatus, {
+      id: writer._id,
+      status: 'IDLE',
+    });
+    return {
+      repaired: true,
+      outcomeCode: 'configured_writer_stale_recovered',
+      writerStatus: 'IDLE',
+    };
+  }
+
+  return { repaired: false, outcomeCode: 'healthy', writerStatus: status };
+}
+
+export async function getProjectWorkflowRouteHealth(
+  projectId: number
+): Promise<WorkflowRouteHealthRow[]> {
+  const routes = await listProjectWorkflowStageRoutes(projectId);
+  const convex = getConvexClient();
+  if (!convex) return [];
+  const runtimeAgents = await getProjectRuntimeAgents(projectId);
+  const tasks = (await convex.query(api.tasks.list, {
+    projectId,
+    limit: 1200,
+  })) as RuntimeTask[];
+
+  const queueImpactByFormat = new Map<ContentFormat, number>();
+  for (const task of tasks) {
+    if (String(task.workflowCurrentStageKey || '') !== 'writing') continue;
+    if (String(task.workflowStageStatus || '') !== 'queued') continue;
+    const format = task.workflowContentFormat as ContentFormat | undefined;
+    if (!format) continue;
+    queueImpactByFormat.set(format, (queueImpactByFormat.get(format) || 0) + 1);
+  }
+
+  const out: WorkflowRouteHealthRow[] = [];
+  for (const route of routes) {
+    const validation = await validateConfiguredWritingSlot({
+      projectId,
+      laneKey: route.laneKey,
+      slotKey: route.stageSlots.writing || '',
+      runtimeAgents,
+    });
+    out.push({
+      contentFormat: route.contentFormat,
+      writingSlotKey: route.stageSlots.writing || '',
+      exists:
+        validation.ok ||
+        validation.code === 'wrong_role' ||
+        validation.code === 'wrong_lane',
+      writerStatus: validation.writerStatus || null,
+      staleLock: Boolean(validation.staleLock),
+      queueImpactCount: queueImpactByFormat.get(route.contentFormat) || 0,
+      validationCode: validation.code,
+    });
+  }
+  return out;
+}
+
+export async function repairProjectWriterRoutes(args: {
+  projectId: number;
+  userId?: string | null;
+  canonicalizeInvalidBlog?: boolean;
+}): Promise<{
+  routesScanned: number;
+  routesPatched: number;
+  routesHealthy: number;
+  writersSeeded: number;
+  staleLocksRecovered: number;
+  results: Array<{
+    contentFormat: ContentFormat;
+    writingSlotKey: string;
+    validationCode: WritingSlotValidationCode;
+    patchedToCanonical: boolean;
+    repairOutcomeCode: string;
+  }>;
+}> {
+  await ensureDb();
+  const [project] = await db
+    .select({ settings: projects.settings })
+    .from(projects)
+    .where(eq(projects.id, args.projectId))
+    .limit(1);
+  if (!project) {
+    throw new Error('Project not found.');
+  }
+
+  const runtime = parseProjectRuntimeSettings(project.settings);
+  await syncProjectDedicatedAgentPool({
+    projectId: args.projectId,
+    template: runtime.staffingTemplate,
+    roleCounts: runtime.roleCounts,
+    laneCapacity: runtime.laneCapacity,
+  });
+
+  const routes = await listProjectWorkflowStageRoutes(args.projectId);
+  let routesPatched = 0;
+  let routesHealthy = 0;
+  let writersSeeded = 0;
+  let staleLocksRecovered = 0;
+  const results: Array<{
+    contentFormat: ContentFormat;
+    writingSlotKey: string;
+    validationCode: WritingSlotValidationCode;
+    patchedToCanonical: boolean;
+    repairOutcomeCode: string;
+  }> = [];
+
+  for (const route of routes) {
+    const writingSlot = route.stageSlots.writing || '';
+    let effectiveLane: AgentLaneKey = route.laneKey;
+    let runtimeAgents = await getProjectRuntimeAgents(args.projectId);
+    let validation = await validateConfiguredWritingSlot({
+      projectId: args.projectId,
+      laneKey: effectiveLane,
+      slotKey: writingSlot,
+      runtimeAgents,
+    });
+
+    let patchedToCanonical = false;
+    let repairOutcomeCode = validation.code === 'ok' ? 'healthy' : validation.code;
+    let effectiveSlot = writingSlot;
+
+    if (!validation.ok && BLOG_CONTENT_FORMATS.has(route.contentFormat) && args.canonicalizeInvalidBlog !== false) {
+      const canonicalBlogSlot = `p${args.projectId}:writer:blog:1`;
+      const updatedSlots = { ...route.stageSlots, writing: canonicalBlogSlot };
+      await upsertProjectWorkflowStageRoute({
+        projectId: args.projectId,
+        contentFormat: route.contentFormat,
+        laneKey: 'blog',
+        stageSlots: updatedSlots,
+        stageEnabled: route.stageEnabled,
+        userId: args.userId ?? null,
+      });
+      patchedToCanonical = true;
+      routesPatched += 1;
+      effectiveSlot = canonicalBlogSlot;
+      effectiveLane = 'blog';
+      runtimeAgents = await getProjectRuntimeAgents(args.projectId);
+      validation = await validateConfiguredWritingSlot({
+        projectId: args.projectId,
+        laneKey: effectiveLane,
+        slotKey: canonicalBlogSlot,
+        runtimeAgents,
+      });
+      repairOutcomeCode = `patched:${repairOutcomeCode}`;
+    }
+
+    if (validation.code === 'slot_not_found') {
+      const seeded = await ensureWriterAgentAtSlot({
+        projectId: args.projectId,
+        laneKey: effectiveLane,
+        slotKey: effectiveSlot,
+        runtimeAgents,
+      });
+      if (seeded.created) writersSeeded += 1;
+      repairOutcomeCode = seeded.outcomeCode;
+      runtimeAgents = await getProjectRuntimeAgents(args.projectId);
+      validation = await validateConfiguredWritingSlot({
+        projectId: args.projectId,
+        laneKey: effectiveLane,
+        slotKey: effectiveSlot,
+        runtimeAgents,
+      });
+    }
+
+    if (validation.ok) {
+      const normalized = await normalizeWriterAvailability({
+        projectId: args.projectId,
+        slotKey: effectiveSlot,
+        runtimeAgents,
+      });
+      if (normalized.repaired) {
+        staleLocksRecovered += 1;
+        repairOutcomeCode = normalized.outcomeCode;
+      }
+      routesHealthy += 1;
+    }
+
+    results.push({
+      contentFormat: route.contentFormat,
+      writingSlotKey: effectiveSlot,
+      validationCode: validation.code,
+      patchedToCanonical,
+      repairOutcomeCode,
+    });
+  }
+
+  return {
+    routesScanned: routes.length,
+    routesPatched,
+    routesHealthy,
+    writersSeeded,
+    staleLocksRecovered,
+    results,
+  };
 }
 
 export async function resolveWorkflowStagePlanSnapshot(args: {

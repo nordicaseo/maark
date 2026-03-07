@@ -93,6 +93,11 @@ interface WorkflowEvent {
     status?: string;
     reason?: string;
     reasonCode?: string;
+    configuredSlotKey?: string;
+    configuredAgentName?: string;
+    configuredWriterStatus?: string;
+    repairAttempted?: boolean;
+    repairOutcomeCode?: string;
     outlineGap?: {
       expectedHeadings?: number;
       coveredHeadings?: number;
@@ -105,6 +110,12 @@ interface WorkflowEvent {
       wordGap?: number;
       abruptEnding?: boolean;
       continuationAttempts?: number;
+      configuredSlotKey?: string;
+      configuredAgentName?: string;
+      configuredWriterStatus?: string;
+      repairAttempted?: boolean;
+      repairOutcomeCode?: string;
+      [key: string]: unknown;
     };
     meta?: {
       stageRole?: string;
@@ -124,6 +135,7 @@ interface WorkflowEvent {
       url?: string;
       type?: string;
     };
+    [key: string]: unknown;
   };
   createdAt: number;
 }
@@ -784,6 +796,59 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
       event.payload?.status === 'queued' ||
       event.eventType === 'assignment_queued'
   );
+  const queuedDiagnostics =
+    latestQueuedEvent?.payload?.diagnostics &&
+    typeof latestQueuedEvent.payload.diagnostics === 'object'
+      ? (latestQueuedEvent.payload.diagnostics as Record<string, unknown>)
+      : null;
+  const queuedConfiguredSlot =
+    (typeof latestQueuedEvent?.payload?.configuredSlotKey === 'string' &&
+    latestQueuedEvent.payload.configuredSlotKey.trim().length > 0
+      ? latestQueuedEvent.payload.configuredSlotKey
+      : null) ||
+    (typeof queuedDiagnostics?.configuredSlotKey === 'string' &&
+    queuedDiagnostics.configuredSlotKey.trim().length > 0
+      ? queuedDiagnostics.configuredSlotKey
+      : null);
+  const queuedConfiguredWriter =
+    (typeof latestQueuedEvent?.payload?.configuredAgentName === 'string' &&
+    latestQueuedEvent.payload.configuredAgentName.trim().length > 0
+      ? latestQueuedEvent.payload.configuredAgentName
+      : null) ||
+    (typeof queuedDiagnostics?.configuredAgentName === 'string' &&
+    queuedDiagnostics.configuredAgentName.trim().length > 0
+      ? queuedDiagnostics.configuredAgentName
+      : null);
+  const queuedWriterStatus =
+    (typeof latestQueuedEvent?.payload?.configuredWriterStatus === 'string' &&
+    latestQueuedEvent.payload.configuredWriterStatus.trim().length > 0
+      ? latestQueuedEvent.payload.configuredWriterStatus
+      : null) ||
+    (typeof queuedDiagnostics?.configuredWriterStatus === 'string' &&
+    queuedDiagnostics.configuredWriterStatus.trim().length > 0
+      ? queuedDiagnostics.configuredWriterStatus
+      : null);
+  const queuedRepairAttempted =
+    latestQueuedEvent?.payload?.repairAttempted === true ||
+    queuedDiagnostics?.repairAttempted === true;
+  const queuedRepairOutcome =
+    (typeof latestQueuedEvent?.payload?.repairOutcomeCode === 'string' &&
+    latestQueuedEvent.payload.repairOutcomeCode.trim().length > 0
+      ? latestQueuedEvent.payload.repairOutcomeCode
+      : null) ||
+    (typeof queuedDiagnostics?.repairOutcomeCode === 'string' &&
+    queuedDiagnostics.repairOutcomeCode.trim().length > 0
+      ? queuedDiagnostics.repairOutcomeCode
+      : null);
+  const queuedReasonCode =
+    (typeof latestQueuedEvent?.payload?.reasonCode === 'string' &&
+    latestQueuedEvent.payload.reasonCode.trim().length > 0
+      ? latestQueuedEvent.payload.reasonCode
+      : null) ||
+    (typeof latestQueuedEvent?.payload?.reason === 'string' &&
+    latestQueuedEvent.payload.reason.trim().length > 0
+      ? latestQueuedEvent.payload.reason
+      : null);
   const showStartAgent = isTopicWorkflow
     ? false
     : (task.status === 'BACKLOG' || task.status === 'PENDING' || !task.documentId);
@@ -994,6 +1059,27 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
                   {workflowStage === 'writing' ? 'Writer queue' : 'Stage queue'}
                 </p>
                 <p>{latestQueuedEvent?.summary || task.workflowLastEventText || 'Waiting for configured owner availability.'}</p>
+                {queuedReasonCode && (
+                  <p className="text-[11px]">
+                    Reason: {queuedReasonCode}
+                  </p>
+                )}
+                {queuedConfiguredSlot && (
+                  <p className="text-[11px]">
+                    Configured slot: {queuedConfiguredSlot}
+                  </p>
+                )}
+                {queuedConfiguredWriter && (
+                  <p className="text-[11px]">
+                    Configured writer: {queuedConfiguredWriter}
+                    {queuedWriterStatus ? ` (${queuedWriterStatus})` : ''}
+                  </p>
+                )}
+                {queuedRepairAttempted && (
+                  <p className="text-[11px]">
+                    Last repair attempt: {queuedRepairOutcome || 'attempted'}
+                  </p>
+                )}
                 <p className="text-[11px]">
                   This task will resume automatically when the configured owner is available.
                 </p>

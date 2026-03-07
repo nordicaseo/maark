@@ -5,12 +5,18 @@ import { userCanAccessProject } from '@/lib/access';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import {
   backfillProjectTaskStagePlans,
+  getProjectWorkflowRouteHealth,
+  getProjectWorkflowStageRoute,
   listProjectWorkflowStageRoutes,
+  repairProjectWriterRoutes,
   seedProjectWorkflowStageRoutes,
   upsertProjectWorkflowStageRoute,
+  validateConfiguredWritingSlot,
 } from '@/lib/workflow/stage-routing';
-import { syncProjectDedicatedAgentPool } from '@/lib/agents/runtime-agent-pools';
-import { parseProjectRuntimeSettings } from '@/lib/agents/runtime-agent-pools';
+import {
+  parseProjectRuntimeSettings,
+  syncProjectDedicatedAgentPool,
+} from '@/lib/agents/runtime-agent-pools';
 import { getConvexClient } from '@/lib/convex/server';
 import { db, ensureDb } from '@/db';
 import { projects } from '@/db/schema';
@@ -29,6 +35,10 @@ function parseProjectId(value: unknown): number | null {
 
 function isContentFormat(value: unknown): value is ContentFormat {
   return typeof value === 'string' && Object.prototype.hasOwnProperty.call(CONTENT_FORMAT_LABELS, value);
+}
+
+function isBlogFormat(contentFormat: ContentFormat): boolean {
+  return contentFormat.startsWith('blog_');
 }
 
 function isLaneKey(value: unknown): value is AgentLaneKey {
@@ -114,6 +124,7 @@ export async function GET(req: NextRequest) {
       seededFormats: seeded.seededFormats,
       routes: filtered,
       runtimeAgents,
+      routeHealth: await getProjectWorkflowRouteHealth(projectId),
     });
   } catch (error) {
     await logAlertEvent({
@@ -145,10 +156,58 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid contentFormat' }, { status: 400 });
     }
 
+    const contentFormat = body.contentFormat as ContentFormat;
+    const existingRoute = await getProjectWorkflowStageRoute(projectId, contentFormat);
+    const nextLaneKey = isLaneKey(body.laneKey)
+      ? body.laneKey
+      : (existingRoute?.laneKey ?? 'blog');
+    if (isBlogFormat(contentFormat) && nextLaneKey !== 'blog') {
+      return NextResponse.json(
+        {
+          error: 'Blog formats require a blog writer lane.',
+          code: 'wrong_lane',
+          details: {
+            laneKey: nextLaneKey,
+            expectedLane: 'blog',
+            contentFormat,
+          },
+        },
+        { status: 400 }
+      );
+    }
+    const nextStageSlots = {
+      ...(existingRoute?.stageSlots || {}),
+      ...(sanitizeStageSlots(body.stageSlots) || {}),
+    } as Partial<Record<RoutableWorkflowStage, string>>;
+    const writingSlotKey = String(nextStageSlots.writing || '').trim();
+    const writingValidation = await validateConfiguredWritingSlot({
+      projectId,
+      laneKey: isBlogFormat(contentFormat) ? 'blog' : nextLaneKey,
+      slotKey: writingSlotKey,
+    });
+    if (!writingValidation.ok) {
+      return NextResponse.json(
+        {
+          error: writingValidation.message,
+          code: writingValidation.code,
+          details: {
+            slotKey: writingValidation.slotKey,
+            laneKey: writingValidation.laneKey,
+            agentId: writingValidation.agentId ?? null,
+            agentName: writingValidation.agentName ?? null,
+            writerStatus: writingValidation.writerStatus ?? null,
+            dedicated: writingValidation.dedicated ?? null,
+            routable: writingValidation.routable ?? null,
+          },
+        },
+        { status: 400 }
+      );
+    }
+
     const route = await upsertProjectWorkflowStageRoute({
       projectId,
-      contentFormat: body.contentFormat,
-      laneKey: isLaneKey(body.laneKey) ? body.laneKey : undefined,
+      contentFormat,
+      laneKey: nextLaneKey,
       stageSlots: sanitizeStageSlots(body.stageSlots),
       stageEnabled: sanitizeStageEnabled(body.stageEnabled),
       userId: auth.user.id,
@@ -188,6 +247,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
+    const action = String(body.action || '').trim().toLowerCase();
     const projectId = parseProjectId(body.projectId);
     if (!projectId) {
       return NextResponse.json({ error: 'projectId is required' }, { status: 400 });
@@ -205,6 +265,41 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
+    if (action === 'repair') {
+      const repair = await repairProjectWriterRoutes({
+        projectId,
+        userId: auth.user.id,
+        canonicalizeInvalidBlog: true,
+      });
+      const stagePlanBackfill = await backfillProjectTaskStagePlans({
+        projectId,
+        userId: auth.user.id,
+        force: true,
+      });
+      const routes = await listProjectWorkflowStageRoutes(projectId);
+      const routeHealth = await getProjectWorkflowRouteHealth(projectId);
+      await logAuditEvent({
+        userId: auth.user.id,
+        action: 'admin.workflow_route.repair',
+        resourceType: 'project',
+        resourceId: projectId,
+        projectId,
+        metadata: {
+          repair,
+          stagePlanBackfill,
+        },
+      });
+      return NextResponse.json({
+        ok: true,
+        projectId,
+        action: 'repair',
+        repair,
+        stagePlanBackfill,
+        routes,
+        routeHealth,
+      });
+    }
+
     const seeded = await seedProjectWorkflowStageRoutes(projectId, auth.user.id);
     const backfillActiveTasks =
       body.backfillActiveTasks === undefined
@@ -218,6 +313,11 @@ export async function POST(req: NextRequest) {
       roleCounts: runtime.roleCounts,
       laneCapacity: runtime.laneCapacity,
     });
+    const repair = await repairProjectWriterRoutes({
+      projectId,
+      userId: auth.user.id,
+      canonicalizeInvalidBlog: true,
+    });
     const stagePlanBackfill = backfillActiveTasks
       ? await backfillProjectTaskStagePlans({
           projectId,
@@ -225,6 +325,7 @@ export async function POST(req: NextRequest) {
         })
       : null;
     const routes = await listProjectWorkflowStageRoutes(projectId);
+    const routeHealth = await getProjectWorkflowRouteHealth(projectId);
 
     await logAuditEvent({
       userId: auth.user.id,
@@ -235,6 +336,7 @@ export async function POST(req: NextRequest) {
       metadata: {
         seededFormats: seeded.seededFormats,
         synced,
+        repair,
         backfillActiveTasks,
         stagePlanBackfill,
       },
@@ -245,8 +347,10 @@ export async function POST(req: NextRequest) {
       projectId,
       seededFormats: seeded.seededFormats,
       synced,
+      repair,
       stagePlanBackfill,
       routes,
+      routeHealth,
     });
   } catch (error) {
     await logAlertEvent({
