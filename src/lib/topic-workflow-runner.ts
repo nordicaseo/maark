@@ -120,12 +120,12 @@ const RUNNABLE_STAGES = new Set<TopicStageKey>([
 
 const ROLE_ALIASES: Record<string, string[]> = {
   researcher: ['researcher', 'seo', 'editor'],
-  outliner: ['outliner', 'editor', 'writer', 'content'],
+  outliner: ['outliner', 'editor', 'content'],
   writer: ['writer'],
   'seo-reviewer': ['seo-reviewer', 'seo', 'editor'],
   'project-manager': ['project-manager', 'lead', 'editor'],
   seo: ['seo', 'seo-reviewer', 'editor'],
-  content: ['content', 'writer', 'editor'],
+  content: ['content', 'editor'],
   lead: ['lead', 'project-manager', 'editor', 'seo-reviewer'],
 };
 

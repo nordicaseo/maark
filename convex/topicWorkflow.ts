@@ -7,6 +7,7 @@ const WORKFLOW_TEMPLATE_KEY = "topic_production_v1";
 const INITIAL_WORKFLOW_START_DELAY_MS = 20_000;
 const MIN_WORKFLOW_START_DELAY_MS = 0;
 const MAX_WORKFLOW_START_DELAY_MS = 10 * 60 * 1000;
+const DEFAULT_WRITER_LOCK_TIMEOUT_MS = 25 * 60 * 1000;
 
 type TopicStageKey =
   | "research"
@@ -66,12 +67,12 @@ const stageOwnerChains: Record<TopicStageKey, string[]> = {
 
 const roleAliases: Record<string, string[]> = {
   researcher: ["researcher", "seo", "editor"],
-  outliner: ["outliner", "editor", "writer", "content"],
+  outliner: ["outliner", "editor", "content"],
   writer: ["writer"],
   "seo-reviewer": ["seo-reviewer", "seo", "editor"],
   "project-manager": ["project-manager", "lead", "editor"],
   seo: ["seo", "seo-reviewer", "editor"],
-  content: ["content", "writer", "editor"],
+  content: ["content", "editor"],
   lead: ["lead", "project-manager", "editor", "seo-reviewer"],
 };
 
@@ -149,6 +150,16 @@ function normalizeTopicKey(topic: string): string {
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function resolveWriterLockTimeoutMs(): number {
+  const parsed = Number.parseInt(
+    String(process.env.WORKFLOW_WRITER_LOCK_TIMEOUT_MINUTES ?? ""),
+    10
+  );
+  if (!Number.isFinite(parsed)) return DEFAULT_WRITER_LOCK_TIMEOUT_MS;
+  const minutes = clampNumber(parsed, 5, 180);
+  return minutes * 60 * 1000;
 }
 
 function isTopicTask(task: Doc<"tasks"> | null | undefined): task is Doc<"tasks"> {
@@ -282,6 +293,7 @@ async function healWriterAvailability(
 
   let recoveredAny = false;
   const now = Date.now();
+  const writerLockTimeoutMs = resolveWriterLockTimeoutMs();
   for (const writer of writers) {
     if (writer.status === "OFFLINE") {
       await ctx.db.patch(writer._id, {
@@ -316,6 +328,15 @@ async function healWriterAvailability(
           currentTask.status === "IN_PROGRESS";
         if (!taskStillWriting) {
           staleWorking = true;
+        } else {
+          const lastTaskTouch =
+            currentTask.workflowLastEventAt ||
+            currentTask.workflowUpdatedAt ||
+            currentTask.updatedAt ||
+            0;
+          if (lastTaskTouch > 0 && now - lastTaskTouch > writerLockTimeoutMs) {
+            staleWorking = true;
+          }
         }
       }
     }
