@@ -799,6 +799,26 @@ async function setAgentOnline(
   });
 }
 
+async function getWriterAvailabilityDiagnostics(
+  convex: NonNullable<ReturnType<typeof getConvexClient>>
+): Promise<{
+  writerCount: number;
+  writerOnline: number;
+  writerIdle: number;
+  writerWorking: number;
+  writerOffline: number;
+}> {
+  const allAgents = await convex.query(api.agents.list, { limit: 300 });
+  const writers = allAgents.filter((agent) => agent.role.toLowerCase() === 'writer');
+  return {
+    writerCount: writers.length,
+    writerOnline: writers.filter((agent) => agent.status === 'ONLINE').length,
+    writerIdle: writers.filter((agent) => agent.status === 'IDLE').length,
+    writerWorking: writers.filter((agent) => agent.status === 'WORKING').length,
+    writerOffline: writers.filter((agent) => agent.status === 'OFFLINE').length,
+  };
+}
+
 async function runResearchStage(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
@@ -2156,6 +2176,12 @@ export async function runTopicWorkflow(
       taskId: currentTask._id,
       stageKey: stage,
     });
+    const ensuredOwnerResult = ensuredOwner as {
+      blocked?: boolean;
+      queued?: boolean;
+      assignedAgentId?: Id<'agents'> | null;
+      assignedAgentName?: string | null;
+    };
     const refreshedTaskForOwner = await convex.query(api.tasks.get, {
       id: currentTask._id,
       projectId: currentTask.projectId ?? undefined,
@@ -2165,13 +2191,16 @@ export async function runTopicWorkflow(
     }
     currentTask = refreshedTaskForOwner;
     const stageProfileContext = await resolveStageProfileContext(currentTask, stage);
+    let assignedAgentIdForStage =
+      ensuredOwnerResult.assignedAgentId ?? currentTask.assignedAgentId ?? null;
 
     const waitingWriterQueue =
       stage === 'writing' &&
-      (ensuredOwner.queued || currentTask.workflowStageStatus === 'queued') &&
-      !currentTask.assignedAgentId;
+      (Boolean(ensuredOwnerResult.queued) || currentTask.workflowStageStatus === 'queued') &&
+      !assignedAgentIdForStage;
 
     if (waitingWriterQueue) {
+      const writerAvailability = await getWriterAvailabilityDiagnostics(convex);
       const queueSummary =
         'Writing queued: waiting for an available writer. The task remains in writer queue and will resume when a writer is online.';
       await convex.mutation(api.topicWorkflow.recordStageProgress, {
@@ -2186,6 +2215,7 @@ export async function runTopicWorkflow(
           reason: 'writer_queue_waiting',
           stage,
           ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
+          writerAvailability,
           roleProfile: {
             role: stageProfileContext.role,
             profileName: stageProfileContext.profileName ?? null,
@@ -2204,7 +2234,9 @@ export async function runTopicWorkflow(
       break;
     }
 
-    if (ensuredOwner.blocked || !currentTask.assignedAgentId) {
+    if (Boolean(ensuredOwnerResult.blocked) || !assignedAgentIdForStage) {
+      const writerAvailability =
+        stage === 'writing' ? await getWriterAvailabilityDiagnostics(convex) : undefined;
       const blockedSummary =
         `Stage ${stage} blocked: no available owner in ` +
         `${(TOPIC_STAGE_OWNER_CHAINS[stage] || []).join(' -> ')}.`;
@@ -2220,6 +2252,7 @@ export async function runTopicWorkflow(
           reason: 'assignment_blocked',
           stage,
           ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
+          writerAvailability,
           roleProfile: {
             role: stageProfileContext.role,
             profileName: stageProfileContext.profileName ?? null,
@@ -2251,9 +2284,25 @@ export async function runTopicWorkflow(
       break;
     }
 
-    const assignedAgent = await convex.query(api.agents.get, {
-      id: currentTask.assignedAgentId,
+    let assignedAgent = await convex.query(api.agents.get, {
+      id: assignedAgentIdForStage as Id<'agents'>,
     });
+    if (!assignedAgent || !isRoleAllowedForStage(stage, assignedAgent.role)) {
+      const reEnsuredOwner = await convex.mutation(api.topicWorkflow.ensureStageOwner, {
+        taskId: currentTask._id,
+        stageKey: stage,
+      });
+      const reEnsuredOwnerResult = reEnsuredOwner as {
+        assignedAgentId?: Id<'agents'> | null;
+      };
+      const reAssignedAgentId = reEnsuredOwnerResult.assignedAgentId ?? null;
+      if (reAssignedAgentId) {
+        assignedAgentIdForStage = reAssignedAgentId;
+        assignedAgent = await convex.query(api.agents.get, {
+          id: reAssignedAgentId as Id<'agents'>,
+        });
+      }
+    }
     if (!assignedAgent || !isRoleAllowedForStage(stage, assignedAgent.role)) {
       const blockedSummary = `Stage ${stage} blocked: assigned role ${assignedAgent?.role || 'unknown'} is not allowed for this stage.`;
       await convex.mutation(api.tasks.update, {
@@ -2275,9 +2324,10 @@ export async function runTopicWorkflow(
           reason: 'owner_role_mismatch',
           stage,
           ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
-          assignedAgentId: currentTask.assignedAgentId,
+          assignedAgentId: assignedAgentIdForStage,
           assignedAgentName: assignedAgent?.name ?? null,
           assignedAgentRole: assignedAgent?.role ?? null,
+          assignmentHealingAttempted: true,
           roleProfile: {
             role: stageProfileContext.role,
             profileName: stageProfileContext.profileName ?? null,
@@ -2301,13 +2351,27 @@ export async function runTopicWorkflow(
         metadata: {
           taskId: String(currentTask._id),
           stage,
-          assignedAgentId: currentTask.assignedAgentId ?? null,
+          assignedAgentId: assignedAgentIdForStage ?? null,
           assignedAgentRole: assignedAgent?.role ?? null,
         },
       });
       runs.push({ stage, summary: blockedSummary });
       stoppedReason = blockedSummary;
       break;
+    }
+    if (currentTask.assignedAgentId !== assignedAgentIdForStage) {
+      await convex.mutation(api.tasks.update, {
+        id: currentTask._id,
+        expectedProjectId: currentTask.projectId ?? undefined,
+        assignedAgentId: assignedAgentIdForStage as Id<'agents'>,
+      });
+      const refreshedTaskForAssigned = await convex.query(api.tasks.get, {
+        id: currentTask._id,
+        projectId: currentTask.projectId ?? undefined,
+      });
+      if (refreshedTaskForAssigned) {
+        currentTask = refreshedTaskForAssigned;
+      }
     }
 
     const ensured = await ensureTaskDocument(currentTask, input.user);

@@ -129,8 +129,11 @@ export async function GET(req: NextRequest) {
           byStage: [],
           autoResume: {
             lastRunAt: null,
+            lastSuccessAt: null,
             runsLast24h: 0,
             resumedLast24h: 0,
+            retriedLast24h: 0,
+            blockedAfterRetriesLast24h: 0,
             watchdogBlockedLast24h: 0,
             failuresLast24h: 0,
           },
@@ -276,12 +279,25 @@ export async function GET(req: NextRequest) {
     });
 
     let resumedLast24h = 0;
+    let retriedLast24h = 0;
+    let blockedAfterRetriesLast24h = 0;
     let watchdogBlockedLast24h = 0;
     let failuresLast24h = 0;
+    let lastSuccessAt: string | Date | null = null;
 
     for (const audit of autoResumeInScope as Array<(typeof autoResumeInScope)[number]>) {
       const metadata = parseObject(audit.metadata);
+      const heartbeatStatus = String(metadata.heartbeatStatus || '').toLowerCase();
+      const metadataLastSuccess = metadata.lastSuccessAt;
+      if (!lastSuccessAt && (heartbeatStatus === 'success' || metadataLastSuccess)) {
+        lastSuccessAt =
+          (typeof metadataLastSuccess === 'string' || metadataLastSuccess instanceof Date)
+            ? (metadataLastSuccess as string | Date)
+            : audit.createdAt;
+      }
       resumedLast24h += Number(metadata.resumed || 0);
+      retriedLast24h += Number(metadata.retried || 0);
+      blockedAfterRetriesLast24h += Number(metadata.blockedAfterRetries || 0);
       watchdogBlockedLast24h += Number(metadata.watchdogBlocked || 0);
       const failures = Array.isArray(metadata.failures) ? metadata.failures : [];
       failuresLast24h += failures.length;
@@ -342,8 +358,11 @@ export async function GET(req: NextRequest) {
         })),
         autoResume: {
           lastRunAt: autoResumeAudits[0]?.createdAt || null,
+          lastSuccessAt: lastSuccessAt || null,
           runsLast24h: autoResumeInScope.length,
           resumedLast24h,
+          retriedLast24h,
+          blockedAfterRetriesLast24h,
           watchdogBlockedLast24h,
           failuresLast24h,
         },

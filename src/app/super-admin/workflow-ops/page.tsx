@@ -49,8 +49,11 @@ interface WorkflowOpsPayload {
     }>;
     autoResume: {
       lastRunAt: string | null;
+      lastSuccessAt: string | null;
       runsLast24h: number;
       resumedLast24h: number;
+      retriedLast24h: number;
+      blockedAfterRetriesLast24h: number;
       watchdogBlockedLast24h: number;
       failuresLast24h: number;
     };
@@ -453,8 +456,13 @@ export default function WorkflowOpsPage() {
           <p className="text-sm text-muted-foreground">
             Last run: {payload?.metrics.autoResume.lastRunAt ? new Date(payload.metrics.autoResume.lastRunAt).toLocaleString() : 'Never'}
           </p>
+          <p className="text-sm text-muted-foreground">
+            Last success: {payload?.metrics.autoResume.lastSuccessAt ? new Date(payload.metrics.autoResume.lastSuccessAt).toLocaleString() : 'Never'}
+          </p>
           <p className="text-sm">Runs: {payload?.metrics.autoResume.runsLast24h ?? 0}</p>
           <p className="text-sm">Tasks resumed: {payload?.metrics.autoResume.resumedLast24h ?? 0}</p>
+          <p className="text-sm">Watchdog retries: {payload?.metrics.autoResume.retriedLast24h ?? 0}</p>
+          <p className="text-sm">Blocked after retries: {payload?.metrics.autoResume.blockedAfterRetriesLast24h ?? 0}</p>
           <p className="text-sm text-amber-700">
             Watchdog blocks: {payload?.metrics.autoResume.watchdogBlockedLast24h ?? 0}
           </p>

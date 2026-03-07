@@ -1,8 +1,37 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
+const CRON_PATHS = new Set<string>([
+  '/api/topic-workflow/auto-resume',
+  '/api/admin/crawl-gsc/cron',
+]);
+
+function isAuthorizedCronRequest(request: NextRequest): boolean {
+  const { pathname } = request.nextUrl;
+  if (!CRON_PATHS.has(pathname)) return false;
+
+  if (request.headers.get('x-vercel-cron')) return true;
+
+  const provided = request.headers
+    .get('authorization')
+    ?.replace(/^Bearer\s+/i, '')
+    .trim();
+  if (!provided) return false;
+
+  const allowed = [process.env.WORKFLOW_CRON_SECRET, process.env.CRAWL_CRON_SECRET]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+  if (allowed.length === 0) return false;
+
+  return allowed.includes(provided);
+}
+
 export async function updateSession(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  if (isAuthorizedCronRequest(request)) {
+    return NextResponse.next({ request });
+  }
 
   // Public routes — allow without auth check
   if (

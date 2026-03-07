@@ -17,10 +17,13 @@ import {
 
 function isCronAuthorized(req: NextRequest): boolean {
   if (req.headers.get('x-vercel-cron')) return true;
-  const secret = process.env.CRAWL_CRON_SECRET;
-  if (!secret) return false;
   const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
-  return Boolean(token && token === secret);
+  if (!token) return false;
+  const allowed = [process.env.CRAWL_CRON_SECRET, process.env.WORKFLOW_CRON_SECRET]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+  if (allowed.length === 0) return false;
+  return allowed.includes(token);
 }
 
 function toMillis(value: unknown): number | null {
@@ -31,6 +34,14 @@ function toMillis(value: unknown): number | null {
 }
 
 export async function POST(req: NextRequest) {
+  return executeCron(req);
+}
+
+export async function GET(req: NextRequest) {
+  return executeCron(req);
+}
+
+async function executeCron(req: NextRequest) {
   await ensureDb();
   if (!isCronAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized cron' }, { status: 401 });

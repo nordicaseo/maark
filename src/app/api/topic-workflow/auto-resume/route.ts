@@ -22,6 +22,17 @@ import {
 
 const DEFAULT_MAX_RESUMES = 4;
 const MAX_SCAN_PER_PROJECT = 500;
+const DEFAULT_WATCHDOG_MAX_RETRIES = 2;
+const MAX_WATCHDOG_MAX_RETRIES = 8;
+const DEFAULT_WATCHDOG_RETRY_BACKOFF_SECONDS = 120;
+const WATCHDOG_RETRY_REASON_CODE = 'stage_timeout_watchdog_retry_scheduled';
+const WATCHDOG_BLOCK_REASON_CODE = 'stage_timeout_watchdog_exhausted';
+const RECOVERABLE_AUTO_STAGES = new Set<TopicStageKey>([
+  'outline_build',
+  'prewrite_context',
+  'final_review',
+  'writing',
+]);
 
 type WorkflowTask = {
   _id: Id<'tasks'>;
@@ -36,12 +47,21 @@ type WorkflowTask = {
   status: string;
 };
 
+type WorkflowEventLike = {
+  stageKey?: string;
+  eventType?: string;
+  payload?: unknown;
+};
+
 function isCronAuthorized(req: NextRequest): boolean {
   if (req.headers.get('x-vercel-cron')) return true;
-  const secret = process.env.WORKFLOW_CRON_SECRET || process.env.CRAWL_CRON_SECRET;
-  if (!secret) return false;
   const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
-  return Boolean(token && token === secret);
+  if (!token) return false;
+  const allowed = [process.env.WORKFLOW_CRON_SECRET, process.env.CRAWL_CRON_SECRET]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+  if (allowed.length === 0) return false;
+  return allowed.includes(token);
 }
 
 function parseOptionalNumber(value: unknown): number | null {
@@ -58,10 +78,99 @@ function timeoutMsFromSettings(settings: WorkflowOpsSettings): number {
   return Math.max(5, settings.stageTimeoutMinutes) * 60 * 1000;
 }
 
-export async function POST(req: NextRequest) {
+function parsePayloadReasonCode(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const root = payload as { reasonCode?: unknown; meta?: { reasonCode?: unknown } };
+  const direct = typeof root.reasonCode === 'string' ? root.reasonCode : null;
+  if (direct) return direct;
+  const nested = typeof root.meta?.reasonCode === 'string' ? root.meta.reasonCode : null;
+  return nested;
+}
+
+function resolveWatchdogMaxRetries(): number {
+  return clamp(
+    parseOptionalNumber(process.env.WORKFLOW_STAGE_TIMEOUT_MAX_RETRIES) ??
+      DEFAULT_WATCHDOG_MAX_RETRIES,
+    1,
+    MAX_WATCHDOG_MAX_RETRIES
+  );
+}
+
+function resolveWatchdogBackoffMs(): number {
+  const seconds = clamp(
+    parseOptionalNumber(process.env.WORKFLOW_STAGE_TIMEOUT_RETRY_BACKOFF_SECONDS) ??
+      DEFAULT_WATCHDOG_RETRY_BACKOFF_SECONDS,
+    30,
+    3600
+  );
+  return seconds * 1000;
+}
+
+async function countWatchdogRetriesForStage(
+  convex: NonNullable<ReturnType<typeof getConvexClient>>,
+  taskId: Id<'tasks'>,
+  stage: TopicStageKey
+): Promise<number> {
+  const history = await convex.query(api.topicWorkflow.listWorkflowHistory, {
+    taskId,
+    limit: 120,
+  });
+  const events = (history.events || []) as WorkflowEventLike[];
+  return events.filter((event) => {
+    if (event.stageKey !== stage) return false;
+    if (event.eventType !== 'stage_progress') return false;
+    const reasonCode = parsePayloadReasonCode(event.payload);
+    return reasonCode === WATCHDOG_RETRY_REASON_CODE;
+  }).length;
+}
+
+function interleaveCandidates(
+  groups: WorkflowTask[][],
+  maxItems: number
+): WorkflowTask[] {
+  const seen = new Set<string>();
+  const queues = groups.map((group) => [...group]);
+  const out: WorkflowTask[] = [];
+
+  while (out.length < maxItems) {
+    let advanced = false;
+    for (const queue of queues) {
+      if (out.length >= maxItems) break;
+      const next = queue.shift();
+      if (!next) continue;
+      const key = String(next._id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(next);
+      advanced = true;
+    }
+    if (!advanced) break;
+  }
+
+  return out;
+}
+
+async function parseInput(
+  req: NextRequest
+): Promise<{ requestedProjectId: number | null; requestedMaxResumes: number | null }> {
+  if (req.method === 'GET') {
+    return {
+      requestedProjectId: parseOptionalNumber(req.nextUrl.searchParams.get('projectId')),
+      requestedMaxResumes: parseOptionalNumber(req.nextUrl.searchParams.get('maxResumes')),
+    };
+  }
+
+  const body = await req.json().catch(() => ({} as Record<string, unknown>));
+  return {
+    requestedProjectId: parseOptionalNumber((body as { projectId?: unknown }).projectId),
+    requestedMaxResumes: parseOptionalNumber((body as { maxResumes?: unknown }).maxResumes),
+  };
+}
+
+async function executeAutoResume(req: NextRequest) {
   await ensureDb();
   const cronAuthorized = isCronAuthorized(req);
-  let actorUser: AppUser;
+  let actorUser: AppUser | null = null;
 
   if (cronAuthorized) {
     actorUser = {
@@ -86,13 +195,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const body = await req.json().catch(() => ({} as Record<string, unknown>));
+    const input = await parseInput(req);
     const requestedProjectId =
-      cronAuthorized
-        ? null
-        : parseOptionalNumber((body as { projectId?: unknown }).projectId) ??
-          getRequestedProjectId(req);
-    const requestedMaxResumes = parseOptionalNumber((body as { maxResumes?: unknown }).maxResumes);
+      cronAuthorized ? null : input.requestedProjectId ?? getRequestedProjectId(req);
+    const requestedMaxResumes = input.requestedMaxResumes;
 
     let projectIds: number[] = [];
     if (requestedProjectId !== null) {
@@ -111,7 +217,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         scanned: 0,
         resumed: 0,
+        resumedCount: 0,
         queued: 0,
+        queuedWriting: 0,
+        readyResearch: 0,
+        recoverableActive: 0,
+        retried: 0,
+        blockedAfterRetries: 0,
         watchdogBlocked: 0,
         failures: [],
       });
@@ -149,51 +261,73 @@ export async function POST(req: NextRequest) {
     );
 
     const now = Date.now();
-
-    const queuedWritingTasks = workflowTasks
-      .filter(
-        (task) =>
-          task.workflowCurrentStageKey === 'writing' &&
-          task.workflowStageStatus === 'queued'
-      )
-      .sort(
-        (a, b) =>
-          (a.workflowLastEventAt || a.updatedAt || 0) -
-          (b.workflowLastEventAt || b.updatedAt || 0)
-      );
-
-    const readyResearchTasks = workflowTasks
-      .filter((task) => {
-        if (task.workflowCurrentStageKey !== 'research') return false;
-        if (task.status === 'IN_PROGRESS') return false;
-        if (task.workflowStageStatus === 'blocked') return false;
-        const runNotBeforeAt = task.workflowRunNotBeforeAt ?? 0;
-        return runNotBeforeAt <= now;
-      })
-      .sort(
-        (a, b) =>
-          (a.workflowRunNotBeforeAt || a.workflowLastEventAt || a.updatedAt || 0) -
-          (b.workflowRunNotBeforeAt || b.workflowLastEventAt || b.updatedAt || 0)
-      );
+    const watchdogMaxRetries = resolveWatchdogMaxRetries();
+    const watchdogBackoffMs = resolveWatchdogBackoffMs();
 
     const staleWorkingTasks = workflowTasks.filter((task) => {
       if (task.workflowStageStatus !== 'in_progress') return false;
-      if (task.workflowCurrentStageKey === 'complete') return false;
+      const stage = (task.workflowCurrentStageKey || 'research') as TopicStageKey;
+      if (stage === 'complete') return false;
       const lastEventAt = task.workflowLastEventAt || task.updatedAt || 0;
       const projectSettings =
         (task.projectId ? settingsByProject.get(task.projectId) : null) ?? defaultOps;
       return now - lastEventAt > timeoutMsFromSettings(projectSettings);
     });
 
+    let retried = 0;
+    let blockedAfterRetries = 0;
     let watchdogBlocked = 0;
+
     for (const task of staleWorkingTasks) {
       const stage = (task.workflowCurrentStageKey || 'research') as TopicStageKey;
       const projectSettings =
         (task.projectId ? settingsByProject.get(task.projectId) : null) ?? defaultOps;
       const stageTimeoutMs = timeoutMsFromSettings(projectSettings);
-      const summary = `Watchdog blocked ${stage}: no progress in ${Math.floor(
-        stageTimeoutMs / 60000
-      )}m. Use Run Current Stage to resume.`;
+      const previousLastEventAt = task.workflowLastEventAt || task.updatedAt || null;
+      const previousRetries = await countWatchdogRetriesForStage(convex, task._id, stage);
+      const retryAttempt = previousRetries + 1;
+
+      if (retryAttempt <= watchdogMaxRetries) {
+        const nextRetryAt = now + retryAttempt * watchdogBackoffMs;
+        const summary =
+          `Watchdog retry ${retryAttempt}/${watchdogMaxRetries} for ${stage} ` +
+          `scheduled in ${Math.ceil((nextRetryAt - now) / 1000)}s.`;
+
+        await convex.mutation(api.tasks.update, {
+          id: task._id,
+          expectedProjectId: task.projectId ?? undefined,
+          status: 'PENDING',
+          workflowStageStatus: 'active',
+          workflowRunNotBeforeAt: nextRetryAt,
+          workflowLastEventAt: now,
+          workflowLastEventText: summary,
+        });
+
+        await convex.mutation(api.topicWorkflow.recordStageProgress, {
+          taskId: task._id,
+          stageKey: stage,
+          summary,
+          actorType: 'system',
+          actorId: actorUser.id,
+          actorName: 'Workflow Watchdog',
+          payload: {
+            status: 'retrying',
+            reasonCode: WATCHDOG_RETRY_REASON_CODE,
+            timeoutMs: stageTimeoutMs,
+            previousLastEventAt,
+            retryAttempt,
+            maxRetries: watchdogMaxRetries,
+            nextRetryAt,
+          },
+        });
+
+        retried += 1;
+        continue;
+      }
+
+      const summary =
+        `Watchdog blocked ${stage}: no progress in ${Math.floor(stageTimeoutMs / 60000)}m ` +
+        `after ${watchdogMaxRetries} retries.`;
 
       await convex.mutation(api.tasks.update, {
         id: task._id,
@@ -212,20 +346,68 @@ export async function POST(req: NextRequest) {
         actorName: 'Workflow Watchdog',
         payload: {
           status: 'blocked',
-          reasonCode: 'stage_timeout_watchdog',
+          reasonCode: WATCHDOG_BLOCK_REASON_CODE,
           timeoutMs: stageTimeoutMs,
-          previousLastEventAt: task.workflowLastEventAt || task.updatedAt || null,
+          previousLastEventAt,
+          retryAttempt,
+          maxRetries: watchdogMaxRetries,
         },
       });
 
+      blockedAfterRetries += 1;
       watchdogBlocked += 1;
     }
 
+    const queuedWritingTasks = workflowTasks
+      .filter((task) => {
+        if (task.workflowCurrentStageKey !== 'writing') return false;
+        if (task.workflowStageStatus !== 'queued') return false;
+        const runNotBeforeAt = task.workflowRunNotBeforeAt ?? 0;
+        return runNotBeforeAt <= now;
+      })
+      .sort(
+        (a, b) =>
+          (a.workflowLastEventAt || a.updatedAt || 0) -
+          (b.workflowLastEventAt || b.updatedAt || 0)
+      );
+
+    const readyRecoverableTasks = workflowTasks
+      .filter((task) => {
+        const stage = (task.workflowCurrentStageKey || 'research') as TopicStageKey;
+        if (!RECOVERABLE_AUTO_STAGES.has(stage)) return false;
+        if (task.workflowStageStatus === 'blocked') return false;
+        if (task.workflowStageStatus === 'queued') return false;
+        if (task.status === 'IN_PROGRESS') return false;
+        const runNotBeforeAt = task.workflowRunNotBeforeAt ?? 0;
+        return runNotBeforeAt <= now;
+      })
+      .sort(
+        (a, b) =>
+          (a.workflowRunNotBeforeAt || a.workflowLastEventAt || a.updatedAt || 0) -
+          (b.workflowRunNotBeforeAt || b.workflowLastEventAt || b.updatedAt || 0)
+      );
+
+    const readyResearchTasks = workflowTasks
+      .filter((task) => {
+        if (task.workflowCurrentStageKey !== 'research') return false;
+        if (task.status === 'IN_PROGRESS') return false;
+        if (task.workflowStageStatus === 'blocked') return false;
+        if (task.workflowStageStatus === 'queued') return false;
+        const runNotBeforeAt = task.workflowRunNotBeforeAt ?? 0;
+        return runNotBeforeAt <= now;
+      })
+      .sort(
+        (a, b) =>
+          (a.workflowRunNotBeforeAt || a.workflowLastEventAt || a.updatedAt || 0) -
+          (b.workflowRunNotBeforeAt || b.workflowLastEventAt || b.updatedAt || 0)
+      );
+
     const failures: Array<{ taskId: string; error: string }> = [];
     let resumed = 0;
-    // Prioritize queued writing work so writer queue does not starve behind
-    // newly created research tasks during busy periods.
-    const toResume = [...queuedWritingTasks, ...readyResearchTasks].slice(0, maxResumes);
+    const toResume = interleaveCandidates(
+      [queuedWritingTasks, readyRecoverableTasks, readyResearchTasks],
+      maxResumes
+    );
 
     for (const task of toResume) {
       try {
@@ -248,19 +430,28 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const lastSuccessAt = new Date().toISOString();
     await logAuditEvent({
       userId: cronAuthorized ? null : actorUser.id,
       action: 'topic_workflow.auto_resume',
       resourceType: 'task',
       severity: failures.length > 0 ? 'warning' : 'info',
       metadata: {
+        heartbeatStatus: 'success',
+        lastSuccessAt,
         projectIds,
         scanned: workflowTasks.length,
         readyResearch: readyResearchTasks.length,
+        recoverableActive: readyRecoverableTasks.length,
         queuedWriting: queuedWritingTasks.length,
         maxResumes,
         resumed,
+        resumedCount: resumed,
+        retried,
+        blockedAfterRetries,
         watchdogBlocked,
+        watchdogMaxRetries,
+        failures,
         projectSettings: Object.fromEntries(
           Array.from(settingsByProject.entries()).map(([projectId, settings]) => [
             projectId,
@@ -271,15 +462,19 @@ export async function POST(req: NextRequest) {
             },
           ])
         ),
-        failures,
       },
     });
 
     return NextResponse.json({
       scanned: workflowTasks.length,
       readyResearch: readyResearchTasks.length,
+      recoverableActive: readyRecoverableTasks.length,
       queued: queuedWritingTasks.length,
+      queuedWriting: queuedWritingTasks.length,
       resumed,
+      resumedCount: resumed,
+      retried,
+      blockedAfterRetries,
       watchdogBlocked,
       failures,
     });
@@ -291,10 +486,28 @@ export async function POST(req: NextRequest) {
       message: 'Automatic workflow resume failed.',
       metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
     });
+    await logAuditEvent({
+      userId: cronAuthorized ? null : actorUser?.id || null,
+      action: 'topic_workflow.auto_resume',
+      resourceType: 'task',
+      severity: 'error',
+      metadata: {
+        heartbeatStatus: 'failed',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      },
+    });
     console.error('Workflow auto-resume failed:', error);
     return NextResponse.json(
       { error: 'Failed to auto-resume workflows' },
       { status: 500 }
     );
   }
+}
+
+export async function GET(req: NextRequest) {
+  return executeAutoResume(req);
+}
+
+export async function POST(req: NextRequest) {
+  return executeAutoResume(req);
 }
