@@ -799,6 +799,16 @@ async function setAgentOnline(
   });
 }
 
+function normalizeAgentStatus(status: string | null | undefined): 'ONLINE' | 'IDLE' | 'WORKING' | 'OFFLINE' {
+  const normalized = String(status || '')
+    .trim()
+    .toUpperCase();
+  if (normalized === 'ONLINE') return 'ONLINE';
+  if (normalized === 'IDLE') return 'IDLE';
+  if (normalized === 'WORKING') return 'WORKING';
+  return 'OFFLINE';
+}
+
 async function getWriterAvailabilityDiagnostics(
   convex: NonNullable<ReturnType<typeof getConvexClient>>
 ): Promise<{
@@ -812,10 +822,10 @@ async function getWriterAvailabilityDiagnostics(
   const writers = allAgents.filter((agent) => agent.role.toLowerCase() === 'writer');
   return {
     writerCount: writers.length,
-    writerOnline: writers.filter((agent) => agent.status === 'ONLINE').length,
-    writerIdle: writers.filter((agent) => agent.status === 'IDLE').length,
-    writerWorking: writers.filter((agent) => agent.status === 'WORKING').length,
-    writerOffline: writers.filter((agent) => agent.status === 'OFFLINE').length,
+    writerOnline: writers.filter((agent) => normalizeAgentStatus(agent.status) === 'ONLINE').length,
+    writerIdle: writers.filter((agent) => normalizeAgentStatus(agent.status) === 'IDLE').length,
+    writerWorking: writers.filter((agent) => normalizeAgentStatus(agent.status) === 'WORKING').length,
+    writerOffline: writers.filter((agent) => normalizeAgentStatus(agent.status) === 'OFFLINE').length,
   };
 }
 

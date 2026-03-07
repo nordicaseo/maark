@@ -1,6 +1,16 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 
+function normalizeAgentStatus(status: string): "ONLINE" | "WORKING" | "IDLE" | "OFFLINE" {
+  const normalized = String(status || "")
+    .trim()
+    .toUpperCase();
+  if (normalized === "ONLINE") return "ONLINE";
+  if (normalized === "WORKING") return "WORKING";
+  if (normalized === "IDLE") return "IDLE";
+  return "OFFLINE";
+}
+
 export const list = query({
   args: {
     status: v.optional(v.string()),
@@ -9,9 +19,10 @@ export const list = query({
   handler: async (ctx, args) => {
     const limit = Math.max(1, Math.min(args.limit ?? 200, 1000));
     if (args.status) {
+      const status = normalizeAgentStatus(args.status);
       return await ctx.db
         .query("agents")
-        .withIndex("by_status", (q) => q.eq("status", args.status!))
+        .withIndex("by_status", (q) => q.eq("status", status))
         .take(limit);
     }
     return await ctx.db.query("agents").take(limit);
@@ -60,14 +71,15 @@ export const updateStatus = mutation({
     currentTaskId: v.optional(v.id("tasks")),
   },
   handler: async (ctx, args) => {
+    const normalizedStatus = normalizeAgentStatus(args.status);
     const updates: Record<string, unknown> = {
-      status: args.status,
+      status: normalizedStatus,
       updatedAt: Date.now(),
     };
     if (args.currentTaskId !== undefined) {
       updates.currentTaskId = args.currentTaskId;
     }
-    if (args.status === "ONLINE") {
+    if (normalizedStatus === "ONLINE" || normalizedStatus === "IDLE" || normalizedStatus === "OFFLINE") {
       updates.currentTaskId = undefined;
     }
     await ctx.db.patch(args.id, updates);

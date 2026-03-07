@@ -93,6 +93,16 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function normalizeAgentStatus(status: string | null | undefined): 'ONLINE' | 'IDLE' | 'WORKING' | 'OFFLINE' {
+  const normalized = String(status || '')
+    .trim()
+    .toUpperCase();
+  if (normalized === 'ONLINE') return 'ONLINE';
+  if (normalized === 'IDLE') return 'IDLE';
+  if (normalized === 'WORKING') return 'WORKING';
+  return 'OFFLINE';
+}
+
 function resolveWriterLockTimeoutMs(): number {
   const parsed = Number.parseInt(
     String(process.env.WORKFLOW_WRITER_LOCK_TIMEOUT_MINUTES ?? ''),
@@ -374,9 +384,10 @@ export async function GET(req: NextRequest) {
       const linkedTask = currentTaskId ? taskById.get(currentTaskId) : undefined;
       let lockHealth: 'healthy' | 'stale' | 'unknown_task' | 'idle' | 'offline' = 'healthy';
 
-      if (writer.status === 'OFFLINE') {
+      const writerStatus = normalizeAgentStatus(writer.status);
+      if (writerStatus === 'OFFLINE') {
         lockHealth = 'offline';
-      } else if (writer.status !== 'WORKING') {
+      } else if (writerStatus !== 'WORKING') {
         lockHealth = 'idle';
       } else if (!currentTaskId) {
         staleWorkingLocks += 1;
@@ -404,16 +415,16 @@ export async function GET(req: NextRequest) {
       return {
         id: String(writer._id),
         name: writer.name,
-        status: writer.status,
+        status: writerStatus,
         currentTaskId,
         lockHealth,
       };
     });
 
-    const onlineWriters = writers.filter((writer) => writer.status === 'ONLINE').length;
-    const idleWriters = writers.filter((writer) => writer.status === 'IDLE').length;
-    const workingWriters = writers.filter((writer) => writer.status === 'WORKING').length;
-    const offlineWriters = writers.filter((writer) => writer.status === 'OFFLINE').length;
+    const onlineWriters = writers.filter((writer) => normalizeAgentStatus(writer.status) === 'ONLINE').length;
+    const idleWriters = writers.filter((writer) => normalizeAgentStatus(writer.status) === 'IDLE').length;
+    const workingWriters = writers.filter((writer) => normalizeAgentStatus(writer.status) === 'WORKING').length;
+    const offlineWriters = writers.filter((writer) => normalizeAgentStatus(writer.status) === 'OFFLINE').length;
     const queuedWritingTasks = workflowTasks.filter(
       (task) =>
         task.workflowCurrentStageKey === 'writing' &&

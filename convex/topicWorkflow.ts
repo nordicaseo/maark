@@ -132,6 +132,36 @@ const WORKFLOW_ROLE_SEEDS: Array<{
   },
 ];
 
+type AgentStatus = "ONLINE" | "IDLE" | "WORKING" | "OFFLINE";
+
+function normalizeAgentStatus(status: string | null | undefined): AgentStatus {
+  const normalized = String(status || "")
+    .trim()
+    .toUpperCase();
+  if (normalized === "ONLINE") return "ONLINE";
+  if (normalized === "IDLE") return "IDLE";
+  if (normalized === "WORKING") return "WORKING";
+  return "OFFLINE";
+}
+
+function collectWriterDiagnostics(writers: Doc<"agents">[]) {
+  return {
+    writerCount: writers.length,
+    writerOnline: writers.filter((agent) => normalizeAgentStatus(agent.status) === "ONLINE").length,
+    writerIdle: writers.filter((agent) => normalizeAgentStatus(agent.status) === "IDLE").length,
+    writerWorking: writers.filter((agent) => normalizeAgentStatus(agent.status) === "WORKING").length,
+    writerOffline: writers.filter((agent) => normalizeAgentStatus(agent.status) === "OFFLINE").length,
+  };
+}
+
+function pickAssignableWriterId(writers: Doc<"agents">[]): Id<"agents"> | null {
+  const online = writers.find((agent) => normalizeAgentStatus(agent.status) === "ONLINE");
+  if (online) return online._id;
+  const idle = writers.find((agent) => normalizeAgentStatus(agent.status) === "IDLE");
+  if (idle) return idle._id;
+  return null;
+}
+
 function stageOwnerSummary(stage: TopicStageKey): string {
   const chain = stageOwnerChains[stage] || ["lead"];
   if (chain.length === 0) return "none";
@@ -242,6 +272,7 @@ async function healWriterAvailability(
   ctx: MutationCtx
 ): Promise<{
   healed: boolean;
+  assignableWriterId: Id<"agents"> | null;
   reasonCode:
     | "writer_available"
     | "writer_seeded"
@@ -262,32 +293,24 @@ async function healWriterAvailability(
     await seedMissingWorkflowRoles(ctx, ["writer"]);
     const refreshed = await ctx.db.query("agents").collect();
     writers = refreshed.filter((agent) => agent.role.toLowerCase() === "writer");
+    const assignableWriterId = pickAssignableWriterId(writers);
     return {
       healed: true,
-      reasonCode: writers.some((agent) => agent.status === "ONLINE" || agent.status === "IDLE")
+      assignableWriterId,
+      reasonCode: Boolean(assignableWriterId)
         ? "writer_seeded"
         : "writer_still_unavailable",
-      diagnostics: {
-        writerCount: writers.length,
-        writerOnline: writers.filter((agent) => agent.status === "ONLINE").length,
-        writerIdle: writers.filter((agent) => agent.status === "IDLE").length,
-        writerWorking: writers.filter((agent) => agent.status === "WORKING").length,
-        writerOffline: writers.filter((agent) => agent.status === "OFFLINE").length,
-      },
+      diagnostics: collectWriterDiagnostics(writers),
     };
   }
 
-  if (writers.some((agent) => agent.status === "ONLINE" || agent.status === "IDLE")) {
+  const alreadyAssignableWriterId = pickAssignableWriterId(writers);
+  if (alreadyAssignableWriterId) {
     return {
       healed: false,
+      assignableWriterId: alreadyAssignableWriterId,
       reasonCode: "writer_available",
-      diagnostics: {
-        writerCount: writers.length,
-        writerOnline: writers.filter((agent) => agent.status === "ONLINE").length,
-        writerIdle: writers.filter((agent) => agent.status === "IDLE").length,
-        writerWorking: writers.filter((agent) => agent.status === "WORKING").length,
-        writerOffline: writers.filter((agent) => agent.status === "OFFLINE").length,
-      },
+      diagnostics: collectWriterDiagnostics(writers),
     };
   }
 
@@ -295,7 +318,9 @@ async function healWriterAvailability(
   const now = Date.now();
   const writerLockTimeoutMs = resolveWriterLockTimeoutMs();
   for (const writer of writers) {
-    if (writer.status === "OFFLINE") {
+    const writerStatus = normalizeAgentStatus(writer.status);
+
+    if (writerStatus === "OFFLINE") {
       await ctx.db.patch(writer._id, {
         status: "IDLE",
         currentTaskId: undefined,
@@ -305,7 +330,7 @@ async function healWriterAvailability(
       continue;
     }
 
-    if (writer.status !== "WORKING") continue;
+    if (writerStatus !== "WORKING") continue;
 
     let staleWorking = false;
     if (!writer.currentTaskId) {
@@ -353,24 +378,18 @@ async function healWriterAvailability(
 
   const refreshed = await ctx.db.query("agents").collect();
   const refreshedWriters = refreshed.filter((agent) => agent.role.toLowerCase() === "writer");
-  const hasAssignable = refreshedWriters.some(
-    (agent) => agent.status === "ONLINE" || agent.status === "IDLE"
-  );
+  const assignableWriterId = pickAssignableWriterId(refreshedWriters);
+  const hasAssignable = Boolean(assignableWriterId);
 
   return {
     healed: recoveredAny,
+    assignableWriterId,
     reasonCode: hasAssignable
       ? recoveredAny
         ? "writer_status_recovered"
         : "writer_available"
       : "writer_still_unavailable",
-    diagnostics: {
-      writerCount: refreshedWriters.length,
-      writerOnline: refreshedWriters.filter((agent) => agent.status === "ONLINE").length,
-      writerIdle: refreshedWriters.filter((agent) => agent.status === "IDLE").length,
-      writerWorking: refreshedWriters.filter((agent) => agent.status === "WORKING").length,
-      writerOffline: refreshedWriters.filter((agent) => agent.status === "OFFLINE").length,
-    },
+    diagnostics: collectWriterDiagnostics(refreshedWriters),
   };
 }
 
@@ -430,28 +449,19 @@ async function resolveStageOwnerAgent(
   const chain = stageOwnerChains[stage] || [];
   if (chain.length === 0) return null;
 
-  const onlineAgents = await ctx.db
-    .query("agents")
-    .withIndex("by_status", (q) => q.eq("status", "ONLINE"))
-    .collect();
-  const idleAgents = await ctx.db
-    .query("agents")
-    .withIndex("by_status", (q) => q.eq("status", "IDLE"))
-    .collect();
+  const allAgents = await ctx.db.query("agents").collect();
 
   for (const requestedRole of chain) {
     if (requestedRole === "human") continue;
 
     const candidates = normalizedRoleCandidates(requestedRole);
-    const findByRole = (agents: Doc<"agents">[]) =>
-      agents.find((agent) => candidates.includes(agent.role.toLowerCase()));
-
-    const online = findByRole(onlineAgents);
+    const byRole = allAgents.filter((agent) => candidates.includes(agent.role.toLowerCase()));
+    const online = byRole.find((agent) => normalizeAgentStatus(agent.status) === "ONLINE");
     if (online) {
       return { agent: online, requestedRole, matchedRole: online.role };
     }
 
-    const idle = findByRole(idleAgents);
+    const idle = byRole.find((agent) => normalizeAgentStatus(agent.status) === "IDLE");
     if (idle) {
       return { agent: idle, requestedRole, matchedRole: idle.role };
     }
@@ -615,15 +625,27 @@ async function assignStageOwner(
   const now = Date.now();
   let assignment = await resolveStageOwnerAgent(ctx, args.stageKey);
   let assignmentDiagnostics: Record<string, unknown> | undefined;
+  let writerHealResult: Awaited<ReturnType<typeof healWriterAvailability>> | undefined;
 
   if (!assignment && args.stageKey === "writing") {
     const healResult = await healWriterAvailability(ctx);
+    writerHealResult = healResult;
     assignmentDiagnostics = {
       reasonCode: healResult.reasonCode,
       ...healResult.diagnostics,
       healed: healResult.healed,
     };
     assignment = await resolveStageOwnerAgent(ctx, args.stageKey);
+    if (!assignment && healResult.assignableWriterId) {
+      const healedWriter = await ctx.db.get(healResult.assignableWriterId);
+      if (healedWriter && normalizedRoleCandidates("writer").includes(healedWriter.role.toLowerCase())) {
+        assignment = {
+          agent: healedWriter,
+          requestedRole: "writer",
+          matchedRole: healedWriter.role,
+        };
+      }
+    }
   }
 
   if (!assignment) {
@@ -654,6 +676,7 @@ async function assignStageOwner(
         reasonCode: queueWriting ? "writer_queue_waiting" : reasonCode,
         requiredOwnerChain: stageOwnerChains[args.stageKey],
         diagnostics: assignmentDiagnostics,
+        writerHealResult,
       },
     });
 
