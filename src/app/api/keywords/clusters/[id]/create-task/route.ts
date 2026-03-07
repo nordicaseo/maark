@@ -123,6 +123,9 @@ export async function POST(
       keywordClusterId: cluster.id,
       targetKeyword: mainKeyword.keyword,
       contentType,
+      contentFormat: contentType,
+      pageType: typeof body.pageType === 'string' ? body.pageType : undefined,
+      subtype: typeof body.subtype === 'string' ? body.subtype : undefined,
       laneKey,
       options: {
         outlineReviewOptional: true,

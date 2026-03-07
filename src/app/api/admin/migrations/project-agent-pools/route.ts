@@ -10,6 +10,7 @@ import {
   syncProjectDedicatedAgentPool,
 } from '@/lib/agents/runtime-agent-pools';
 import { seedProjectAgentLaneProfiles } from '@/lib/agents/project-agent-profiles';
+import { backfillProjectTaskStagePlans } from '@/lib/workflow/stage-routing';
 import { getConvexClient } from '@/lib/convex/server';
 
 export async function POST(_req: NextRequest) {
@@ -31,6 +32,9 @@ export async function POST(_req: NextRequest) {
     created: number;
     updated: number;
     laneBackfilled?: number;
+    stagePlanBackfilled?: number;
+    stagePlanScanned?: number;
+    stagePlanSkipped?: number;
   }> = [];
 
   const convex = getConvexClient();
@@ -47,6 +51,10 @@ export async function POST(_req: NextRequest) {
     const backfill = convex
       ? await convex.mutation(api.topicWorkflow.backfillWorkflowLanes, { projectId: row.id })
       : null;
+    const stagePlanBackfill = await backfillProjectTaskStagePlans({
+      projectId: row.id,
+      userId: auth.user.id,
+    });
     results.push({
       projectId: row.id,
       template: runtime.staffingTemplate,
@@ -54,6 +62,9 @@ export async function POST(_req: NextRequest) {
       created: synced.created,
       updated: synced.updated,
       laneBackfilled: backfill?.updated ?? 0,
+      stagePlanBackfilled: stagePlanBackfill.updated,
+      stagePlanScanned: stagePlanBackfill.scanned,
+      stagePlanSkipped: stagePlanBackfill.skipped,
     });
   }
 

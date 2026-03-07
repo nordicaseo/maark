@@ -17,10 +17,28 @@ type TopicStageKey =
   | "outline_review"
   | "prewrite_context"
   | "writing"
+  | "editing"
   | "final_review"
+  | "human_review"
   | "complete";
 
 type AgentLaneKey = "blog" | "collection" | "product" | "landing";
+type RoutableStageKey =
+  | "research"
+  | "seo_intel_review"
+  | "outline_build"
+  | "writing"
+  | "editing"
+  | "final_review";
+
+const ROUTABLE_CONFIGURED_STAGES: ReadonlySet<RoutableStageKey> = new Set([
+  "research",
+  "seo_intel_review",
+  "outline_build",
+  "writing",
+  "editing",
+  "final_review",
+]);
 
 const stageValidator = v.union(
   v.literal("research"),
@@ -29,7 +47,9 @@ const stageValidator = v.union(
   v.literal("outline_review"),
   v.literal("prewrite_context"),
   v.literal("writing"),
+  v.literal("editing"),
   v.literal("final_review"),
+  v.literal("human_review"),
   v.literal("complete")
 );
 
@@ -54,24 +74,28 @@ const deliverableValidator = v.object({
 });
 
 const stageTransitions: Record<TopicStageKey, TopicStageKey[]> = {
-  research: ["outline_build"],
+  research: ["seo_intel_review"],
   seo_intel_review: ["outline_build"],
-  outline_build: ["outline_review"],
-  outline_review: ["prewrite_context"],
+  outline_build: ["writing"],
+  outline_review: ["writing"],
   prewrite_context: ["writing"],
-  writing: ["final_review"],
-  final_review: ["complete"],
+  writing: ["editing"],
+  editing: ["final_review"],
+  final_review: ["human_review"],
+  human_review: ["complete"],
   complete: [],
 };
 
 const stageOwnerChains: Record<TopicStageKey, string[]> = {
   research: ["researcher", "seo", "lead"],
-  seo_intel_review: ["seo-reviewer", "seo", "lead"],
+  seo_intel_review: ["seo", "seo-reviewer", "lead"],
   outline_build: ["outliner", "content", "lead"],
   outline_review: ["human", "seo-reviewer"],
   prewrite_context: ["project-manager"],
   writing: ["writer"],
+  editing: ["editor"],
   final_review: ["seo-reviewer", "seo", "lead"],
+  human_review: ["human"],
   complete: [],
 };
 
@@ -79,6 +103,7 @@ const roleAliases: Record<string, string[]> = {
   researcher: ["researcher", "seo", "editor"],
   outliner: ["outliner", "editor", "content"],
   writer: ["writer"],
+  editor: ["editor", "content"],
   "seo-reviewer": ["seo-reviewer", "seo", "editor"],
   "project-manager": ["project-manager", "lead", "editor"],
   seo: ["seo", "seo-reviewer", "editor"],
@@ -97,6 +122,12 @@ const WORKFLOW_ROLE_SEEDS: Array<{
     role: "writer",
     specialization: "Long-form SEO content",
     skills: ["SEO writing", "keyword research", "content structure", "blog posts"],
+  },
+  {
+    name: "Quill",
+    role: "editor",
+    specialization: "Editorial QA and refinement",
+    skills: ["line editing", "readability", "fact consistency", "style compliance"],
   },
   {
     name: "Sage",
@@ -312,14 +343,22 @@ function stageToTaskStatus(stage: TopicStageKey): string {
     case "outline_review":
     case "prewrite_context":
     case "writing":
+    case "editing":
       return "IN_PROGRESS";
     case "final_review":
+    case "human_review":
       return "IN_REVIEW";
     case "complete":
       return "COMPLETED";
     default:
       return "BACKLOG";
   }
+}
+
+function stageToWorkflowStageStatus(stage: TopicStageKey): string {
+  if (stage === "complete") return "complete";
+  if (stage === "human_review") return "needs_input";
+  return "in_progress";
 }
 
 function approvalsWithDefaults(task: Doc<"tasks">) {
@@ -342,6 +381,18 @@ function normalizedRoleCandidates(role: string): string[] {
   const roleKey = role.toLowerCase();
   const base = roleAliases[roleKey] || [roleKey];
   return Array.from(new Set([roleKey, ...base]));
+}
+
+function isAgentRoleAllowedForStage(stage: TopicStageKey, role: string): boolean {
+  const normalizedRole = String(role || "").toLowerCase();
+  const chain = stageOwnerChains[stage] || [];
+  for (const requestedRole of chain) {
+    if (requestedRole === "human") continue;
+    if (normalizedRoleCandidates(requestedRole).includes(normalizedRole)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function seedMissingWorkflowRoles(
@@ -626,6 +677,120 @@ async function hasValidOutlineArtifact(
   );
 }
 
+function readConfiguredStageOwner(
+  task: Doc<"tasks">,
+  stage: TopicStageKey
+): {
+  configured: boolean;
+  slotKey: string | null;
+  enabled: boolean;
+  laneKey: AgentLaneKey | null;
+  agentName: string | null;
+  agentRole: string | null;
+} {
+  const plan =
+    task.workflowStagePlan && typeof task.workflowStagePlan === "object"
+      ? (task.workflowStagePlan as Record<string, unknown>)
+      : null;
+  const owners =
+    plan?.owners && typeof plan.owners === "object"
+      ? (plan.owners as Record<string, unknown>)
+      : null;
+  const stageOwner =
+    owners?.[stage] && typeof owners[stage] === "object"
+      ? (owners[stage] as Record<string, unknown>)
+      : null;
+  const slotKey =
+    typeof stageOwner?.slotKey === "string" && stageOwner.slotKey.trim().length > 0
+      ? stageOwner.slotKey.trim()
+      : null;
+  const enabled =
+    stageOwner?.enabled === undefined
+      ? true
+      : stageOwner.enabled === true || String(stageOwner.enabled).toLowerCase() === "true";
+  const configuredLane =
+    stageOwner?.laneKey && isAgentLaneKey(stageOwner.laneKey) ? stageOwner.laneKey : null;
+  const agentName =
+    typeof stageOwner?.agentName === "string" && stageOwner.agentName.trim().length > 0
+      ? stageOwner.agentName.trim()
+      : null;
+  const agentRole =
+    typeof stageOwner?.agentRole === "string" && stageOwner.agentRole.trim().length > 0
+      ? stageOwner.agentRole.trim()
+      : null;
+
+  return {
+    configured: Boolean(stageOwner),
+    slotKey,
+    enabled,
+    laneKey: configuredLane,
+    agentName,
+    agentRole,
+  };
+}
+
+async function resolveConfiguredStageOwnerAgent(
+  ctx: MutationCtx,
+  args: {
+    task: Doc<"tasks">;
+    stage: TopicStageKey;
+    projectId?: number;
+    laneKey?: AgentLaneKey;
+    slotKey: string;
+  }
+): Promise<{ agent: Doc<"agents">; requestedRole: string; matchedRole: string } | null> {
+  const rows = await ctx.db
+    .query("agents")
+    .withIndex("by_slot", (q) => q.eq("slotKey", args.slotKey))
+    .collect();
+
+  const agent =
+    rows.find(
+      (candidate) =>
+        isAgentRoutableForStage({
+          agent: candidate,
+          stage: args.stage,
+          projectId: args.projectId,
+          laneKey: args.laneKey,
+        }) &&
+        isAgentRoleAllowedForStage(args.stage, candidate.role) &&
+        normalizeAgentStatus(candidate.status) === "ONLINE"
+    ) ||
+    rows.find(
+      (candidate) =>
+        isAgentRoutableForStage({
+          agent: candidate,
+          stage: args.stage,
+          projectId: args.projectId,
+          laneKey: args.laneKey,
+        }) &&
+        isAgentRoleAllowedForStage(args.stage, candidate.role) &&
+        normalizeAgentStatus(candidate.status) === "IDLE"
+    ) ||
+    rows.find((candidate) => {
+      if (
+        !isAgentRoutableForStage({
+          agent: candidate,
+          stage: args.stage,
+          projectId: args.projectId,
+          laneKey: args.laneKey,
+        })
+      ) {
+        return false;
+      }
+      if (!isAgentRoleAllowedForStage(args.stage, candidate.role)) return false;
+      const status = normalizeAgentStatus(candidate.status);
+      return status === "WORKING" && candidate.currentTaskId === args.task._id;
+    });
+
+  if (!agent) return null;
+  return {
+    agent,
+    requestedRole: stageOwnerChains[args.stage]?.[0] || "configured",
+    matchedRole: agent.role,
+  };
+}
+
 async function resolveStageOwnerAgent(
   ctx: MutationCtx,
   stage: TopicStageKey,
@@ -799,11 +964,14 @@ async function assignStageOwner(
     laneKey?: AgentLaneKey;
   }
 ) {
-  const currentTask = await ctx.db.get(args.taskId);
+    const currentTask = await ctx.db.get(args.taskId);
   if (!currentTask) {
     return {
       blocked: true,
       queued: false,
+      queueReason: null as string | null,
+      configuredSlotKey: null as string | null,
+      configuredAgentName: null as string | null,
       assignedAgentId: null as Id<"agents"> | null,
       assignedAgentName: null as string | null,
     };
@@ -812,15 +980,24 @@ async function assignStageOwner(
   const stageOwnerChain = stageOwnerChains[args.stageKey] || [];
   const assignableRoles = stageOwnerChain.filter((role) => role !== "human");
   if (assignableRoles.length === 0) {
+    const stageStatus =
+      args.stageKey === "complete"
+        ? "complete"
+        : args.stageKey === "human_review"
+          ? "needs_input"
+          : "in_progress";
     await ctx.db.patch(args.taskId, {
       assignedAgentId: undefined,
-      workflowStageStatus: args.stageKey === "complete" ? "complete" : "in_progress",
+      workflowStageStatus: stageStatus,
       workflowUpdatedAt: Date.now(),
       updatedAt: Date.now(),
     });
     return {
       blocked: false,
       queued: false,
+      queueReason: null as string | null,
+      configuredSlotKey: null as string | null,
+      configuredAgentName: null as string | null,
       assignedAgentId: null as Id<"agents"> | null,
       assignedAgentName: null as string | null,
     };
@@ -830,11 +1007,45 @@ async function assignStageOwner(
   const laneKey =
     args.laneKey ||
     (isAgentLaneKey(currentTask.workflowLaneKey) ? currentTask.workflowLaneKey : undefined);
+  const configuredOwner = readConfiguredStageOwner(currentTask, args.stageKey);
+  const strictConfiguredStage =
+    configuredOwner.configured &&
+    ROUTABLE_CONFIGURED_STAGES.has(args.stageKey as RoutableStageKey);
+  const effectiveLaneKey = configuredOwner.laneKey || laneKey;
   let assignment = await resolveStageOwnerAgent(ctx, args.stageKey, args.projectId, laneKey);
   let assignmentDiagnostics: Record<string, unknown> | undefined;
   let writerHealResult: Awaited<ReturnType<typeof healWriterAvailability>> | undefined;
 
-  if (!assignment && args.stageKey === "writing") {
+  if (strictConfiguredStage) {
+    assignment = null;
+    assignmentDiagnostics = {
+      configuredRouting: true,
+      configuredSlotKey: configuredOwner.slotKey,
+      configuredAgentName: configuredOwner.agentName,
+      configuredAgentRole: configuredOwner.agentRole,
+      configuredEnabled: configuredOwner.enabled,
+      laneKey: effectiveLaneKey || null,
+    };
+
+    if (!configuredOwner.enabled) {
+      assignmentDiagnostics.reasonCode = "configured_stage_disabled";
+    } else if (!configuredOwner.slotKey) {
+      assignmentDiagnostics.reasonCode = "configured_slot_missing";
+    } else {
+      assignment = await resolveConfiguredStageOwnerAgent(ctx, {
+        task: currentTask,
+        stage: args.stageKey,
+        projectId: args.projectId,
+        laneKey: effectiveLaneKey,
+        slotKey: configuredOwner.slotKey,
+      });
+      if (!assignment) {
+        assignmentDiagnostics.reasonCode = "configured_agent_unavailable";
+      }
+    }
+  }
+
+  if (!strictConfiguredStage && !assignment && args.stageKey === "writing") {
     const healResult = await healWriterAvailability(ctx, args.projectId, laneKey);
     writerHealResult = healResult;
     assignmentDiagnostics = {
@@ -861,43 +1072,64 @@ async function assignStageOwner(
   }
 
   if (!assignment) {
-    const queueWriting = args.stageKey === "writing";
+    const queueTask =
+      strictConfiguredStage ||
+      args.stageKey === "writing" ||
+      args.stageKey === "research" ||
+      args.stageKey === "seo_intel_review" ||
+      args.stageKey === "outline_build" ||
+      args.stageKey === "editing" ||
+      args.stageKey === "final_review";
     await ctx.db.patch(args.taskId, {
       assignedAgentId: undefined,
-      workflowStageStatus: queueWriting ? "queued" : "blocked",
-      status: queueWriting ? "PENDING" : currentTask.status,
+      workflowStageStatus: queueTask ? "queued" : "blocked",
+      status: queueTask ? "PENDING" : currentTask.status,
       workflowUpdatedAt: now,
       updatedAt: now,
     });
 
     const reasonCode =
       (assignmentDiagnostics?.reasonCode as string | undefined) ||
-      (args.stageKey === "writing" ? "writer_lane_unavailable" : "assignment_unavailable");
-    const summary = queueWriting
-      ? `PM writer queue: waiting for available ${laneKey || "writer"} lane writer on ${args.stageKey}. owner chain: ${stageOwnerSummary(args.stageKey)}.`
+      (strictConfiguredStage
+        ? "configured_agent_unavailable"
+        : args.stageKey === "writing"
+          ? "writer_lane_unavailable"
+          : "assignment_unavailable");
+    const summary = queueTask
+      ? strictConfiguredStage
+        ? `PM assignment queued: configured owner unavailable for ${args.stageKey}. waiting on slot ${configuredOwner.slotKey || "unconfigured"}${effectiveLaneKey ? ` (${effectiveLaneKey} lane)` : ""}.`
+        : `PM writer queue: waiting for available ${laneKey || "writer"} lane writer on ${args.stageKey}. owner chain: ${stageOwnerSummary(args.stageKey)}.`
       : `PM assignment blocked: no available agent for ${args.stageKey}. required owner chain: ${stageOwnerSummary(args.stageKey)}.`;
     await insertWorkflowEvent(ctx, {
       taskId: args.taskId,
       projectId: args.projectId,
       stageKey: args.stageKey,
-      eventType: queueWriting ? "assignment_queued" : "assignment_blocked",
+      eventType: queueTask ? "assignment_queued" : "assignment_blocked",
       actorType: "system",
       actorName: "Workflow PM",
       summary,
       payload: {
-        reasonCode: queueWriting ? "writer_lane_unavailable" : reasonCode,
+        reasonCode,
         requiredOwnerChain: stageOwnerChains[args.stageKey],
         strictProjectPools: strictProjectAgentPoolsEnabled(),
         projectId: args.projectId,
-        laneKey: laneKey || null,
+        laneKey: effectiveLaneKey || null,
+        configuredRouting: strictConfiguredStage,
+        configuredSlotKey: configuredOwner.slotKey,
+        configuredAgentName: configuredOwner.agentName,
+        configuredAgentRole: configuredOwner.agentRole,
+        queueReason: reasonCode,
         diagnostics: assignmentDiagnostics,
         writerHealResult,
       },
     });
 
     return {
-      blocked: !queueWriting,
-      queued: queueWriting,
+      blocked: !queueTask,
+      queued: queueTask,
+      queueReason: reasonCode,
+      configuredSlotKey: configuredOwner.slotKey,
+      configuredAgentName: configuredOwner.agentName,
       assignedAgentId: null as Id<"agents"> | null,
       assignedAgentName: null as string | null,
     };
@@ -931,13 +1163,20 @@ async function assignStageOwner(
       assignedAgentName: assignment.agent.name,
       requestedRole: assignment.requestedRole,
       matchedRole: assignment.matchedRole,
-      laneKey: laneKey || null,
+      laneKey: effectiveLaneKey || null,
+      configuredRouting: strictConfiguredStage,
+      configuredSlotKey: configuredOwner.slotKey,
+      configuredAgentName: configuredOwner.agentName,
+      configuredAgentRole: configuredOwner.agentRole,
     },
   });
 
   return {
     blocked: false,
     queued: false,
+    queueReason: null as string | null,
+    configuredSlotKey: configuredOwner.slotKey,
+    configuredAgentName: configuredOwner.agentName,
     assignedAgentId: assignment.agent._id,
     assignedAgentName: assignment.agent.name,
     requestedRole: assignment.requestedRole,
@@ -964,7 +1203,7 @@ async function transitionStage(
 
   const patch: Partial<Doc<"tasks">> & Record<string, unknown> = {
     workflowCurrentStageKey: args.toStage,
-    workflowStageStatus: args.toStage === "complete" ? "complete" : "in_progress",
+    workflowStageStatus: stageToWorkflowStageStatus(args.toStage),
     workflowUpdatedAt: now,
     updatedAt: now,
     status: stageToTaskStatus(args.toStage),
@@ -1034,6 +1273,10 @@ export const createTopicFromSource = mutation({
     skillId: v.optional(v.number()),
     laneKey: v.optional(laneValidator),
     contentType: v.optional(v.string()),
+    contentFormat: v.optional(v.string()),
+    pageType: v.optional(v.string()),
+    subtype: v.optional(v.string()),
+    workflowStagePlan: v.optional(v.any()),
     options: v.optional(
       v.object({
         outlineReviewOptional: v.optional(v.boolean()),
@@ -1085,6 +1328,25 @@ export const createTopicFromSource = mutation({
     );
     const runNotBeforeAt = now + startDelayMs;
     const initialSummary = `Topic workflow created from ${args.entryPoint}: ${args.topic}`;
+    const contentFormat =
+      typeof args.contentFormat === "string" && args.contentFormat.trim().length > 0
+        ? args.contentFormat.trim()
+        : typeof args.contentType === "string" && args.contentType.trim().length > 0
+          ? args.contentType.trim()
+          : "blog_post";
+    const tags = Array.from(
+      new Set(
+        [
+          "topic",
+          "workflow",
+          args.entryPoint,
+          `lane:${laneKey}`,
+          `format:${contentFormat}`,
+          args.pageType ? `page:${args.pageType}` : null,
+          args.subtype ? `subtype:${args.subtype}` : null,
+        ].filter(Boolean) as string[]
+      )
+    );
 
     const taskId = await ctx.db.insert("tasks", {
       title: args.topic,
@@ -1095,7 +1357,7 @@ export const createTopicFromSource = mutation({
       documentId: args.documentId,
       projectId: args.projectId,
       skillId: args.skillId,
-      tags: ["topic", "workflow", args.entryPoint, `lane:${laneKey}`],
+      tags,
       createdAt: now,
       updatedAt: now,
       workflowTemplateKey: WORKFLOW_TEMPLATE_KEY,
@@ -1114,6 +1376,10 @@ export const createTopicFromSource = mutation({
       workflowLastEventText: initialSummary,
       workflowRunNotBeforeAt: runNotBeforeAt,
       workflowLaneKey: laneKey,
+      workflowContentFormat: contentFormat,
+      workflowPageType: args.pageType,
+      workflowSubtype: args.subtype,
+      workflowStagePlan: args.workflowStagePlan,
       topicKey,
     });
 
@@ -1134,6 +1400,9 @@ export const createTopicFromSource = mutation({
         keywordClusterId: args.keywordClusterId,
         workflowStartDelayMs: startDelayMs,
         laneKey,
+        contentFormat,
+        pageType: args.pageType ?? null,
+        subtype: args.subtype ?? null,
       },
     });
 
@@ -1188,6 +1457,9 @@ export const ensureStageOwner = mutation({
       stageKey,
       blocked: Boolean(assignment?.blocked),
       queued: Boolean(assignment?.queued),
+      queueReason: assignment?.queueReason ?? null,
+      configuredSlotKey: assignment?.configuredSlotKey ?? null,
+      configuredAgentName: assignment?.configuredAgentName ?? null,
       assignedAgentId: assignment?.assignedAgentId ?? null,
       assignedAgentName: assignment?.assignedAgentName ?? null,
     };
@@ -1360,11 +1632,11 @@ export const advanceStage = mutation({
 
     let allowed = stageTransitions[currentStage].includes(args.toStage);
 
-    // Optional outline review skip path:
+    // Legacy optional outline review skip path:
     if (
       !allowed &&
       currentStage === "outline_build" &&
-      args.toStage === "prewrite_context" &&
+      args.toStage === "writing" &&
       args.skipOptionalOutlineReview
     ) {
       if (!flags.outlineReviewOptional) {
@@ -1379,19 +1651,16 @@ export const advanceStage = mutation({
     }
 
     if (args.toStage === "writing") {
-      const outlineGateSatisfied =
-        approvals.outlineSkipped ||
-        !flags.outlineReviewOptional ||
-        (approvals.outlineHuman && approvals.outlineSeo);
-      if (!outlineGateSatisfied) {
-        throw new Error("Outline approvals must be completed before writing.");
-      }
       const outlineReady = await hasValidOutlineArtifact(ctx, task._id);
       if (!outlineReady) {
         throw new Error(
           "Outline artifact is missing or invalid. Writing cannot start before a valid outline is generated."
         );
       }
+    }
+
+    if (args.toStage === "human_review" && flags.seoReviewRequired && !approvals.seoFinal) {
+      throw new Error("Final SEO approval is required before human review.");
     }
 
     if (args.toStage === "complete" && flags.seoReviewRequired && !approvals.seoFinal) {
@@ -1472,10 +1741,10 @@ export const recordApproval = mutation({
     ) {
       await transitionStage(ctx, {
         task,
-        toStage: "prewrite_context",
+        toStage: "writing",
         actorType: "system",
         actorName: "Workflow PM",
-        note: "Outline approvals complete. Moving to prewrite context.",
+        note: "Outline approvals complete. Moving to writing.",
         approvalsOverride: approvals,
       });
       stageAdvanced = true;
@@ -1489,10 +1758,10 @@ export const recordApproval = mutation({
     ) {
       await transitionStage(ctx, {
         task,
-        toStage: "complete",
+        toStage: "human_review",
         actorType: "system",
         actorName: "Workflow PM",
-        note: "Final SEO approval complete. Marking task complete.",
+        note: "Final SEO approval complete. Moving to human review.",
         approvalsOverride: approvals,
       });
       stageAdvanced = true;

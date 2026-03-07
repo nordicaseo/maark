@@ -27,8 +27,9 @@ export const TOPIC_STAGE_TRANSITIONS: Record<TopicStageKey, TopicStageKey[]> = O
   })
 ) as Record<TopicStageKey, TopicStageKey[]>;
 
-// Legacy compatibility: old workflows may still have this stage.
-TOPIC_STAGE_TRANSITIONS.seo_intel_review = ['outline_build'];
+// Legacy compatibility: old workflows may still have these stages.
+TOPIC_STAGE_TRANSITIONS.prewrite_context = ['writing'];
+TOPIC_STAGE_TRANSITIONS.outline_review = ['writing'];
 
 export function canSkipOutlineReviewByRole(role: string): boolean {
   return (
@@ -59,7 +60,7 @@ export function evaluateStageTransition(args: {
   if (
     !allowed &&
     args.currentStage === 'outline_build' &&
-    args.toStage === 'prewrite_context' &&
+    args.toStage === 'writing' &&
     args.skipOptionalOutlineReview
   ) {
     if (!args.flags.outlineReviewOptional) {
@@ -77,19 +78,12 @@ export function evaluateStageTransition(args: {
     };
   }
 
-  if (args.toStage === 'writing') {
-    const outlineGateSatisfied =
-      approvals.outlineSkipped ||
-      !args.flags.outlineReviewOptional ||
-      (approvals.outlineHuman && approvals.outlineSeo);
-
-    if (!outlineGateSatisfied) {
-      return {
-        ok: false,
-        reason: 'Outline approvals must be completed before writing.',
-        approvals,
-      };
-    }
+  if (args.toStage === 'human_review' && args.flags.seoReviewRequired && !approvals.seoFinal) {
+    return {
+      ok: false,
+      reason: 'Final SEO approval is required before human review.',
+      approvals,
+    };
   }
 
   if (args.toStage === 'complete' && args.flags.seoReviewRequired && !approvals.seoFinal) {

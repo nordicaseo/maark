@@ -91,6 +91,10 @@ export const create = mutation({
     workflowLastEventText: v.optional(v.string()),
     workflowRunNotBeforeAt: v.optional(v.number()),
     workflowLaneKey: v.optional(v.string()),
+    workflowContentFormat: v.optional(v.string()),
+    workflowPageType: v.optional(v.string()),
+    workflowSubtype: v.optional(v.string()),
+    workflowStagePlan: v.optional(v.any()),
     topicKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -160,6 +164,10 @@ export const update = mutation({
     workflowLastEventText: v.optional(v.string()),
     workflowRunNotBeforeAt: v.optional(v.number()),
     workflowLaneKey: v.optional(v.string()),
+    workflowContentFormat: v.optional(v.string()),
+    workflowPageType: v.optional(v.string()),
+    workflowSubtype: v.optional(v.string()),
+    workflowStagePlan: v.optional(v.any()),
     topicKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {

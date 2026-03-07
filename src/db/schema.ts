@@ -13,6 +13,7 @@ export const userPresence = schema.userPresence;
 export const skills = schema.skills;
 export const projectAgentProfiles = schema.projectAgentProfiles;
 export const projectAgentLaneProfiles = schema.projectAgentLaneProfiles;
+export const projectWorkflowStageRoutes = schema.projectWorkflowStageRoutes;
 export const agentSharedProfiles = schema.agentSharedProfiles;
 export const skillParts = schema.skillParts;
 export const aiProviders = schema.aiProviders;

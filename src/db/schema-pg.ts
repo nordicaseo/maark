@@ -192,6 +192,24 @@ export const projectAgentLaneProfiles = pgTable('project_agent_lane_profiles', {
   ),
 ]);
 
+export const projectWorkflowStageRoutes = pgTable('project_workflow_stage_routes', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  contentFormat: varchar('content_format', { length: 80 }).notNull(),
+  laneKey: varchar('lane_key', { length: 40 }).notNull().default('blog'),
+  stageSlots: jsonb('stage_slots'),
+  stageEnabled: jsonb('stage_enabled'),
+  createdById: text('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+  updatedById: text('updated_by_id').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('project_workflow_stage_routes_unique_project_content_format').on(
+    table.projectId,
+    table.contentFormat
+  ),
+]);
+
 export const agentSharedProfiles = pgTable('agent_shared_profiles', {
   id: serial('id').primaryKey(),
   key: varchar('key', { length: 120 }).notNull().unique(),

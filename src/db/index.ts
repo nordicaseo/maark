@@ -275,6 +275,28 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
         ON project_agent_lane_profiles(project_id, role, lane_key);
     EXCEPTION WHEN duplicate_table OR duplicate_object THEN NULL;
     END $$;
+
+    DO $$ BEGIN
+      CREATE TABLE project_workflow_stage_routes (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        content_format VARCHAR(80) NOT NULL,
+        lane_key VARCHAR(40) NOT NULL DEFAULT 'blog',
+        stage_slots JSONB,
+        stage_enabled JSONB,
+        created_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        updated_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    EXCEPTION WHEN duplicate_table THEN NULL;
+    END $$;
+
+    DO $$ BEGIN
+      CREATE UNIQUE INDEX project_workflow_stage_routes_unique_project_content_format
+        ON project_workflow_stage_routes(project_id, content_format);
+    EXCEPTION WHEN duplicate_table OR duplicate_object THEN NULL;
+    END $$;
   `);
 
   await sql.query(`
@@ -286,6 +308,12 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       ADD COLUMN IF NOT EXISTS avatar_url TEXT;
     ALTER TABLE project_agent_lane_profiles
       ADD COLUMN IF NOT EXISTS short_description TEXT;
+    ALTER TABLE project_workflow_stage_routes
+      ADD COLUMN IF NOT EXISTS lane_key VARCHAR(40) NOT NULL DEFAULT 'blog';
+    ALTER TABLE project_workflow_stage_routes
+      ADD COLUMN IF NOT EXISTS stage_slots JSONB;
+    ALTER TABLE project_workflow_stage_routes
+      ADD COLUMN IF NOT EXISTS stage_enabled JSONB;
   `);
 
   // ── Skill Parts ──
@@ -1172,11 +1200,29 @@ function createDb() {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS project_agent_lane_profiles_unique_project_role_lane
       ON project_agent_lane_profiles(project_id, role, lane_key);
+
+    CREATE TABLE IF NOT EXISTS project_workflow_stage_routes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      content_format TEXT NOT NULL,
+      lane_key TEXT NOT NULL DEFAULT 'blog',
+      stage_slots TEXT,
+      stage_enabled TEXT,
+      created_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      updated_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS project_workflow_stage_routes_unique_project_content_format
+      ON project_workflow_stage_routes(project_id, content_format);
   `);
   addColumnSafe(sqlite, 'project_agent_profiles', 'avatar_url', 'TEXT');
   addColumnSafe(sqlite, 'project_agent_profiles', 'short_description', 'TEXT');
   addColumnSafe(sqlite, 'project_agent_lane_profiles', 'avatar_url', 'TEXT');
   addColumnSafe(sqlite, 'project_agent_lane_profiles', 'short_description', 'TEXT');
+  addColumnSafe(sqlite, 'project_workflow_stage_routes', 'lane_key', "TEXT NOT NULL DEFAULT 'blog'");
+  addColumnSafe(sqlite, 'project_workflow_stage_routes', 'stage_slots', 'TEXT');
+  addColumnSafe(sqlite, 'project_workflow_stage_routes', 'stage_enabled', 'TEXT');
 
   // ── Skill Parts ──
   sqlite.exec(`

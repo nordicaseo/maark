@@ -36,17 +36,19 @@ export const TASK_STATUS_COLUMNS: ReadonlyArray<{
 
 export const TOPIC_STAGES = [
   'research',
+  'seo_intel_review',
   'outline_build',
-  'outline_review',
-  'prewrite_context',
   'writing',
+  'editing',
   'final_review',
+  'human_review',
   'complete',
 ] as const;
 
 export type TopicStageKey =
   | (typeof TOPIC_STAGES)[number]
-  | 'seo_intel_review';
+  | 'outline_review'
+  | 'prewrite_context';
 
 export const TOPIC_STAGE_LABELS: Record<TopicStageKey, string> = {
   research: 'Research',
@@ -55,40 +57,48 @@ export const TOPIC_STAGE_LABELS: Record<TopicStageKey, string> = {
   outline_review: 'Outline Review',
   prewrite_context: 'Prewrite',
   writing: 'Writing',
+  editing: 'Editing',
   final_review: 'SEO Review',
+  human_review: 'Human Review',
   complete: 'Complete',
 };
 
 export const TOPIC_STAGE_NEXT: Record<TopicStageKey, TopicStageKey | null> = {
-  research: 'outline_build',
+  research: 'seo_intel_review',
   seo_intel_review: 'outline_build',
-  outline_build: 'outline_review',
-  outline_review: 'prewrite_context',
+  outline_build: 'writing',
+  outline_review: 'writing',
   prewrite_context: 'writing',
-  writing: 'final_review',
-  final_review: 'complete',
+  writing: 'editing',
+  editing: 'final_review',
+  final_review: 'human_review',
+  human_review: 'complete',
   complete: null,
 };
 
 export const TOPIC_STAGE_OWNERS: Record<TopicStageKey, string> = {
   research: 'researcher -> seo -> lead',
-  seo_intel_review: 'seo-reviewer -> seo -> lead',
+  seo_intel_review: 'seo -> seo-reviewer -> lead',
   outline_build: 'outliner -> content -> lead',
   outline_review: 'human + seo-reviewer',
-  prewrite_context: 'project-manager',
   writing: 'writer',
+  prewrite_context: 'project-manager',
+  editing: 'editor',
   final_review: 'seo-reviewer -> seo -> lead',
+  human_review: 'human review',
   complete: 'pm handoff closed',
 };
 
 export const TOPIC_STAGE_OWNER_CHAINS: Record<TopicStageKey, string[]> = {
   research: ['researcher', 'seo', 'lead'],
-  seo_intel_review: ['seo-reviewer', 'seo', 'lead'],
+  seo_intel_review: ['seo', 'seo-reviewer', 'lead'],
   outline_build: ['outliner', 'content', 'lead'],
   outline_review: ['human', 'seo-reviewer'],
-  prewrite_context: ['project-manager'],
   writing: ['writer'],
+  prewrite_context: ['project-manager'],
+  editing: ['editor'],
   final_review: ['seo-reviewer', 'seo', 'lead'],
+  human_review: ['human'],
   complete: [],
 };
 
@@ -141,7 +151,7 @@ export function resolveWorkflowRuntimeState(task: {
   }
   if (stageStatus === 'blocked') return 'blocked';
   if (stageStatus === 'queued') return 'queued';
-  if (stage === 'outline_review') {
+  if (stage === 'outline_review' || stage === 'human_review') {
     return 'needs_input';
   }
   if (taskStatus === 'IN_PROGRESS' || stageStatus === 'in_progress') return 'working';

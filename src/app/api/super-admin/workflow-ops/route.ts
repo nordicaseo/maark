@@ -51,7 +51,9 @@ const WORKFLOW_STAGE_KEYS: TopicStageKey[] = [
   'outline_review',
   'prewrite_context',
   'writing',
+  'editing',
   'final_review',
+  'human_review',
   'complete',
 ];
 

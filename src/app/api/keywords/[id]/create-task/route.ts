@@ -95,6 +95,9 @@ export async function POST(
       keywordId: keyword.id,
       targetKeyword: keyword.keyword,
       contentType,
+      contentFormat: contentType,
+      pageType,
+      subtype,
       laneKey,
       options: {
         outlineReviewOptional: true,

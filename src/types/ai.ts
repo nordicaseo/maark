@@ -27,9 +27,11 @@ export type AIAction =
   | 'comment_processing'
   | 'research'
   | 'workflow_research'
+  | 'workflow_serp'
   | 'workflow_outline'
   | 'workflow_prewrite'
   | 'workflow_writing'
+  | 'workflow_editing'
   | 'workflow_final_review'
   | 'workflow_pm';
 
@@ -41,9 +43,11 @@ export const AI_ACTIONS: readonly AIAction[] = [
   'comment_processing',
   'research',
   'workflow_research',
+  'workflow_serp',
   'workflow_outline',
   'workflow_prewrite',
   'workflow_writing',
+  'workflow_editing',
   'workflow_final_review',
   'workflow_pm',
 ] as const;
@@ -56,9 +60,11 @@ export const AI_ACTION_LABELS: Record<AIAction, string> = {
   comment_processing: 'Comment Processing',
   research: 'Research',
   workflow_research: 'Workflow: Research Stage',
+  workflow_serp: 'Workflow: SERP Intel Stage',
   workflow_outline: 'Workflow: Outline Stage',
   workflow_prewrite: 'Workflow: PM Prewrite Stage',
   workflow_writing: 'Workflow: Writing Stage',
+  workflow_editing: 'Workflow: Editing Stage',
   workflow_final_review: 'Workflow: Final SEO Review',
   workflow_pm: 'Workflow: PM General',
 };

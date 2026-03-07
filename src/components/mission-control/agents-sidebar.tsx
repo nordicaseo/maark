@@ -13,6 +13,7 @@ type Agent = Doc<'agents'>;
 
 interface AgentProfileSummary {
   role: string;
+  laneKey?: string | null;
   displayName: string;
   emoji: string | null;
   avatarUrl: string | null;
@@ -69,11 +70,19 @@ export function AgentsSidebar() {
       try {
         const res = await fetch(`/api/mission-control/agents?projectId=${activeProjectId}`);
         if (!res.ok) return;
-        const data = (await res.json()) as { profiles?: AgentProfileSummary[] };
+        const data = (await res.json()) as {
+          profiles?: AgentProfileSummary[];
+          laneProfiles?: AgentProfileSummary[];
+        };
         if (cancelled) return;
         const byRole: Record<string, AgentProfileSummary> = {};
         for (const profile of data.profiles || []) {
           byRole[profile.role.toLowerCase()] = profile;
+        }
+        for (const profile of data.laneProfiles || []) {
+          const laneKey = String(profile.laneKey || '').toLowerCase();
+          if (!laneKey) continue;
+          byRole[`${profile.role.toLowerCase()}:${laneKey}`] = profile;
         }
         setProfileMap(byRole);
       } catch {
@@ -124,17 +133,24 @@ export function AgentsSidebar() {
         <div key={section.label}>
           <p className="mc-header-mono mb-2">{section.label}</p>
           <div className="space-y-1.5">
-            {section.agents.map((agent) => (
-              <AgentCard
-                key={agent._id}
-                agent={agent}
-                profile={profileMap[agent.role.toLowerCase()]}
-                expanded={expandedId === String(agent._id)}
-                onToggle={() =>
-                  setExpandedId((prev) => (prev === String(agent._id) ? null : String(agent._id)))
-                }
-              />
-            ))}
+            {section.agents.map((agent) => {
+              const laneKey = String(agent.laneKey || '').toLowerCase();
+              const profile =
+                laneKey && agent.role.toLowerCase() === 'writer'
+                  ? profileMap[`writer:${laneKey}`] || profileMap[agent.role.toLowerCase()]
+                  : profileMap[agent.role.toLowerCase()];
+              return (
+                <AgentCard
+                  key={agent._id}
+                  agent={agent}
+                  profile={profile}
+                  expanded={expandedId === String(agent._id)}
+                  onToggle={() =>
+                    setExpandedId((prev) => (prev === String(agent._id) ? null : String(agent._id)))
+                  }
+                />
+              );
+            })}
           </div>
         </div>
       ))}
@@ -311,6 +327,7 @@ function AgentCard({
   const skills = useMemo(() => agent.skills?.slice(0, 8) || [], [agent.skills]);
   const tools = useMemo(() => profile?.tools?.slice(0, 6) || [], [profile?.tools]);
   const cardTitle = profile?.displayName || agent.name;
+  const runtimeIdentity = `${agent.name}${agent.laneKey ? ` · lane ${agent.laneKey}` : ''}`;
   const subtitle = profile?.shortDescription || agent.specialization || `${agent.role} agent`;
 
   return (
@@ -332,6 +349,9 @@ function AgentCard({
           </div>
           <p className="text-[11px] leading-4 truncate" style={{ color: 'var(--mc-text-secondary)' }}>
             {subtitle}
+          </p>
+          <p className="text-[10px] leading-4 truncate" style={{ color: 'var(--mc-text-muted)' }}>
+            Runtime: {runtimeIdentity}
           </p>
         </div>
 

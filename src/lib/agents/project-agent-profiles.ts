@@ -95,6 +95,13 @@ const ROLE_DEFAULTS: Record<
     mission:
       'Write complete, publication-ready content that follows outline, brand, and SEO requirements.',
   },
+  editor: {
+    displayName: 'Quill',
+    emoji: '🧾',
+    shortDescription: 'Editorial finisher',
+    mission:
+      'Edit drafted content for clarity, flow, factual consistency, and readiness for SEO review.',
+  },
   'seo-reviewer': {
     displayName: 'Orion',
     emoji: '🔎',
@@ -138,11 +145,20 @@ const ROLE_STAGE_FOCUS: Record<AgentRole, string[]> = {
   researcher: ['research'],
   outliner: ['outline_build'],
   writer: ['writing'],
-  'seo-reviewer': ['outline_review', 'final_review'],
-  'project-manager': ['prewrite_context'],
-  seo: ['research', 'final_review'],
-  content: ['outline_build', 'writing'],
-  lead: ['research', 'outline_build', 'prewrite_context', 'writing', 'final_review'],
+  editor: ['editing'],
+  'seo-reviewer': ['seo_intel_review', 'final_review'],
+  'project-manager': ['prewrite_context', 'human_review'],
+  seo: ['research', 'seo_intel_review', 'final_review'],
+  content: ['outline_build', 'writing', 'editing'],
+  lead: [
+    'research',
+    'seo_intel_review',
+    'outline_build',
+    'writing',
+    'editing',
+    'final_review',
+    'human_review',
+  ],
 };
 
 const MAX_MEMORY_CHARS = 16000;

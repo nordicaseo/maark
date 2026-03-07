@@ -151,7 +151,10 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
       const parsedProjectId = projectId;
       const resolvedContentType = resolveDefaultContentType(pageType, selectedSubtype);
       const resolvedLaneKey = resolveLaneFromPageSelection(pageType, selectedSubtype);
-      const typeTags = getPageSelectionTags(pageType, selectedSubtype);
+      const typeTags = [
+        ...getPageSelectionTags(pageType, selectedSubtype),
+        `format:${resolvedContentType}`,
+      ];
 
       // For content/edit tasks, auto-create a linked document in the editor
       let documentId: number | undefined;
@@ -197,6 +200,9 @@ export function NewTaskDialog({ open, onOpenChange, projectId }: NewTaskDialogPr
             entryPoint: 'mission_control',
             skillId: effectiveSkillId,
             contentType: resolvedContentType,
+            contentFormat: resolvedContentType,
+            pageType,
+            subtype: selectedSubtype,
             laneKey: resolvedLaneKey,
             options: {
               outlineReviewOptional: true,

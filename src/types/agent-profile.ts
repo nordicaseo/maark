@@ -4,6 +4,7 @@ export const FIXED_AGENT_ROLES = [
   'researcher',
   'outliner',
   'writer',
+  'editor',
   'seo-reviewer',
   'project-manager',
   'seo',

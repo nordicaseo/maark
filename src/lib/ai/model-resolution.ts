@@ -29,10 +29,12 @@ export interface ResolvedModelConfig {
 
 const LEGACY_ACTION_FALLBACK: Partial<Record<AIAction, AIAction>> = {
   workflow_research: 'research',
+  workflow_serp: 'research',
   workflow_outline: 'research',
   workflow_prewrite: 'research',
   workflow_pm: 'workflow_prewrite',
   workflow_writing: 'writing',
+  workflow_editing: 'writing',
   workflow_final_review: 'writing',
 };
 

@@ -172,6 +172,24 @@ export const projectAgentLaneProfiles = sqliteTable('project_agent_lane_profiles
   ),
 ]);
 
+export const projectWorkflowStageRoutes = sqliteTable('project_workflow_stage_routes', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  contentFormat: text('content_format').notNull(),
+  laneKey: text('lane_key').notNull().default('blog'),
+  stageSlots: text('stage_slots', { mode: 'json' }),
+  stageEnabled: text('stage_enabled', { mode: 'json' }),
+  createdById: text('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+  updatedById: text('updated_by_id').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('project_workflow_stage_routes_unique_project_content_format').on(
+    table.projectId,
+    table.contentFormat
+  ),
+]);
+
 export const agentSharedProfiles = sqliteTable('agent_shared_profiles', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   key: text('key').notNull().unique(),

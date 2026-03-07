@@ -33,7 +33,9 @@ const DEFAULT_WATCHDOG_RETRY_BACKOFF_SECONDS = 120;
 const WATCHDOG_RETRY_REASON_CODE = 'stage_timeout_watchdog_retry_scheduled';
 const WATCHDOG_BLOCK_REASON_CODE = 'stage_timeout_watchdog_exhausted';
 const RECOVERABLE_AUTO_STAGES = new Set<TopicStageKey>([
+  'seo_intel_review',
   'outline_build',
+  'editing',
   'prewrite_context',
   'final_review',
   'writing',

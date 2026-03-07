@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getRequestedProjectId, userCanAccessProject } from '@/lib/access';
 import {
+  listProjectAgentLaneProfiles,
   listProjectAgentProfiles,
+  seedProjectAgentLaneProfiles,
   seedProjectAgentProfiles,
 } from '@/lib/agents/project-agent-profiles';
 import { getProjectAgentPoolHealth } from '@/lib/agents/runtime-agent-pools';
@@ -40,7 +42,9 @@ export async function GET(req: NextRequest) {
   }
 
   await seedProjectAgentProfiles(scopedProjectId, auth.user.id);
+  await seedProjectAgentLaneProfiles(scopedProjectId, auth.user.id);
   const profiles = await listProjectAgentProfiles(scopedProjectId);
+  const laneProfiles = await listProjectAgentLaneProfiles(scopedProjectId, 'writer');
   const health = await getProjectAgentPoolHealth(scopedProjectId).catch(() => null);
 
   return NextResponse.json({
@@ -48,6 +52,17 @@ export async function GET(req: NextRequest) {
     health,
     profiles: profiles.map((profile) => ({
       role: profile.role,
+      displayName: profile.displayName,
+      emoji: profile.emoji,
+      avatarUrl: profile.avatarUrl,
+      shortDescription: profile.shortDescription,
+      mission: profile.mission,
+      tools: extractTools(profile.fileBundle?.TOOLS),
+      updatedAt: profile.updatedAt,
+    })),
+    laneProfiles: laneProfiles.map((profile) => ({
+      role: profile.role,
+      laneKey: profile.laneKey,
       displayName: profile.displayName,
       emoji: profile.emoji,
       avatarUrl: profile.avatarUrl,

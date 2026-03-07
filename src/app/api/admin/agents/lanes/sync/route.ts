@@ -36,6 +36,7 @@ function sanitizeRoleCounts(input: unknown): AgentRoleCounts | undefined {
     'researcher',
     'outliner',
     'writer',
+    'editor',
     'seo-reviewer',
     'project-manager',
     'seo',

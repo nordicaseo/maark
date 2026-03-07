@@ -118,9 +118,10 @@ export interface RunTopicWorkflowResult {
 
 const RUNNABLE_STAGES = new Set<TopicStageKey>([
   'research',
+  'seo_intel_review',
   'outline_build',
-  'prewrite_context',
   'writing',
+  'editing',
   'final_review',
 ]);
 
@@ -142,7 +143,9 @@ const STAGE_PRIMARY_ROLE: Record<TopicStageKey, AgentRole> = {
   outline_review: 'seo-reviewer',
   prewrite_context: 'project-manager',
   writing: 'writer',
+  editing: 'editor',
   final_review: 'seo-reviewer',
+  human_review: 'lead',
   complete: 'lead',
 };
 
@@ -296,7 +299,7 @@ function normalizeContentFormat(value: unknown): ContentFormat {
 }
 
 function legacyActionKeyForStage(stage: TopicStageKey): AIAction {
-  if (stage === 'writing' || stage === 'final_review') return 'writing';
+  if (stage === 'writing' || stage === 'editing' || stage === 'final_review') return 'writing';
   return 'research';
 }
 
@@ -719,12 +722,16 @@ function stageActionKey(stage: TopicStageKey): AIAction {
   switch (stage) {
     case 'research':
       return 'workflow_research';
+    case 'seo_intel_review':
+      return 'workflow_serp';
     case 'outline_build':
       return 'workflow_outline';
     case 'prewrite_context':
       return 'workflow_pm';
     case 'writing':
       return 'workflow_writing';
+    case 'editing':
+      return 'workflow_editing';
     case 'final_review':
       return 'workflow_final_review';
     default:
@@ -733,34 +740,31 @@ function stageActionKey(stage: TopicStageKey): AIAction {
 }
 
 function resolveAutoAdvance(
-  task: Doc<'tasks'>,
+  _task: Doc<'tasks'>,
   stage: TopicStageKey
 ): { toStage: TopicStageKey; skipOptionalOutlineReview?: boolean } | null {
   if (stage === 'research') {
+    return { toStage: 'seo_intel_review' };
+  }
+
+  if (stage === 'seo_intel_review') {
     return { toStage: 'outline_build' };
   }
 
   if (stage === 'outline_build') {
-    const outlineReviewOptional = task.workflowFlags?.outlineReviewOptional ?? true;
-    if (outlineReviewOptional) {
-      return {
-        toStage: 'prewrite_context',
-        skipOptionalOutlineReview: true,
-      };
-    }
-    return { toStage: 'outline_review' };
+    return { toStage: 'writing' };
   }
 
   if (stage === 'writing') {
+    return { toStage: 'editing' };
+  }
+
+  if (stage === 'editing') {
     return { toStage: 'final_review' };
   }
 
   if (stage === 'prewrite_context') {
     return { toStage: 'writing' };
-  }
-
-  if (stage === 'final_review') {
-    return { toStage: 'complete' };
   }
 
   return null;
@@ -1040,24 +1044,48 @@ async function runSeoIntelStage(
     throw new Error('SEO intel stage requires a target keyword or task title.');
   }
 
-  const serpIntel = await getSerpIntelSnapshot({
-    keyword,
-    projectId: task.projectId ?? undefined,
-    preferFresh: true,
-  });
+  let serpIntel:
+    | Awaited<ReturnType<typeof getSerpIntelSnapshot>>
+    | null = null;
+  let degradedReason: string | null = null;
+
+  try {
+    serpIntel = await getSerpIntelSnapshot({
+      keyword,
+      projectId: task.projectId ?? undefined,
+      preferFresh: true,
+    });
+  } catch (error) {
+    degradedReason = error instanceof Error ? error.message : 'SERP providers unavailable';
+  }
 
   const existingResearch =
     document.researchSnapshot && typeof document.researchSnapshot === 'object'
       ? (document.researchSnapshot as Record<string, unknown>)
       : {};
 
-  const mergedResearchSnapshot = {
-    ...existingResearch,
-    seoIntel: {
-      ...serpIntel,
-      reviewedAt: Date.now(),
-    },
-  };
+  const mergedResearchSnapshot = serpIntel
+    ? {
+        ...existingResearch,
+        seoIntel: {
+          ...serpIntel,
+          reviewedAt: Date.now(),
+        },
+      }
+    : {
+        ...existingResearch,
+        seoIntel: {
+          provider: 'degraded',
+          keyword,
+          degraded: true,
+          degradedReason: degradedReason || 'SERP intel providers failed',
+          competitors: [],
+          entities: [],
+          lsiKeywords: [],
+          suggestions: [],
+          reviewedAt: Date.now(),
+        },
+      };
 
   await db
     .update(documents)
@@ -1067,26 +1095,35 @@ async function runSeoIntelStage(
     })
     .where(eq(documents.id, document.id));
 
-  const competitorsPreview = serpIntel.competitors
+  const competitorsPreview = serpIntel
+    ? serpIntel.competitors
     .slice(0, 5)
     .map((item) => `- #${item.rank} ${item.domain} — ${item.title}`)
-    .join('\n');
-  const entitiesPreview = serpIntel.entities
+    .join('\n')
+    : '';
+  const entitiesPreview = serpIntel
+    ? serpIntel.entities
     .slice(0, 8)
     .map((item) => `- ${item.term}`)
-    .join('\n');
-  const lsiPreview = serpIntel.lsiKeywords
+    .join('\n')
+    : '';
+  const lsiPreview = serpIntel
+    ? serpIntel.lsiKeywords
     .slice(0, 8)
     .map((item) => `- ${item.term}`)
-    .join('\n');
-  const suggestionsPreview = serpIntel.suggestions
+    .join('\n')
+    : '';
+  const suggestionsPreview = serpIntel
+    ? serpIntel.suggestions
     .slice(0, 6)
     .map((item) => `- ${item}`)
-    .join('\n');
+    .join('\n')
+    : '';
 
   const body = [
-    `Provider: ${serpIntel.provider}`,
-    `Keyword: ${serpIntel.keyword}`,
+    `Provider: ${serpIntel?.provider || 'degraded'}`,
+    `Keyword: ${serpIntel?.keyword || keyword}`,
+    !serpIntel ? `Warning: degraded SERP intel (${degradedReason || 'provider failure'})` : null,
     '',
     'Top competitors:',
     competitorsPreview || '- none',
@@ -1099,18 +1136,29 @@ async function runSeoIntelStage(
     '',
     'Recommendations:',
     suggestionsPreview || '- none',
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   return {
-    summary:
-      `SEO intel review completed (${serpIntel.competitors.length} competitors, ` +
-      `${serpIntel.entities.length} entities, ${serpIntel.lsiKeywords.length} related terms).`,
-    artifactTitle: 'SEO Intel Brief',
+    summary: serpIntel
+      ? `SEO intel review completed (${serpIntel.competitors.length} competitors, ${serpIntel.entities.length} entities, ${serpIntel.lsiKeywords.length} related terms).`
+      : `SEO intel degraded: provider unavailable (${degradedReason || 'unknown'}). Continuing with limited context.`,
+    artifactTitle: serpIntel ? 'SEO Intel Brief' : 'SEO Intel Brief (Degraded)',
     artifactBody: trimTo(body, 5000),
-    artifactData: serpIntel,
+    artifactData: serpIntel || {
+      provider: 'degraded',
+      keyword,
+      degraded: true,
+      degradedReason: degradedReason || 'provider failure',
+      competitors: [],
+      entities: [],
+      lsiKeywords: [],
+      suggestions: [],
+    },
     model: {
-      providerName: serpIntel.provider,
-      model: 'serp-intel',
+      providerName: serpIntel?.provider || 'degraded',
+      model: serpIntel ? 'serp-intel' : 'serp-intel-degraded',
       maxTokens: 0,
       temperature: 0,
     },
@@ -1785,6 +1833,138 @@ Write the final article now.`;
   };
 }
 
+async function runEditingStage(
+  task: Doc<'tasks'>,
+  document: Awaited<ReturnType<typeof getDocumentById>>,
+  skillContext: SkillContext,
+  stageProfileContext: StageProfileContext
+): Promise<StageRunResult> {
+  const modelOverride = await resolveAgentStageModelOverride(task, 'editing');
+  const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForStage(
+    'editing',
+    stageProfileContext,
+    modelOverride
+  );
+  const contentFormat = normalizeContentFormat(document.contentType);
+  const templatePolicy = await resolveTemplatePolicy({
+    projectId: task.projectId ?? null,
+    contentFormat,
+  });
+
+  const currentHtml =
+    typeof document.content === 'string'
+      ? document.content
+      : contentToHtml(document.content, document.plainText);
+  const currentText = stripHtmlForCompleteness(currentHtml || document.plainText || '');
+  if (!currentText || currentText.length < 220) {
+    throw new Error('Editing blocked: draft article is missing or too short.');
+  }
+
+  const outlineMarkdown = String(document.outlineSnapshot?.markdown || '').trim();
+  const outlineHeadings = extractOutlineHeadings(outlineMarkdown);
+
+  const system = `You are a senior editor.
+Return clean HTML only.
+Edit for clarity, flow, and readability while preserving SEO intent.
+Do not remove required outline sections.
+Do not use em dashes.
+Use colon only for structural heading/list-label contexts.
+Keep output within ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.max} words.`;
+
+  const user = `Task title: ${task.title}
+Target keyword: ${document.targetKeyword || task.title}
+Template: ${templatePolicy.name} (${templatePolicy.key})
+
+Current draft HTML:
+${trimTo(currentHtml, 9000)}
+
+Revise this draft now and return the complete edited HTML.`;
+
+  const fullUserPrompt = composeStageUserPrompt(
+    user,
+    stageProfileContext.promptText,
+    skillContext.promptText
+  );
+
+  const raw = await collectStreamText(
+    provider.stream({
+      model,
+      system,
+      messages: [{ role: 'user', content: fullUserPrompt }],
+      maxTokens,
+      temperature,
+    })
+  );
+
+  if (!raw.trim()) {
+    throw new Error('Editing stage returned empty content.');
+  }
+
+  let editedHtml = normalizeGeneratedHtml(raw);
+  let styleAdjusted = false;
+  let styleResult = applyStyleGuard(editedHtml, templatePolicy.styleGuard);
+  if (styleResult.changed) {
+    styleAdjusted = true;
+    editedHtml = normalizeGeneratedHtml(styleResult.html);
+    styleResult = applyStyleGuard(editedHtml, templatePolicy.styleGuard);
+  }
+
+  if (!styleGuardPassed(styleResult.metrics, templatePolicy.styleGuard)) {
+    throw new Error('Editing output failed style guard validation.');
+  }
+
+  const editedText = stripHtmlForCompleteness(editedHtml);
+  const completeness = evaluateWritingCompleteness({
+    html: editedHtml,
+    plainText: editedText,
+    outlineHeadings,
+    minimumWords: templatePolicy.wordRange.min,
+    maximumWords: templatePolicy.wordRange.max,
+  });
+  if (!completeness.complete) {
+    throw new Error(
+      `Editing output incomplete: ${completeness.reasons.join('; ')}`
+    );
+  }
+
+  await db
+    .update(documents)
+    .set({
+      content: editedHtml,
+      plainText: editedText,
+      wordCount: completeness.wordCount,
+      status: 'review',
+      updatedAt: dbNow(),
+    })
+    .where(eq(documents.id, document.id));
+
+  return {
+    summary: `Editing completed (${completeness.wordCount.toLocaleString()} words).`,
+    artifactTitle: 'Edited Draft',
+    artifactBody: trimTo(editedText, 1200),
+    artifactData: {
+      wordCount: completeness.wordCount,
+      headingCoverage: completeness.headingCoverage,
+      styleAdjusted,
+      styleMetrics: styleResult.metrics,
+      template: {
+        key: templatePolicy.key,
+        name: templatePolicy.name,
+      },
+    },
+    model: {
+      providerName,
+      model,
+      maxTokens,
+      temperature,
+    },
+    deliverable: {
+      type: 'edited_draft',
+      title: 'Edited Draft',
+    },
+  };
+}
+
 async function runFinalReviewStage(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
@@ -1972,6 +2152,10 @@ async function runStage(
     return runWritingStage(task, document, skillContext, stageProfileContext);
   }
 
+  if (stage === 'editing') {
+    return runEditingStage(task, document, skillContext, stageProfileContext);
+  }
+
   if (stage === 'final_review') {
     return runFinalReviewStage(task, document, skillContext, stageProfileContext);
   }
@@ -2137,86 +2321,54 @@ export async function runTopicWorkflow(
       break;
     }
 
-    if (stage === 'seo_intel_review') {
-      const bypassSummary =
-        'SERP intel stage bypassed in primary workflow (deferred to keyword-level SEO intel). Moving to outline_build.';
-      await convex.mutation(api.topicWorkflow.recordStageProgress, {
-        taskId: currentTask._id,
-        stageKey: 'seo_intel_review',
-        summary: bypassSummary,
-        actorType: 'system',
-        actorId: input.user.id,
-        actorName: 'Workflow PM',
-        payload: {
-          status: 'bypassed',
-          reasonCode: 'serp_stage_bypassed_deferred',
-          fromStage: 'seo_intel_review',
-          toStage: 'outline_build',
-        },
-      });
-      await convex.mutation(api.topicWorkflow.advanceStage, {
-        taskId: currentTask._id,
-        toStage: 'outline_build',
-        actorType: 'system',
-        actorId: input.user.id,
-        actorName: 'Workflow PM',
-        note: bypassSummary,
-      });
-      runs.push({
-        stage: 'seo_intel_review',
-        summary: bypassSummary,
-        nextStage: 'outline_build',
-      });
-      const refreshedTask = await convex.query(api.tasks.get, {
-        id: currentTask._id,
-        projectId: currentTask.projectId ?? undefined,
-      });
-      if (!refreshedTask) {
-        throw new Error('Task not found after SEO stage bypass.');
-      }
-      currentTask = refreshedTask;
-      continue;
-    }
-
     if (stage === 'complete') {
       stoppedReason = 'Workflow already complete.';
       break;
     }
 
-    if (stage === 'outline_review') {
-      const autoApproveSummary =
-        'Outline review auto-approved (fully automated mode). Moving to prewrite_context.';
-      await convex.mutation(api.topicWorkflow.recordApproval, {
+    if (stage === 'human_review') {
+      stoppedReason = 'Paused at human review.';
+      runs.push({ stage, summary: 'Waiting for human review.' });
+      break;
+    }
+
+    if (stage === 'outline_review' || stage === 'prewrite_context') {
+      const bridgeSummary = `Legacy stage ${stage} bridged to writing in strict routing workflow.`;
+      await convex.mutation(api.topicWorkflow.recordStageProgress, {
         taskId: currentTask._id,
-        gate: 'outline_human',
-        approved: true,
-        actorType: 'agent',
-        actorId: 'workflow-pm',
+        stageKey: stage,
+        summary: bridgeSummary,
+        actorType: 'system',
+        actorId: input.user.id,
         actorName: 'Workflow PM',
-        note: autoApproveSummary,
+        payload: {
+          status: 'bridged',
+          reasonCode: 'legacy_stage_bridge',
+          fromStage: stage,
+          toStage: 'writing',
+        },
       });
-      await convex.mutation(api.topicWorkflow.recordApproval, {
+      await convex.mutation(api.topicWorkflow.advanceStage, {
         taskId: currentTask._id,
-        gate: 'outline_seo',
-        approved: true,
-        actorType: 'agent',
-        actorId: 'workflow-pm',
+        toStage: 'writing',
+        actorType: 'system',
+        actorId: input.user.id,
         actorName: 'Workflow PM',
-        note: autoApproveSummary,
+        note: bridgeSummary,
       });
       runs.push({
-        stage: 'outline_review',
-        summary: autoApproveSummary,
-        nextStage: 'prewrite_context',
+        stage,
+        summary: bridgeSummary,
+        nextStage: 'writing',
       });
-      const refreshedOutlineReview = await convex.query(api.tasks.get, {
+      const refreshedLegacy = await convex.query(api.tasks.get, {
         id: currentTask._id,
         projectId: currentTask.projectId ?? undefined,
       });
-      if (!refreshedOutlineReview) {
-        throw new Error('Task not found after automated outline approvals.');
+      if (!refreshedLegacy) {
+        throw new Error('Task not found after legacy stage bridge.');
       }
-      currentTask = refreshedOutlineReview;
+      currentTask = refreshedLegacy;
       continue;
     }
 
@@ -2232,6 +2384,9 @@ export async function runTopicWorkflow(
     const ensuredOwnerResult = ensuredOwner as {
       blocked?: boolean;
       queued?: boolean;
+      queueReason?: string | null;
+      configuredSlotKey?: string | null;
+      configuredAgentName?: string | null;
       assignedAgentId?: Id<'agents'> | null;
       assignedAgentName?: string | null;
     };
@@ -2247,20 +2402,23 @@ export async function runTopicWorkflow(
     let assignedAgentIdForStage =
       ensuredOwnerResult.assignedAgentId ?? currentTask.assignedAgentId ?? null;
 
-    const waitingWriterQueue =
-      stage === 'writing' &&
+    const waitingStageQueue =
       (Boolean(ensuredOwnerResult.queued) || currentTask.workflowStageStatus === 'queued') &&
       !assignedAgentIdForStage;
 
-    if (waitingWriterQueue) {
-      const writerAvailability = await getWriterAvailabilityDiagnostics(
-        convex,
-        currentTask.projectId ?? null,
-        stageProfileContext.laneKey
-      );
+    if (waitingStageQueue) {
+      const writerAvailability =
+        stage === 'writing'
+          ? await getWriterAvailabilityDiagnostics(
+              convex,
+              currentTask.projectId ?? null,
+              stageProfileContext.laneKey
+            )
+          : undefined;
       const queueSummary =
-        `Writing queued: waiting for an available ${stageProfileContext.laneKey || 'writer'} lane writer. ` +
-        'The task remains in writer queue and will resume when a writer is online.';
+        stage === 'writing'
+          ? `Writing queued: waiting for an available ${stageProfileContext.laneKey || 'writer'} lane writer. The task remains in writer queue and will resume when a writer is online.`
+          : `Stage ${stage} queued: waiting for configured owner slot ${ensuredOwnerResult.configuredSlotKey || 'unconfigured'} to become available.`;
       await convex.mutation(api.topicWorkflow.recordStageProgress, {
         taskId: currentTask._id,
         stageKey: stage,
@@ -2270,10 +2428,12 @@ export async function runTopicWorkflow(
         actorName: 'Workflow PM',
         payload: {
           status: 'queued',
-          reason: 'writer_queue_waiting',
+          reason: ensuredOwnerResult.queueReason || 'configured_agent_unavailable',
           stage,
           laneKey: stageProfileContext.laneKey ?? null,
           ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
+          configuredSlotKey: ensuredOwnerResult.configuredSlotKey ?? null,
+          configuredAgentName: ensuredOwnerResult.configuredAgentName ?? null,
           writerAvailability,
           roleProfile: {
             role: stageProfileContext.role,
@@ -2733,6 +2893,21 @@ export async function runTopicWorkflow(
           actorName: agent?.name || 'Workflow PM',
           note: `Automated final SEO approval. ${stageSummary}`,
         });
+        const refreshedAfterApproval = await convex.query(api.tasks.get, {
+          id: currentTask._id,
+          projectId: currentTask.projectId ?? undefined,
+        });
+        if (!refreshedAfterApproval) {
+          throw new Error('Task not found after final review approval.');
+        }
+        currentTask = refreshedAfterApproval;
+        runRecord.nextStage = (currentTask.workflowCurrentStageKey || 'human_review') as TopicStageKey;
+        runs.push(runRecord);
+        if ((currentTask.workflowCurrentStageKey || 'human_review') === 'human_review') {
+          stoppedReason = 'Paused at human review.';
+          break;
+        }
+        continue;
       } else {
         if (!autoContinue) {
           runs.push(runRecord);
@@ -2874,6 +3049,10 @@ export async function runTopicWorkflow(
     currentTask = refreshedTask;
 
     const currentStage = (currentTask.workflowCurrentStageKey || 'research') as TopicStageKey;
+    if (currentStage === 'human_review') {
+      stoppedReason = 'Paused at human review.';
+      break;
+    }
     if (currentStage === 'complete') {
       stoppedReason = 'Workflow completed.';
       break;

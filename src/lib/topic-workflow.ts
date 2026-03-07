@@ -5,9 +5,11 @@ import { documents } from '@/db/schema';
 import type { AppUser } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
 import { getWorkflowOpsSettings } from '@/lib/workflow/ops-settings';
+import { resolveWorkflowStagePlanSnapshot } from '@/lib/workflow/stage-routing';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { TopicStageKey } from '@/lib/content-workflow-taxonomy';
 import type { AgentLaneKey } from '@/types/agent-runtime';
+import type { ContentFormat } from '@/types/document';
 
 export type { TopicStageKey } from '@/lib/content-workflow-taxonomy';
 
@@ -27,7 +29,10 @@ export interface CreateTopicWorkflowInput {
   entryPoint: TopicWorkflowEntryPoint;
   documentId?: number;
   skillId?: number;
-  contentType?: string;
+  contentType?: ContentFormat | string;
+  contentFormat?: ContentFormat | string;
+  pageType?: string;
+  subtype?: string;
   targetKeyword?: string | null;
   siteId?: number;
   pageId?: number;
@@ -67,6 +72,18 @@ export async function createTopicWorkflow(input: CreateTopicWorkflowInput) {
   // Ensure workflow-critical agent roles exist before assignment.
   await convex.mutation(api.seed.seedAgents, {});
   const workflowOps = await getWorkflowOpsSettings(input.projectId);
+  const contentFormat = (
+    input.contentFormat ||
+    input.contentType ||
+    'blog_post'
+  ) as ContentFormat;
+  const resolvedStagePlan = await resolveWorkflowStagePlanSnapshot({
+    projectId: input.projectId,
+    contentFormat,
+    laneKey: input.laneKey,
+    userId: input.user.id,
+  });
+  const laneKey = resolvedStagePlan.laneKey;
 
   const created = await convex.mutation(api.topicWorkflow.createTopicFromSource, {
     projectId: input.projectId,
@@ -76,10 +93,15 @@ export async function createTopicWorkflow(input: CreateTopicWorkflowInput) {
     pageId: input.pageId,
     keywordId: input.keywordId,
     keywordClusterId: input.keywordClusterId,
-    laneKey: input.laneKey,
+    laneKey,
     requestedByUserId: input.user.id,
     documentId: input.documentId,
     skillId: input.skillId,
+    contentType: contentFormat,
+    contentFormat,
+    pageType: input.pageType,
+    subtype: input.subtype,
+    workflowStagePlan: resolvedStagePlan,
     options: {
       ...input.options,
       workflowStartDelayMs:
@@ -116,7 +138,7 @@ export async function createTopicWorkflow(input: CreateTopicWorkflowInput) {
   return {
     taskId: String(created.taskId),
     workflowStage: created.workflowStage,
-    laneKey: created.laneKey as AgentLaneKey | undefined,
+    laneKey: (created.laneKey as AgentLaneKey | undefined) || laneKey,
     contentDocumentId,
     reused: Boolean(created.reused),
   };

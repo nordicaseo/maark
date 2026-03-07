@@ -47,6 +47,55 @@ function timeAgo(ts: number): string {
   return `${days}d ago`;
 }
 
+const ROUTED_STAGE_ORDER = [
+  'research',
+  'seo_intel_review',
+  'outline_build',
+  'writing',
+  'editing',
+  'final_review',
+] as const;
+
+function summarizePlannedOwners(task: Task): string | null {
+  const plan =
+    task.workflowStagePlan && typeof task.workflowStagePlan === 'object'
+      ? (task.workflowStagePlan as Record<string, unknown>)
+      : null;
+  const owners =
+    plan?.owners && typeof plan.owners === 'object'
+      ? (plan.owners as Record<string, unknown>)
+      : null;
+  if (!owners) return null;
+
+  const parts = ROUTED_STAGE_ORDER.map((stage) => {
+    const owner =
+      owners[stage] && typeof owners[stage] === 'object'
+        ? (owners[stage] as Record<string, unknown>)
+        : null;
+    const short =
+      stage === 'research'
+        ? 'R'
+        : stage === 'seo_intel_review'
+          ? 'SERP'
+          : stage === 'outline_build'
+            ? 'O'
+            : stage === 'writing'
+              ? 'W'
+              : stage === 'editing'
+                ? 'E'
+                : 'SEO';
+    const name =
+      typeof owner?.agentName === 'string' && owner.agentName.trim().length > 0
+        ? owner.agentName.trim()
+        : typeof owner?.slotKey === 'string' && owner.slotKey.trim().length > 0
+          ? owner.slotKey.trim()
+          : 'Unconfigured';
+    return `${short}: ${name}`;
+  });
+
+  return parts.join(' · ');
+}
+
 export function SortableTaskCard({
   task,
   readOnly = false,
@@ -143,6 +192,7 @@ function TaskCardContent({
   const visibleDeliverables = task.deliverables ? task.deliverables.slice(0, 2) : [];
   const hiddenDeliverableCount =
     task.deliverables && task.deliverables.length > 2 ? task.deliverables.length - 2 : 0;
+  const plannedOwnersSummary = isTopicWorkflow ? summarizePlannedOwners(task) : null;
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -238,6 +288,14 @@ function TaskCardContent({
         >
           <p className="mc-header-mono text-[9px]">Latest update</p>
           <p className="text-[10px] leading-4 line-clamp-2">{workflowLastEvent}</p>
+        </div>
+      )}
+      {isTopicWorkflow && plannedOwnersSummary && (
+        <div className="rounded-md px-2 py-1.5 space-y-0.5" style={{ background: 'var(--mc-overlay)' }}>
+          <p className="mc-header-mono text-[9px]">Planned owners</p>
+          <p className="text-[10px] leading-4 line-clamp-2" style={{ color: 'var(--mc-text-tertiary)' }}>
+            {plannedOwnersSummary}
+          </p>
         </div>
       )}
 

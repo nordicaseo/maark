@@ -149,6 +149,61 @@ function parseTextList(value: string): string[] {
     .filter(Boolean);
 }
 
+const ROUTED_STAGE_PLAN_ORDER: TopicStageKey[] = [
+  'research',
+  'seo_intel_review',
+  'outline_build',
+  'writing',
+  'editing',
+  'final_review',
+];
+
+function parseWorkflowStagePlan(task: {
+  workflowStagePlan?: unknown;
+}): Array<{
+  stage: TopicStageKey;
+  slotKey: string | null;
+  agentName: string | null;
+  agentRole: string | null;
+  enabled: boolean;
+}> {
+  const plan =
+    task.workflowStagePlan && typeof task.workflowStagePlan === 'object'
+      ? (task.workflowStagePlan as Record<string, unknown>)
+      : null;
+  const owners =
+    plan?.owners && typeof plan.owners === 'object'
+      ? (plan.owners as Record<string, unknown>)
+      : null;
+  if (!owners) return [];
+
+  return ROUTED_STAGE_PLAN_ORDER.map((stage) => {
+    const row =
+      owners[stage] && typeof owners[stage] === 'object'
+        ? (owners[stage] as Record<string, unknown>)
+        : null;
+    return {
+      stage,
+      slotKey:
+        typeof row?.slotKey === 'string' && row.slotKey.trim().length > 0
+          ? row.slotKey.trim()
+          : null,
+      agentName:
+        typeof row?.agentName === 'string' && row.agentName.trim().length > 0
+          ? row.agentName.trim()
+          : null,
+      agentRole:
+        typeof row?.agentRole === 'string' && row.agentRole.trim().length > 0
+          ? row.agentRole.trim()
+          : null,
+      enabled:
+        row?.enabled === undefined
+          ? true
+          : row.enabled === true || String(row.enabled).toLowerCase() === 'true',
+    };
+  });
+}
+
 export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }: TaskDetailPanelProps) {
   const { user } = useAuth();
   const task = useQuery(
@@ -359,19 +414,9 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
 
   const isTopicWorkflow = task.workflowTemplateKey === 'topic_production_v1';
   const workflowStage = (task.workflowCurrentStageKey || 'research') as TopicStageKey;
-  const workflowFlags = task.workflowFlags || {};
   const workflowApprovals = task.workflowApprovals || {};
-  const visibleWorkflowStages =
-    workflowStage === 'seo_intel_review'
-      ? (['research', 'seo_intel_review', ...TOPIC_STAGES.slice(1)] as TopicStageKey[])
-      : Array.from(TOPIC_STAGES) as TopicStageKey[];
-  const defaultNextStage = TOPIC_STAGE_NEXT[workflowStage];
-  const workflowNextStage =
-    workflowStage === 'outline_build' &&
-    Boolean(workflowFlags.outlineReviewOptional) &&
-    Boolean(workflowApprovals.outlineSkipped)
-      ? 'prewrite_context'
-      : defaultNextStage;
+  const visibleWorkflowStages = Array.from(TOPIC_STAGES) as TopicStageKey[];
+  const workflowNextStage = TOPIC_STAGE_NEXT[workflowStage];
 
   const assignedAgent = agents?.find((a) => a._id === task.assignedAgentId);
   const onlineAgents = agents?.filter((a) => a.status === 'ONLINE') ?? [];
@@ -385,6 +430,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
   const workflowRuntimeStyle = workflowRuntimeState
     ? WORKFLOW_RUNTIME_STATE_STYLES[workflowRuntimeState]
     : null;
+  const plannedStageOwners = isTopicWorkflow ? parseWorkflowStagePlan(task) : [];
 
   const handleAdvanceWorkflowStage = async (
     toStage: TopicStageKey,
@@ -729,20 +775,19 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
     ? false
     : (task.status === 'BACKLOG' || task.status === 'PENDING' || !task.documentId);
   const showProcessFeedback = isTopicWorkflow
-    ? workflowStage === 'final_review' && Boolean(task.documentId)
+    ? workflowStage === 'human_review' && Boolean(task.documentId)
     : task.status === 'IN_REVIEW' && Boolean(task.documentId);
   const showRerun = isTopicWorkflow
-    ? workflowStage === 'final_review'
+    ? workflowStage === 'human_review'
     : task.status === 'IN_REVIEW';
   const showComplete = isTopicWorkflow
-    ? workflowStage === 'final_review'
+    ? workflowStage === 'human_review'
     : task.status === 'IN_REVIEW';
   const workflowRecoveryStage: 'research' | 'outline_build' | 'writing' =
-    workflowStage === 'writing' || workflowStage === 'final_review'
+    workflowStage === 'writing' || workflowStage === 'editing' || workflowStage === 'final_review'
       ? 'writing'
-      : workflowStage === 'outline_build' ||
-          workflowStage === 'outline_review' ||
-          workflowStage === 'prewrite_context'
+    : workflowStage === 'outline_build' ||
+          workflowStage === 'outline_review'
         ? 'outline_build'
         : 'research';
   const showWorkflowRecoveryButton =
@@ -871,6 +916,25 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
                 Runtime status: {WORKFLOW_RUNTIME_STATE_LABELS[workflowRuntimeState]}
               </p>
             )}
+            {plannedStageOwners.length > 0 && (
+              <div className="rounded-md border p-2 space-y-1.5" style={{ borderColor: 'var(--mc-border)' }}>
+                <p className="text-[10px] font-medium" style={{ color: 'var(--mc-text-secondary)' }}>
+                  Planned stage owners
+                </p>
+                {plannedStageOwners.map((owner) => (
+                  <div key={owner.stage} className="flex items-center justify-between gap-2 text-[10px]">
+                    <span style={{ color: 'var(--mc-text-tertiary)' }}>
+                      {TOPIC_STAGE_LABELS[owner.stage]}
+                    </span>
+                    <span style={{ color: owner.enabled ? 'var(--mc-text-secondary)' : '#b45309' }}>
+                      {owner.enabled
+                        ? owner.agentName || owner.slotKey || 'Unconfigured'
+                        : `Disabled (${owner.slotKey || 'no slot'})`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
             {task.workflowLastEventText && (
               <p className="text-xs rounded-md px-2 py-1.5" style={{ background: 'var(--mc-overlay)', color: 'var(--mc-text-secondary)' }}>
                 {task.workflowLastEventText}
@@ -913,9 +977,13 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
                 className="rounded-md border px-2 py-1.5 text-xs space-y-1"
                 style={{ borderColor: '#fcd34d', background: '#fffbeb', color: '#92400e' }}
               >
-                <p className="font-medium">Writer queue</p>
-                <p>{latestQueuedEvent?.summary || task.workflowLastEventText || 'Waiting for an available writer.'}</p>
-                <p className="text-[11px]">This task will resume automatically when a writer is available.</p>
+                <p className="font-medium">
+                  {workflowStage === 'writing' ? 'Writer queue' : 'Stage queue'}
+                </p>
+                <p>{latestQueuedEvent?.summary || task.workflowLastEventText || 'Waiting for configured owner availability.'}</p>
+                <p className="text-[11px]">
+                  This task will resume automatically when the configured owner is available.
+                </p>
                 <button
                   onClick={() => handleRerunWorkflowFromStage(workflowRecoveryStage)}
                   disabled={workflowRecoverBusy || workflowBusy || workflowRunBusy || readOnly}
@@ -930,7 +998,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
             )}
 
             <div className="flex items-center gap-2 flex-wrap">
-              {workflowStage !== 'complete' && workflowStage !== 'outline_review' && (
+              {workflowStage !== 'complete' && workflowStage !== 'human_review' && (
                 <>
                   <button
                     onClick={() => handleRunWorkflow(false)}
@@ -956,7 +1024,7 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
               )}
               {workflowNextStage &&
                 workflowStage !== 'complete' &&
-                workflowStage !== 'outline_review' && (
+                workflowStage !== 'human_review' && (
                 <button
                   onClick={() => handleAdvanceWorkflowStage(workflowNextStage as TopicStageKey)}
                   disabled={workflowBusy || workflowRunBusy || readOnly}
@@ -968,39 +1036,6 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
                     <ArrowRight className="h-3 w-3" />
                   )}
                   Move to {TOPIC_STAGE_LABELS[workflowNextStage as TopicStageKey]}
-                </button>
-              )}
-              {workflowStage === 'prewrite_context' && (
-                <button
-                  onClick={() =>
-                    handleAdvanceWorkflowStage('writing', {
-                      note: 'Manual override: start writing from prewrite stage.',
-                      runAfterAdvance: true,
-                    })
-                  }
-                  disabled={workflowBusy || workflowRunBusy || readOnly}
-                  className="mc-btn-primary text-xs flex items-center gap-1.5"
-                >
-                  {workflowBusy ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <CheckCheck className="h-3 w-3" />
-                  )}
-                  Force Start Writing (Override)
-                </button>
-              )}
-              {workflowStage === 'outline_build' && workflowFlags.outlineReviewOptional && (
-                <button
-                  onClick={() =>
-                    handleAdvanceWorkflowStage('prewrite_context', {
-                      skipOptionalOutlineReview: true,
-                      note: 'Outline review skipped by PM/lead.',
-                    })
-                  }
-                  disabled={workflowBusy || workflowRunBusy || readOnly}
-                  className="mc-btn-secondary text-xs"
-                >
-                  Skip Optional Outline Review
                 </button>
               )}
               {showWorkflowRecoveryButton && (
@@ -1574,9 +1609,9 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
                   >
                     Regenerate from outline
                   </button>
-                  {workflowStage === 'prewrite_context' && (
+                  {workflowStage === 'human_review' && (
                     <span className="text-[11px]" style={{ color: 'var(--mc-text-tertiary)' }}>
-                      Save updates, then use “Approve Prewrite & Start Writing”.
+                      Review deliverables and draft, then approve to complete.
                     </span>
                   )}
                   {deliverableSavedAt && (

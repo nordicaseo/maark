@@ -29,35 +29,34 @@ describe('topic workflow transition rules', () => {
     expect(result.reason).toMatch(/illegal stage transition/i);
   });
 
-  it('allows skipping optional outline review when requested', () => {
+  it('accepts legacy skip flag without blocking outline->writing transition', () => {
     const result = evaluateStageTransition({
       currentStage: 'outline_build',
-      toStage: 'prewrite_context',
+      toStage: 'writing',
       flags: baseFlags,
       approvals: baseApprovals,
       skipOptionalOutlineReview: true,
     });
 
     expect(result.ok).toBe(true);
-    expect(result.approvals.outlineSkipped).toBe(true);
+    expect(result.approvals.outlineSkipped).toBe(false);
   });
 
-  it('blocks writing before outline approvals when review not skipped', () => {
+  it('allows canonical transition from outline to writing without legacy outline gate', () => {
     const result = evaluateStageTransition({
-      currentStage: 'prewrite_context',
+      currentStage: 'outline_build',
       toStage: 'writing',
       flags: baseFlags,
       approvals: baseApprovals,
     });
 
-    expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/outline approvals/i);
+    expect(result.ok).toBe(true);
   });
 
-  it('allows completion only after seo final approval when required', () => {
+  it('allows transition to human review only after seo final approval when required', () => {
     const blocked = evaluateStageTransition({
       currentStage: 'final_review',
-      toStage: 'complete',
+      toStage: 'human_review',
       flags: baseFlags,
       approvals: baseApprovals,
     });
@@ -67,7 +66,7 @@ describe('topic workflow transition rules', () => {
 
     const allowed = evaluateStageTransition({
       currentStage: 'final_review',
-      toStage: 'complete',
+      toStage: 'human_review',
       flags: baseFlags,
       approvals: {
         ...baseApprovals,

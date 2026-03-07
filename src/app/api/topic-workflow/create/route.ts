@@ -140,9 +140,18 @@ export async function POST(req: NextRequest) {
       documentId,
       skillId,
       contentType: typeof body.contentType === 'string' ? body.contentType : undefined,
+      contentFormat: typeof body.contentFormat === 'string' ? body.contentFormat : undefined,
+      pageType: typeof body.pageType === 'string' ? body.pageType : undefined,
+      subtype: typeof body.subtype === 'string' ? body.subtype : undefined,
       laneKey: isAgentLaneKey(body.laneKey)
         ? body.laneKey
-        : resolveLaneFromContentType(typeof body.contentType === 'string' ? body.contentType : undefined),
+        : resolveLaneFromContentType(
+            typeof body.contentFormat === 'string'
+              ? body.contentFormat
+              : typeof body.contentType === 'string'
+                ? body.contentType
+                : undefined
+          ),
       targetKeyword: typeof body.targetKeyword === 'string' ? body.targetKeyword : null,
       siteId,
       pageId,

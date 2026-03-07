@@ -100,6 +100,9 @@ export async function POST(
       pageId: page.id,
       keywordId: primaryMapping?.keywordId ? Number(primaryMapping.keywordId) : undefined,
       contentType,
+      contentFormat: contentType,
+      pageType,
+      subtype,
       laneKey,
       targetKeyword: explicitTargetKeyword || mappedPrimaryKeyword,
       options: {
