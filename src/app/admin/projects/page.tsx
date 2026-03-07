@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -19,8 +19,21 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { Plus, Pencil, Trash2, FolderOpen, Users, FileText, UserPlus } from 'lucide-react';
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  FolderOpen,
+  Users,
+  FileText,
+  UserPlus,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  CircleDashed,
+} from 'lucide-react';
 import { PROJECT_ASSIGNABLE_ROLES } from '@/lib/permissions';
+import type { AgentStaffingTemplate, ProjectBootstrapStageState } from '@/types/agent-runtime';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -37,6 +50,11 @@ interface Project {
   updatedAt: string;
   memberCount?: number;
   documentCount?: number;
+  settings?: {
+    agentRuntime?: {
+      staffingTemplate?: AgentStaffingTemplate;
+    };
+  } | null;
 }
 
 interface ProjectMember {
@@ -76,7 +94,15 @@ export default function AdminProjectsPage() {
     domain: '',
     sitemapUrl: '',
     gscProperty: '',
+    staffingTemplate: 'small' as AgentStaffingTemplate,
   });
+  const [bootstrapModalOpen, setBootstrapModalOpen] = useState(false);
+  const [bootstrapProjectId, setBootstrapProjectId] = useState<number | null>(null);
+  const [bootstrapProjectName, setBootstrapProjectName] = useState('');
+  const [bootstrapStages, setBootstrapStages] = useState<ProjectBootstrapStageState[]>([]);
+  const [bootstrapReady, setBootstrapReady] = useState(false);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const bootstrapPollRef = useRef<number | null>(null);
 
   /* ── Fetching ───────────────────────────────────────────────────── */
 
@@ -135,15 +161,50 @@ export default function AdminProjectsPage() {
 
   function openNew() {
     setEditing(null);
-    setForm({ name: '', description: '', domain: '', sitemapUrl: '', gscProperty: '' });
+    setForm({
+      name: '',
+      description: '',
+      domain: '',
+      sitemapUrl: '',
+      gscProperty: '',
+      staffingTemplate: 'small',
+    });
     setDialogOpen(true);
   }
 
   function openEdit(p: Project) {
     setEditing(p);
-    setForm({ name: p.name, description: p.description || '', domain: '', sitemapUrl: '', gscProperty: '' });
+    setForm({
+      name: p.name,
+      description: p.description || '',
+      domain: '',
+      sitemapUrl: '',
+      gscProperty: '',
+      staffingTemplate: p.settings?.agentRuntime?.staffingTemplate || 'small',
+    });
     setDialogOpen(true);
   }
+
+  const loadBootstrapStatus = useCallback(async (projectId: number) => {
+    const res = await fetch(`/api/projects/${projectId}/bootstrap-status`);
+    if (!res.ok) {
+      const payload = await res.json().catch(() => null);
+      throw new Error(payload?.error || 'Failed to load setup status');
+    }
+    const payload = (await res.json()) as {
+      ready: boolean;
+      hasRunning: boolean;
+      stages: ProjectBootstrapStageState[];
+    };
+    setBootstrapStages(Array.isArray(payload.stages) ? payload.stages : []);
+    setBootstrapReady(Boolean(payload.ready));
+    if (payload.ready || !payload.hasRunning) {
+      if (bootstrapPollRef.current) {
+        window.clearInterval(bootstrapPollRef.current);
+        bootstrapPollRef.current = null;
+      }
+    }
+  }, []);
 
   async function save() {
     if (!form.name.trim()) return;
@@ -155,6 +216,7 @@ export default function AdminProjectsPage() {
         body: JSON.stringify({
           name: form.name,
           description: form.description,
+          agentStaffingTemplate: form.staffingTemplate,
         }),
       });
       if (!res.ok) {
@@ -172,12 +234,40 @@ export default function AdminProjectsPage() {
           domain: form.domain,
           sitemapUrl: form.sitemapUrl || undefined,
           gscProperty: form.gscProperty || undefined,
+          agentStaffingTemplate: form.staffingTemplate,
         }),
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
         alert(payload?.error || 'Failed to create project');
         return;
+      }
+      const payload = (await res.json()) as {
+        id: number;
+        name: string;
+        bootstrapStages?: ProjectBootstrapStageState[];
+      };
+      if (payload?.id) {
+        setBootstrapProjectId(payload.id);
+        setBootstrapProjectName(payload.name || form.name);
+        setBootstrapStages(payload.bootstrapStages || []);
+        setBootstrapReady(false);
+        setBootstrapError(null);
+        setBootstrapModalOpen(true);
+        try {
+          await loadBootstrapStatus(payload.id);
+        } catch (err) {
+          setBootstrapError(err instanceof Error ? err.message : 'Failed to load setup status');
+        }
+        if (bootstrapPollRef.current) {
+          window.clearInterval(bootstrapPollRef.current);
+          bootstrapPollRef.current = null;
+        }
+        bootstrapPollRef.current = window.setInterval(() => {
+          void loadBootstrapStatus(payload.id).catch((err) => {
+            setBootstrapError(err instanceof Error ? err.message : 'Failed to load setup status');
+          });
+        }, 3500);
       }
     }
     setDialogOpen(false);
@@ -189,6 +279,14 @@ export default function AdminProjectsPage() {
     await fetch(`/api/projects/${id}`, { method: 'DELETE' });
     fetchProjects();
   }
+
+  useEffect(() => {
+    return () => {
+      if (bootstrapPollRef.current) {
+        window.clearInterval(bootstrapPollRef.current);
+      }
+    };
+  }, []);
 
   async function toggleMembers(projectId: number) {
     const next = !membersOpen[projectId];
@@ -275,6 +373,9 @@ export default function AdminProjectsPage() {
                     <h3 className="font-semibold text-lg truncate">{p.name}</h3>
                     <Badge variant="outline" className="text-xs">
                       {p.defaultContentFormat?.replace('_', ' ') || 'blog post'}
+                    </Badge>
+                    <Badge variant="outline" className="text-xs">
+                      {(p.settings?.agentRuntime?.staffingTemplate || 'small') + ' team'}
                     </Badge>
                   </div>
                   {p.description && (
@@ -498,6 +599,27 @@ export default function AdminProjectsPage() {
                     placeholder="sc-domain:example.com"
                   />
                 </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Agent Staffing Template</label>
+                  <Select
+                    value={form.staffingTemplate}
+                    onValueChange={(value) =>
+                      setForm((f) => ({
+                        ...f,
+                        staffingTemplate: (value as AgentStaffingTemplate) || 'small',
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="small">Small (1 core role each)</SelectItem>
+                      <SelectItem value="standard">Standard (+extra writer/outliner/SEO reviewer)</SelectItem>
+                      <SelectItem value="premium">Premium (+extra PM/research/SEO capacity)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </>
             )}
           </div>
@@ -508,6 +630,90 @@ export default function AdminProjectsPage() {
             </Button>
             <Button onClick={save} disabled={!form.name.trim() || (!editing && !form.domain.trim())}>
               {editing ? 'Update' : 'Create'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={bootstrapModalOpen}
+        onOpenChange={(open) => {
+          setBootstrapModalOpen(open);
+          if (!open && bootstrapPollRef.current) {
+            window.clearInterval(bootstrapPollRef.current);
+            bootstrapPollRef.current = null;
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Setting Up {bootstrapProjectName || 'Project'}</DialogTitle>
+            <DialogDescription>
+              We are provisioning dedicated agents, Mission Control, and initial page discovery.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-1">
+            {bootstrapStages.map((stage) => {
+              const Icon =
+                stage.status === 'done'
+                  ? CheckCircle2
+                  : stage.status === 'failed'
+                    ? AlertCircle
+                    : stage.status === 'running'
+                      ? Loader2
+                      : CircleDashed;
+              const colorClass =
+                stage.status === 'done'
+                  ? 'text-emerald-600'
+                  : stage.status === 'failed'
+                    ? 'text-red-600'
+                    : stage.status === 'running'
+                      ? 'text-amber-600'
+                      : 'text-muted-foreground';
+              return (
+                <div
+                  key={stage.stage}
+                  className="rounded-md border border-border px-3 py-2 bg-card"
+                >
+                  <div className="flex items-center gap-2">
+                    <Icon className={`h-4 w-4 ${colorClass} ${stage.status === 'running' ? 'animate-spin' : ''}`} />
+                    <p className="text-sm font-medium">{stage.label}</p>
+                    <Badge variant="outline" className="ml-auto text-[10px] uppercase">
+                      {stage.status}
+                    </Badge>
+                  </div>
+                  {stage.message && (
+                    <p className="text-xs text-muted-foreground mt-1">{stage.message}</p>
+                  )}
+                </div>
+              );
+            })}
+            {bootstrapError && (
+              <p className="text-xs text-red-600">{bootstrapError}</p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (bootstrapProjectId) {
+                  void loadBootstrapStatus(bootstrapProjectId).catch((err) =>
+                    setBootstrapError(
+                      err instanceof Error ? err.message : 'Failed to refresh setup status'
+                    )
+                  );
+                }
+              }}
+            >
+              Refresh Status
+            </Button>
+            <Button
+              onClick={() => setBootstrapModalOpen(false)}
+              disabled={!bootstrapReady && bootstrapStages.some((stage) => stage.status === 'running')}
+            >
+              {bootstrapReady ? 'Done' : 'Close'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -19,6 +19,8 @@ export const seedAgents = mutation({
         specialization: "Long-form SEO content",
         skills: ["SEO writing", "keyword research", "content structure", "blog posts"],
         status: "ONLINE",
+        isDedicated: false,
+        assignmentHealth: { routable: false, legacyGlobal: true },
         tasksCompleted: 0,
         createdAt: now,
         updatedAt: now,
@@ -29,6 +31,8 @@ export const seedAgents = mutation({
         specialization: "Content review & polish",
         skills: ["grammar", "tone adjustment", "readability", "fact-checking"],
         status: "ONLINE",
+        isDedicated: false,
+        assignmentHealth: { routable: false, legacyGlobal: true },
         tasksCompleted: 0,
         createdAt: now,
         updatedAt: now,
@@ -39,6 +43,8 @@ export const seedAgents = mutation({
         specialization: "Research & data analysis",
         skills: ["topic research", "competitor analysis", "data synthesis", "citations"],
         status: "ONLINE",
+        isDedicated: false,
+        assignmentHealth: { routable: false, legacyGlobal: true },
         tasksCompleted: 0,
         createdAt: now,
         updatedAt: now,
@@ -49,6 +55,8 @@ export const seedAgents = mutation({
         specialization: "Structured outlines and narrative flow",
         skills: ["outline design", "content architecture", "section planning"],
         status: "ONLINE",
+        isDedicated: false,
+        assignmentHealth: { routable: false, legacyGlobal: true },
         tasksCompleted: 0,
         createdAt: now,
         updatedAt: now,
@@ -59,6 +67,8 @@ export const seedAgents = mutation({
         specialization: "SEO and on-page optimization reviews",
         skills: ["SERP alignment", "on-page SEO", "metadata reviews", "internal linking"],
         status: "ONLINE",
+        isDedicated: false,
+        assignmentHealth: { routable: false, legacyGlobal: true },
         tasksCompleted: 0,
         createdAt: now,
         updatedAt: now,
@@ -69,6 +79,8 @@ export const seedAgents = mutation({
         specialization: "Workflow orchestration and handoffs",
         skills: ["workflow planning", "handoffs", "risk checks"],
         status: "ONLINE",
+        isDedicated: false,
+        assignmentHealth: { routable: false, legacyGlobal: true },
         tasksCompleted: 0,
         createdAt: now,
         updatedAt: now,
@@ -79,6 +91,8 @@ export const seedAgents = mutation({
         specialization: "SEO strategy and keyword alignment",
         skills: ["keyword strategy", "entity coverage", "ranking factors"],
         status: "ONLINE",
+        isDedicated: false,
+        assignmentHealth: { routable: false, legacyGlobal: true },
         tasksCompleted: 0,
         createdAt: now,
         updatedAt: now,
@@ -89,6 +103,8 @@ export const seedAgents = mutation({
         specialization: "General content production support",
         skills: ["content planning", "drafting", "editing support"],
         status: "ONLINE",
+        isDedicated: false,
+        assignmentHealth: { routable: false, legacyGlobal: true },
         tasksCompleted: 0,
         createdAt: now,
         updatedAt: now,
@@ -99,6 +115,8 @@ export const seedAgents = mutation({
         specialization: "Editorial lead and escalation fallback",
         skills: ["quality oversight", "final decisions", "workflow escalation"],
         status: "ONLINE",
+        isDedicated: false,
+        assignmentHealth: { routable: false, legacyGlobal: true },
         tasksCompleted: 0,
         createdAt: now,
         updatedAt: now,
@@ -122,6 +140,12 @@ export const seedAgents = mutation({
         await ctx.db.patch(agent._id, {
           status: "ONLINE",
           currentTaskId: undefined,
+          isDedicated: agent.isDedicated ?? false,
+          assignmentHealth: {
+            ...((agent.assignmentHealth as Record<string, unknown> | undefined) || {}),
+            routable: false,
+            legacyGlobal: true,
+          },
           updatedAt: now,
         });
         healedStatuses.push(`${agent.role}:offline->online`);
@@ -132,6 +156,12 @@ export const seedAgents = mutation({
         await ctx.db.patch(agent._id, {
           status: "IDLE",
           currentTaskId: undefined,
+          isDedicated: agent.isDedicated ?? false,
+          assignmentHealth: {
+            ...((agent.assignmentHealth as Record<string, unknown> | undefined) || {}),
+            routable: false,
+            legacyGlobal: true,
+          },
           updatedAt: now,
         });
         healedStatuses.push(`${agent.role}:working->idle`);
@@ -148,6 +178,12 @@ export const seedAgents = mutation({
           await ctx.db.patch(agent._id, {
             status: "IDLE",
             currentTaskId: undefined,
+            isDedicated: agent.isDedicated ?? false,
+            assignmentHealth: {
+              ...((agent.assignmentHealth as Record<string, unknown> | undefined) || {}),
+              routable: false,
+              legacyGlobal: true,
+            },
             updatedAt: now,
           });
           healedStatuses.push(`${agent.role}:stale-working->idle`);

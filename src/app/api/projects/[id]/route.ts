@@ -5,6 +5,41 @@ import { eq } from 'drizzle-orm';
 import { dbNow } from '@/db/utils';
 import { getAuthUser, requireRole } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
+import {
+  buildRoleCounts,
+  parseProjectRuntimeSettings,
+  syncProjectDedicatedAgentPool,
+} from '@/lib/agents/runtime-agent-pools';
+import type { AgentRoleCounts, AgentStaffingTemplate } from '@/types/agent-runtime';
+
+function normalizeStaffingTemplate(input: unknown): AgentStaffingTemplate {
+  const value = String(input ?? '')
+    .trim()
+    .toLowerCase();
+  if (value === 'small' || value === 'standard' || value === 'premium') return value;
+  return 'small';
+}
+
+function parseAgentRoleCounts(input: unknown): AgentRoleCounts {
+  if (!input || typeof input !== 'object') return {};
+  const source = input as Record<string, unknown>;
+  const out: AgentRoleCounts = {};
+  for (const role of [
+    'researcher',
+    'outliner',
+    'writer',
+    'seo-reviewer',
+    'project-manager',
+    'seo',
+    'content',
+    'lead',
+  ] as const) {
+    const raw = source[role];
+    if (raw === undefined || raw === null) continue;
+    out[role] = Math.max(1, Math.min(10, Number.parseInt(String(raw), 10) || 1));
+  }
+  return out;
+}
 
 export async function GET(
   req: NextRequest,
@@ -53,6 +88,16 @@ export async function PATCH(
 
   try {
     const body = await req.json();
+    const [currentProject] = await db
+      .select({
+        settings: projects.settings,
+      })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!currentProject) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
 
     const updateData: Record<string, unknown> = { updatedAt: dbNow() };
     if (body.name !== undefined) updateData.name = body.name;
@@ -60,6 +105,55 @@ export async function PATCH(
     if (body.defaultContentFormat !== undefined) updateData.defaultContentFormat = body.defaultContentFormat;
     if (body.brandVoice !== undefined) updateData.brandVoice = body.brandVoice;
     if (body.settings !== undefined) updateData.settings = body.settings;
+
+    let runtimeSync:
+      | {
+          template: AgentStaffingTemplate;
+          roleCounts: Record<string, number>;
+          created: number;
+          updated: number;
+        }
+      | null = null;
+    const hasRuntimeOverride =
+      body.agentStaffingTemplate !== undefined || body.agentRoleCounts !== undefined;
+    if (hasRuntimeOverride) {
+      const baseSettings =
+        updateData.settings && typeof updateData.settings === 'object'
+          ? (updateData.settings as Record<string, unknown>)
+          : currentProject.settings && typeof currentProject.settings === 'object'
+            ? (currentProject.settings as Record<string, unknown>)
+            : {};
+      const runtime = parseProjectRuntimeSettings(baseSettings);
+      const template = normalizeStaffingTemplate(
+        body.agentStaffingTemplate ?? runtime.staffingTemplate
+      );
+      const roleCounts = buildRoleCounts(
+        template,
+        Object.keys(parseAgentRoleCounts(body.agentRoleCounts)).length > 0
+          ? parseAgentRoleCounts(body.agentRoleCounts)
+          : runtime.roleCounts
+      );
+      updateData.settings = {
+        ...baseSettings,
+        agentRuntime: {
+          staffingTemplate: template,
+          roleCounts,
+          strictIsolation: true,
+        },
+      };
+
+      const synced = await syncProjectDedicatedAgentPool({
+        projectId,
+        template,
+        roleCounts,
+      });
+      runtimeSync = {
+        template,
+        roleCounts,
+        created: synced.created,
+        updated: synced.updated,
+      };
+    }
 
     const [project] = await db
       .update(projects)
@@ -71,7 +165,10 @@ export async function PATCH(
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
-    return NextResponse.json(project);
+    return NextResponse.json({
+      ...project,
+      runtimeSync,
+    });
   } catch (error) {
     console.error('Error updating project:', error);
     return NextResponse.json({ error: 'Failed to update project' }, { status: 500 });

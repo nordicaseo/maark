@@ -94,6 +94,11 @@ export default defineSchema({
     name: v.string(),
     role: v.string(), // "writer", "editor", "researcher"
     status: v.string(), // "ONLINE", "WORKING", "IDLE", "OFFLINE"
+    projectId: v.optional(v.number()),
+    isDedicated: v.optional(v.boolean()),
+    capacityWeight: v.optional(v.number()),
+    slotKey: v.optional(v.string()),
+    assignmentHealth: v.optional(v.any()),
     specialization: v.optional(v.string()),
     skills: v.optional(v.array(v.string())),
     currentTaskId: v.optional(v.id("tasks")),
@@ -118,7 +123,10 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_status", ["status"]),
+    .index("by_status", ["status"])
+    .index("by_project", ["projectId"])
+    .index("by_project_role", ["projectId", "role"])
+    .index("by_slot", ["slotKey"]),
 
   // ── Activities ────────────────────────────────────────────────────
   activities: defineTable({

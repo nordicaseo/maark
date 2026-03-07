@@ -371,6 +371,38 @@ async function executeAutoResume(req: NextRequest) {
           (b.workflowLastEventAt || b.updatedAt || 0)
       );
 
+    const queuedByProject = new Map<number, WorkflowTask[]>();
+    for (const task of queuedWritingTasks) {
+      if (!task.projectId) continue;
+      const existing = queuedByProject.get(task.projectId) || [];
+      existing.push(task);
+      queuedByProject.set(task.projectId, existing);
+    }
+    for (const [projectId, queued] of queuedByProject.entries()) {
+      const writers = await convex.query(api.agents.list, {
+        projectId,
+        role: 'writer',
+        limit: 120,
+      });
+      const available = (writers || []).filter((writer) => {
+        const status = String(writer.status || '').toUpperCase();
+        return status === 'ONLINE' || status === 'IDLE';
+      }).length;
+      if (available === 0 && queued.length > 0) {
+        await logAlertEvent({
+          source: 'topic_workflow',
+          eventType: 'writer_pool_empty',
+          severity: 'warning',
+          projectId,
+          message: `Writer pool unavailable: ${queued.length} writing task(s) queued.`,
+          metadata: {
+            queuedWriting: queued.length,
+            queuedTaskIds: queued.slice(0, 10).map((task) => String(task._id)),
+          },
+        });
+      }
+    }
+
     const readyRecoverableTasks = workflowTasks
       .filter((task) => {
         const stage = (task.workflowCurrentStageKey || 'research') as TopicStageKey;

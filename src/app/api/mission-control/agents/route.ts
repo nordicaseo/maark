@@ -5,6 +5,7 @@ import {
   listProjectAgentProfiles,
   seedProjectAgentProfiles,
 } from '@/lib/agents/project-agent-profiles';
+import { getProjectAgentPoolHealth } from '@/lib/agents/runtime-agent-pools';
 
 function parseProjectId(value: unknown): number | null {
   const n = Number.parseInt(String(value ?? ''), 10);
@@ -40,9 +41,11 @@ export async function GET(req: NextRequest) {
 
   await seedProjectAgentProfiles(scopedProjectId, auth.user.id);
   const profiles = await listProjectAgentProfiles(scopedProjectId);
+  const health = await getProjectAgentPoolHealth(scopedProjectId).catch(() => null);
 
   return NextResponse.json({
     projectId: scopedProjectId,
+    health,
     profiles: profiles.map((profile) => ({
       role: profile.role,
       displayName: profile.displayName,

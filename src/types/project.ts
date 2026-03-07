@@ -1,4 +1,5 @@
 import type { ContentFormat } from './document';
+import type { AgentRoleCounts, AgentStaffingTemplate } from './agent-runtime';
 
 export interface Project {
   id: number;
@@ -14,6 +15,11 @@ export interface Project {
 
 export interface ProjectSettings {
   defaultTone?: string;
+  agentRuntime?: {
+    staffingTemplate?: AgentStaffingTemplate;
+    roleCounts?: AgentRoleCounts;
+    strictIsolation?: boolean;
+  };
 }
 
 export interface ProjectMember {

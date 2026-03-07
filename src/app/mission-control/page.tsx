@@ -67,7 +67,10 @@ function MissionOverviewStrip({
   projectId: number | null;
   orgTasks: TaskDoc[];
 }) {
-  const agents = useQuery(api.agents.list, { limit: 300 });
+  const agents = useQuery(
+    api.agents.list,
+    projectId ? { projectId, limit: 300 } : { limit: 300 }
+  );
   const projectScopedTasks = useQuery(api.tasks.list, projectId ? { projectId, limit: 500 } : 'skip');
   const now = new Date();
   const tasks = projectId ? (projectScopedTasks || []) : orgTasks;

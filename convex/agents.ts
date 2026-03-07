@@ -14,18 +14,29 @@ function normalizeAgentStatus(status: string): "ONLINE" | "WORKING" | "IDLE" | "
 export const list = query({
   args: {
     status: v.optional(v.string()),
+    projectId: v.optional(v.number()),
+    role: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const limit = Math.max(1, Math.min(args.limit ?? 200, 1000));
-    if (args.status) {
+    if (args.status && args.projectId === undefined && !args.role) {
       const status = normalizeAgentStatus(args.status);
       return await ctx.db
         .query("agents")
         .withIndex("by_status", (q) => q.eq("status", status))
         .take(limit);
     }
-    return await ctx.db.query("agents").take(limit);
+    const rows = await ctx.db.query("agents").take(limit * 4);
+    const filtered = rows.filter((agent) => {
+      if (args.status && normalizeAgentStatus(agent.status) !== normalizeAgentStatus(args.status)) {
+        return false;
+      }
+      if (args.projectId !== undefined && agent.projectId !== args.projectId) return false;
+      if (args.role && agent.role.toLowerCase() !== args.role.toLowerCase()) return false;
+      return true;
+    });
+    return filtered.slice(0, limit);
   },
 });
 
@@ -49,6 +60,11 @@ export const register = mutation({
   args: {
     name: v.string(),
     role: v.string(),
+    projectId: v.optional(v.number()),
+    isDedicated: v.optional(v.boolean()),
+    capacityWeight: v.optional(v.number()),
+    slotKey: v.optional(v.string()),
+    assignmentHealth: v.optional(v.any()),
     specialization: v.optional(v.string()),
     skills: v.optional(v.array(v.string())),
   },
@@ -114,5 +130,27 @@ export const updatePersonaAndModels = mutation({
       modelOverrides,
       updatedAt: Date.now(),
     });
+  },
+});
+
+export const updateRuntime = mutation({
+  args: {
+    id: v.id("agents"),
+    projectId: v.optional(v.union(v.number(), v.null())),
+    isDedicated: v.optional(v.boolean()),
+    capacityWeight: v.optional(v.number()),
+    slotKey: v.optional(v.union(v.string(), v.null())),
+    assignmentHealth: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const updates: Record<string, unknown> = {
+      updatedAt: Date.now(),
+    };
+    if (args.projectId !== undefined) updates.projectId = args.projectId ?? undefined;
+    if (args.isDedicated !== undefined) updates.isDedicated = args.isDedicated;
+    if (args.capacityWeight !== undefined) updates.capacityWeight = args.capacityWeight;
+    if (args.slotKey !== undefined) updates.slotKey = args.slotKey ?? undefined;
+    if (args.assignmentHealth !== undefined) updates.assignmentHealth = args.assignmentHealth;
+    await ctx.db.patch(args.id, updates);
   },
 });

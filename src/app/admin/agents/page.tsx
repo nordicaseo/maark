@@ -58,6 +58,22 @@ interface AgentProfilesResponse {
   profiles: ProjectAgentProfile[];
 }
 
+interface RuntimePoolHealth {
+  projectId: number;
+  totalAgents: number;
+  totalDedicated: number;
+  availableWriters: number;
+  queuedWriting: number;
+  staleLocks: number;
+  writerRows: Array<{
+    id: string;
+    name: string;
+    status: string;
+    lockHealth: string;
+    currentTaskId: string | null;
+  }>;
+}
+
 interface ProfileDraft {
   displayName: string;
   emoji: string;
@@ -143,6 +159,8 @@ export default function AdminAgentsPage() {
   const [activeFile, setActiveFile] = useState<AgentFileKey>('SOUL');
   const [sharedUserContent, setSharedUserContent] = useState('');
   const [heartbeatResult, setHeartbeatResult] = useState<HeartbeatResponse | null>(null);
+  const [runtimeHealth, setRuntimeHealth] = useState<RuntimePoolHealth | null>(null);
+  const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [heartbeatRunning, setHeartbeatRunning] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -200,6 +218,23 @@ export default function AdminAgentsPage() {
     }
   }, [selectedRole]);
 
+  const fetchRuntimeHealth = useCallback(async (projectId: number) => {
+    const res = await fetch('/api/admin/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'runtime_health',
+        projectId,
+      }),
+    });
+    if (!res.ok) {
+      const payload = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(payload.error || 'Failed to load runtime health');
+    }
+    const payload = (await res.json()) as { health?: RuntimePoolHealth };
+    setRuntimeHealth(payload.health || null);
+  }, []);
+
   useEffect(() => {
     setLoading(true);
     Promise.all([fetchProjects(), fetchSharedUserProfile()])
@@ -212,12 +247,12 @@ export default function AdminAgentsPage() {
   useEffect(() => {
     if (!activeProjectId) return;
     setLoading(true);
-    Promise.all([fetchProfiles(activeProjectId), fetchSkills(activeProjectId)])
+    Promise.all([fetchProfiles(activeProjectId), fetchSkills(activeProjectId), fetchRuntimeHealth(activeProjectId)])
       .catch((err) => {
         setError(err instanceof Error ? err.message : 'Failed to load project agent data');
       })
       .finally(() => setLoading(false));
-  }, [activeProjectId, fetchProfiles, fetchSkills]);
+  }, [activeProjectId, fetchProfiles, fetchSkills, fetchRuntimeHealth]);
 
   const toggleSkill = useCallback((skillId: number, checked: boolean) => {
     setDraft((prev) => {
@@ -322,6 +357,33 @@ export default function AdminAgentsPage() {
     }
   }, [activeProjectId, fetchProfiles]);
 
+  const syncRuntimeTeam = useCallback(async () => {
+    if (!activeProjectId) return;
+    setRuntimeBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch('/api/admin/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'sync_runtime',
+          projectId: activeProjectId,
+        }),
+      });
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || 'Failed to sync runtime team');
+      }
+      await Promise.all([fetchProfiles(activeProjectId), fetchRuntimeHealth(activeProjectId)]);
+      setNotice('Project runtime agent pool synced.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sync runtime team');
+    } finally {
+      setRuntimeBusy(false);
+    }
+  }, [activeProjectId, fetchProfiles, fetchRuntimeHealth]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20 text-muted-foreground">
@@ -373,6 +435,18 @@ export default function AdminAgentsPage() {
           >
             <RefreshCcw className="h-4 w-4 mr-1" />
             Refresh
+          </Button>
+          <Button
+            variant="outline"
+            onClick={syncRuntimeTeam}
+            disabled={!activeProjectId || runtimeBusy}
+          >
+            {runtimeBusy ? (
+              <Loader2 className="h-4 w-4 animate-spin mr-1" />
+            ) : (
+              <ShieldCheck className="h-4 w-4 mr-1" />
+            )}
+            Sync Runtime Team
           </Button>
         </div>
       </div>
@@ -452,6 +526,42 @@ export default function AdminAgentsPage() {
                 );
               })}
             </div>
+          </div>
+
+          <div className="border border-border rounded-lg bg-card p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-sm flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4" />
+                Runtime Pool Health
+              </h2>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => activeProjectId && fetchRuntimeHealth(activeProjectId)}
+                disabled={!activeProjectId || runtimeBusy}
+              >
+                <RefreshCcw className="h-3.5 w-3.5 mr-1" />
+                Refresh
+              </Button>
+            </div>
+            {runtimeHealth ? (
+              <div className="space-y-1.5 text-xs text-muted-foreground">
+                <p>
+                  Total: {runtimeHealth.totalAgents} · Dedicated: {runtimeHealth.totalDedicated}
+                </p>
+                <p>
+                  Available writers: {runtimeHealth.availableWriters} · Queued writing: {runtimeHealth.queuedWriting}
+                </p>
+                <p>Stale writer locks: {runtimeHealth.staleLocks}</p>
+                {runtimeHealth.writerRows.slice(0, 4).map((writer) => (
+                  <p key={writer.id} className="truncate">
+                    {writer.name} · {writer.status} · {writer.lockHealth}
+                  </p>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">No runtime health loaded.</p>
+            )}
           </div>
         </div>
 

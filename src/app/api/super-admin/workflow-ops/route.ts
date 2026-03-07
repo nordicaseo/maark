@@ -232,6 +232,13 @@ export async function GET(req: NextRequest) {
         : defaultSettings;
 
     const allTasks = taskChunks.flat() as WorkflowTask[];
+    const scopedAgents = (allAgents as WorkflowAgent[]).filter((agent) => {
+      if (requestedProjectId !== null) {
+        return Number((agent as unknown as { projectId?: number }).projectId) === requestedProjectId;
+      }
+      const isDedicated = (agent as unknown as { isDedicated?: boolean }).isDedicated;
+      return isDedicated !== false;
+    });
     const taskById = new Map<string, WorkflowTask>(
       allTasks.map((task) => [String(task._id), task])
     );
@@ -374,7 +381,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const writers = (allAgents as WorkflowAgent[]).filter(
+    const writers = scopedAgents.filter(
       (agent) => agent.role.toLowerCase() === 'writer'
     );
     let staleWorkingLocks = 0;

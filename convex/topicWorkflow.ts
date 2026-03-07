@@ -8,6 +8,7 @@ const INITIAL_WORKFLOW_START_DELAY_MS = 20_000;
 const MIN_WORKFLOW_START_DELAY_MS = 0;
 const MAX_WORKFLOW_START_DELAY_MS = 10 * 60 * 1000;
 const DEFAULT_WRITER_LOCK_TIMEOUT_MS = 25 * 60 * 1000;
+const DEFAULT_PROJECT_AGENT_POOL_MODE = "strict";
 
 type TopicStageKey =
   | "research"
@@ -162,6 +163,30 @@ function pickAssignableWriterId(writers: Doc<"agents">[]): Id<"agents"> | null {
   return null;
 }
 
+function strictProjectAgentPoolsEnabled(): boolean {
+  const mode = String(process.env.PROJECT_AGENT_POOL_MODE ?? DEFAULT_PROJECT_AGENT_POOL_MODE)
+    .trim()
+    .toLowerCase();
+  return !["legacy", "shared", "global", "0", "false", "off"].includes(mode);
+}
+
+function isAgentRoutableForProject(
+  agent: Doc<"agents">,
+  projectId: number | undefined
+): boolean {
+  const health = (agent.assignmentHealth as Record<string, unknown> | undefined) || {};
+  if (health.routable === false) return false;
+
+  if (!strictProjectAgentPoolsEnabled()) {
+    return true;
+  }
+
+  if (projectId === undefined) return false;
+  if (agent.projectId !== projectId) return false;
+  if (agent.isDedicated === false) return false;
+  return true;
+}
+
 function stageOwnerSummary(stage: TopicStageKey): string {
   const chain = stageOwnerChains[stage] || ["lead"];
   if (chain.length === 0) return "none";
@@ -238,38 +263,57 @@ function normalizedRoleCandidates(role: string): string[] {
 
 async function seedMissingWorkflowRoles(
   ctx: MutationCtx,
-  roles?: string[]
+  roles?: string[],
+  projectId?: number
 ): Promise<{ seededRoles: string[] }> {
   const existing = await ctx.db.query("agents").collect();
-  const existingRoles = new Set(existing.map((agent) => agent.role.toLowerCase()));
   const wanted = roles
     ? new Set(roles.map((role) => role.toLowerCase()))
     : null;
   const now = Date.now();
   const seededRoles: string[] = [];
+  const strictPools = strictProjectAgentPoolsEnabled();
 
   for (const template of WORKFLOW_ROLE_SEEDS) {
     if (wanted && !wanted.has(template.role.toLowerCase())) continue;
-    if (existingRoles.has(template.role.toLowerCase())) continue;
+    const hasRoleAlready = strictPools
+      ? existing.some(
+          (agent) =>
+            agent.role.toLowerCase() === template.role.toLowerCase() &&
+            agent.projectId === projectId &&
+            isAgentRoutableForProject(agent, projectId)
+        )
+      : existing.some((agent) => agent.role.toLowerCase() === template.role.toLowerCase());
+    if (hasRoleAlready) continue;
+
+    const slotKey =
+      strictPools && projectId !== undefined ? `p${projectId}:${template.role}:1` : undefined;
     await ctx.db.insert("agents", {
       name: template.name,
       role: template.role,
       specialization: template.specialization,
       skills: template.skills,
       status: "ONLINE",
+      projectId: strictPools ? projectId : undefined,
+      isDedicated: strictPools ? true : false,
+      capacityWeight: 1,
+      slotKey,
+      assignmentHealth: strictPools
+        ? { routable: true, strictIsolation: true }
+        : { routable: true, legacyGlobal: true },
       tasksCompleted: 0,
       createdAt: now,
       updatedAt: now,
     });
     seededRoles.push(template.role);
-    existingRoles.add(template.role.toLowerCase());
   }
 
   return { seededRoles };
 }
 
 async function healWriterAvailability(
-  ctx: MutationCtx
+  ctx: MutationCtx,
+  projectId?: number
 ): Promise<{
   healed: boolean;
   assignableWriterId: Id<"agents"> | null;
@@ -287,12 +331,20 @@ async function healWriterAvailability(
   };
 }> {
   const allAgents = await ctx.db.query("agents").collect();
-  let writers = allAgents.filter((agent) => agent.role.toLowerCase() === "writer");
+  let writers = allAgents.filter(
+    (agent) =>
+      agent.role.toLowerCase() === "writer" &&
+      isAgentRoutableForProject(agent, projectId)
+  );
 
   if (writers.length === 0) {
-    await seedMissingWorkflowRoles(ctx, ["writer"]);
+    await seedMissingWorkflowRoles(ctx, ["writer"], projectId);
     const refreshed = await ctx.db.query("agents").collect();
-    writers = refreshed.filter((agent) => agent.role.toLowerCase() === "writer");
+    writers = refreshed.filter(
+      (agent) =>
+        agent.role.toLowerCase() === "writer" &&
+        isAgentRoutableForProject(agent, projectId)
+    );
     const assignableWriterId = pickAssignableWriterId(writers);
     return {
       healed: true,
@@ -377,7 +429,11 @@ async function healWriterAvailability(
   }
 
   const refreshed = await ctx.db.query("agents").collect();
-  const refreshedWriters = refreshed.filter((agent) => agent.role.toLowerCase() === "writer");
+  const refreshedWriters = refreshed.filter(
+    (agent) =>
+      agent.role.toLowerCase() === "writer" &&
+      isAgentRoutableForProject(agent, projectId)
+  );
   const assignableWriterId = pickAssignableWriterId(refreshedWriters);
   const hasAssignable = Boolean(assignableWriterId);
 
@@ -444,7 +500,8 @@ async function hasValidOutlineArtifact(
 
 async function resolveStageOwnerAgent(
   ctx: MutationCtx,
-  stage: TopicStageKey
+  stage: TopicStageKey,
+  projectId?: number
 ): Promise<{ agent: Doc<"agents">; requestedRole: string; matchedRole: string } | null> {
   const chain = stageOwnerChains[stage] || [];
   if (chain.length === 0) return null;
@@ -455,7 +512,11 @@ async function resolveStageOwnerAgent(
     if (requestedRole === "human") continue;
 
     const candidates = normalizedRoleCandidates(requestedRole);
-    const byRole = allAgents.filter((agent) => candidates.includes(agent.role.toLowerCase()));
+    const byRole = allAgents.filter(
+      (agent) =>
+        candidates.includes(agent.role.toLowerCase()) &&
+        isAgentRoutableForProject(agent, projectId)
+    );
     const online = byRole.find((agent) => normalizeAgentStatus(agent.status) === "ONLINE");
     if (online) {
       return { agent: online, requestedRole, matchedRole: online.role };
@@ -623,19 +684,19 @@ async function assignStageOwner(
   }
 
   const now = Date.now();
-  let assignment = await resolveStageOwnerAgent(ctx, args.stageKey);
+  let assignment = await resolveStageOwnerAgent(ctx, args.stageKey, args.projectId);
   let assignmentDiagnostics: Record<string, unknown> | undefined;
   let writerHealResult: Awaited<ReturnType<typeof healWriterAvailability>> | undefined;
 
   if (!assignment && args.stageKey === "writing") {
-    const healResult = await healWriterAvailability(ctx);
+    const healResult = await healWriterAvailability(ctx, args.projectId);
     writerHealResult = healResult;
     assignmentDiagnostics = {
       reasonCode: healResult.reasonCode,
       ...healResult.diagnostics,
       healed: healResult.healed,
     };
-    assignment = await resolveStageOwnerAgent(ctx, args.stageKey);
+    assignment = await resolveStageOwnerAgent(ctx, args.stageKey, args.projectId);
     if (!assignment && healResult.assignableWriterId) {
       const healedWriter = await ctx.db.get(healResult.assignableWriterId);
       if (healedWriter && normalizedRoleCandidates("writer").includes(healedWriter.role.toLowerCase())) {
@@ -675,6 +736,8 @@ async function assignStageOwner(
       payload: {
         reasonCode: queueWriting ? "writer_queue_waiting" : reasonCode,
         requiredOwnerChain: stageOwnerChains[args.stageKey],
+        strictProjectPools: strictProjectAgentPoolsEnabled(),
+        projectId: args.projectId,
         diagnostics: assignmentDiagnostics,
         writerHealResult,
       },
@@ -827,7 +890,7 @@ export const createTopicFromSource = mutation({
   handler: async (ctx, args) => {
     const now = Date.now();
     const topicKey = normalizeTopicKey(args.topic);
-    await seedMissingWorkflowRoles(ctx);
+    await seedMissingWorkflowRoles(ctx, undefined, args.projectId);
 
     const projectTasks = await ctx.db
       .query("tasks")

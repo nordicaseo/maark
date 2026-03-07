@@ -49,9 +49,12 @@ const STATUS_ORDER: Array<'WORKING' | 'ONLINE' | 'IDLE' | 'OFFLINE'> = [
 ];
 
 export function AgentsSidebar() {
-  const agents = useQuery(api.agents.list, { limit: 300 });
-  const { members } = useTeamMembers();
   const { activeProjectId } = useActiveProject();
+  const agents = useQuery(
+    api.agents.list,
+    activeProjectId ? { projectId: activeProjectId, limit: 300 } : { limit: 300 }
+  );
+  const { members } = useTeamMembers();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [profileMap, setProfileMap] = useState<Record<string, AgentProfileSummary>>({});
   const [expandedHumanId, setExpandedHumanId] = useState<string | null>(null);

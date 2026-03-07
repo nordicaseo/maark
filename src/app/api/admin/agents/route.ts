@@ -7,6 +7,12 @@ import {
   upsertProjectAgentProfile,
 } from '@/lib/agents/project-agent-profiles';
 import { AGENT_FILE_KEYS, FIXED_AGENT_ROLES, type AgentRole } from '@/types/agent-profile';
+import {
+  getProjectAgentPoolHealth,
+  parseProjectRuntimeSettings,
+  syncProjectDedicatedAgentPool,
+} from '@/lib/agents/runtime-agent-pools';
+import type { AgentRoleCounts } from '@/types/agent-runtime';
 
 function parseProjectId(value: unknown): number | null {
   const n = Number.parseInt(String(value ?? ''), 10);
@@ -68,6 +74,26 @@ function sanitizeAvatarUrl(input: unknown): string | undefined {
     return value;
   }
   return undefined;
+}
+
+function normalizeStaffingTemplate(input: unknown): 'small' | 'standard' | 'premium' {
+  const value = String(input ?? '')
+    .trim()
+    .toLowerCase();
+  if (value === 'small' || value === 'standard' || value === 'premium') return value;
+  return 'small';
+}
+
+function sanitizeRoleCounts(input: unknown): AgentRoleCounts | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const source = input as Record<string, unknown>;
+  const out: AgentRoleCounts = {};
+  for (const role of FIXED_AGENT_ROLES) {
+    const raw = source[role];
+    if (raw === undefined || raw === null) continue;
+    out[role] = Math.max(1, Math.min(10, Number.parseInt(String(raw), 10) || 1));
+  }
+  return out;
 }
 
 export async function GET(req: NextRequest) {
@@ -176,5 +202,72 @@ export async function PUT(req: NextRequest) {
     });
     console.error('Admin agents PUT failed:', error);
     return NextResponse.json({ error: 'Failed to update agent profile' }, { status: 500 });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const auth = await requireRole('super_admin');
+  if (auth.error) return auth.error;
+
+  try {
+    const body = await req.json();
+    const projectId = parseProjectId(body.projectId);
+    if (!projectId) {
+      return NextResponse.json({ error: 'projectId is required' }, { status: 400 });
+    }
+    if (!(await userCanAccessProject(auth.user, projectId))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const action = String(body.action || 'runtime_health');
+    if (action === 'runtime_health') {
+      const health = await getProjectAgentPoolHealth(projectId);
+      return NextResponse.json({ projectId, health });
+    }
+
+    if (action === 'sync_runtime') {
+      const runtime = parseProjectRuntimeSettings(body.settings);
+      const template = normalizeStaffingTemplate(
+        body.staffingTemplate ?? runtime.staffingTemplate
+      );
+      const roleCounts = sanitizeRoleCounts(body.roleCounts) ?? runtime.roleCounts;
+      const synced = await syncProjectDedicatedAgentPool({
+        projectId,
+        template,
+        roleCounts,
+      });
+      const health = await getProjectAgentPoolHealth(projectId);
+      await logAuditEvent({
+        userId: auth.user.id,
+        action: 'admin.agent_runtime.sync',
+        resourceType: 'project',
+        resourceId: projectId,
+        projectId,
+        metadata: {
+          template,
+          roleCounts,
+          created: synced.created,
+          updated: synced.updated,
+        },
+      });
+      return NextResponse.json({
+        projectId,
+        template,
+        roleCounts,
+        synced,
+        health,
+      });
+    }
+
+    return NextResponse.json({ error: 'Unsupported action' }, { status: 400 });
+  } catch (error) {
+    await logAlertEvent({
+      source: 'admin',
+      eventType: 'agent_runtime_action_failed',
+      severity: 'error',
+      message: 'Failed to run agent runtime action.',
+      metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
+    });
+    return NextResponse.json({ error: 'Failed to process runtime action' }, { status: 500 });
   }
 }

@@ -8,6 +8,55 @@ import { dbNow } from '@/db/utils';
 import { runDiscoveryForProject } from '@/lib/discovery/discovery-runner';
 import { enqueueProjectPagesForCrawl, processDueCrawlJobs } from '@/lib/discovery/crawl-queue';
 import { processDuePageArtifactJobs } from '@/lib/discovery/page-artifact-queue';
+import { logAuditEvent } from '@/lib/observability';
+import { seedProjectAgentProfiles } from '@/lib/agents/project-agent-profiles';
+import {
+  buildRoleCounts,
+  syncProjectDedicatedAgentPool,
+} from '@/lib/agents/runtime-agent-pools';
+import type {
+  AgentRoleCounts,
+  AgentStaffingTemplate,
+  ProjectBootstrapStage,
+  ProjectBootstrapStageState,
+} from '@/types/agent-runtime';
+
+const BOOTSTRAP_STAGE_LABELS: Record<ProjectBootstrapStage, string> = {
+  seeding_agents: 'Seeding Agents',
+  creating_mission_control: 'Creating Mission Control',
+  fetching_pages: 'Fetching Pages',
+  connect_gsc: 'Connect your GSC',
+};
+
+function normalizeStaffingTemplate(input: unknown): AgentStaffingTemplate {
+  const value = String(input ?? '')
+    .trim()
+    .toLowerCase();
+  if (value === 'small' || value === 'standard' || value === 'premium') return value;
+  return 'small';
+}
+
+function parseAgentRoleCounts(input: unknown): AgentRoleCounts {
+  if (!input || typeof input !== 'object') return {};
+  const source = input as Record<string, unknown>;
+  const out: AgentRoleCounts = {};
+  for (const role of [
+    'researcher',
+    'outliner',
+    'writer',
+    'seo-reviewer',
+    'project-manager',
+    'seo',
+    'content',
+    'lead',
+  ] as const) {
+    const raw = source[role];
+    if (raw === undefined || raw === null) continue;
+    const count = Math.max(1, Math.min(10, Number.parseInt(String(raw), 10) || 1));
+    out[role] = count;
+  }
+  return out;
+}
 
 export async function GET(req: NextRequest) {
   await ensureDb();
@@ -100,6 +149,8 @@ export async function POST(req: NextRequest) {
       autoCrawlEnabled,
       autoGscEnabled,
       crawlFrequencyHours,
+      agentStaffingTemplate,
+      agentRoleCounts,
     } = body;
 
     if (!name) {
@@ -124,10 +175,23 @@ export async function POST(req: NextRequest) {
         : null;
     const normalizedAutoCrawlEnabled = autoCrawlEnabled === false ? 0 : 1;
     const normalizedAutoGscEnabled = autoGscEnabled === false ? 0 : 1;
+    const normalizedStaffingTemplate = normalizeStaffingTemplate(agentStaffingTemplate);
+    const normalizedRoleCounts = parseAgentRoleCounts(agentRoleCounts);
+    const resolvedRoleCounts = buildRoleCounts(normalizedStaffingTemplate, normalizedRoleCounts);
     const normalizedCrawlFrequency = Math.max(
       1,
       Math.min(168, Number.parseInt(String(crawlFrequencyHours ?? 24), 10) || 24)
     );
+
+    const projectSettings =
+      body.settings && typeof body.settings === 'object'
+        ? (body.settings as Record<string, unknown>)
+        : {};
+    projectSettings.agentRuntime = {
+      staffingTemplate: normalizedStaffingTemplate,
+      roleCounts: resolvedRoleCounts,
+      strictIsolation: true,
+    };
 
     const [project] = await db
       .insert(projects)
@@ -136,6 +200,7 @@ export async function POST(req: NextRequest) {
         description: description || null,
         defaultContentFormat: defaultContentFormat || 'blog_post',
         brandVoice: brandVoice || null,
+        settings: projectSettings,
         createdById: createdById || null,
       })
       .returning();
@@ -158,8 +223,68 @@ export async function POST(req: NextRequest) {
       })
       .returning();
 
+    const bootstrapStages: ProjectBootstrapStageState[] = [
+      {
+        stage: 'seeding_agents',
+        label: BOOTSTRAP_STAGE_LABELS.seeding_agents,
+        status: 'pending',
+      },
+      {
+        stage: 'creating_mission_control',
+        label: BOOTSTRAP_STAGE_LABELS.creating_mission_control,
+        status: 'pending',
+      },
+      {
+        stage: 'fetching_pages',
+        label: BOOTSTRAP_STAGE_LABELS.fetching_pages,
+        status: 'pending',
+      },
+      {
+        stage: 'connect_gsc',
+        label: BOOTSTRAP_STAGE_LABELS.connect_gsc,
+        status: normalizedGscProperty ? 'done' : 'pending',
+        message: normalizedGscProperty
+          ? 'GSC property provided during setup.'
+          : 'Connect Google Search Console to unlock richer data.',
+      },
+    ];
+
+    const setBootstrapStage = async (
+      stage: ProjectBootstrapStage,
+      status: ProjectBootstrapStageState['status'],
+      message?: string
+    ) => {
+      const idx = bootstrapStages.findIndex((entry) => entry.stage === stage);
+      if (idx >= 0) {
+        bootstrapStages[idx] = {
+          ...bootstrapStages[idx],
+          status,
+          message: message ?? null,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      await logAuditEvent({
+        userId: auth.user.id,
+        action: 'project.bootstrap.stage',
+        resourceType: 'project',
+        resourceId: project.id,
+        projectId: project.id,
+        metadata: {
+          stage,
+          status,
+          message: message ?? null,
+          stages: bootstrapStages,
+        },
+      });
+    };
+
     let bootstrap:
       | {
+          agents: {
+            seededProfiles: number;
+            runtimeCreated: number;
+            runtimeUpdated: number;
+          };
           discovery: { discovered: number; candidates: number; excluded: number; warnings: number };
           enqueue: { enqueued: number; reused: number; discoveredPages: number };
           worker: { processedCount: number };
@@ -168,6 +293,23 @@ export async function POST(req: NextRequest) {
       | null = null;
 
     try {
+      await setBootstrapStage('seeding_agents', 'running', 'Creating project-specific agent profiles...');
+      const seeded = await seedProjectAgentProfiles(project.id, auth.user.id);
+      await setBootstrapStage('seeding_agents', 'done', 'Agent profiles ready.');
+
+      await setBootstrapStage(
+        'creating_mission_control',
+        'running',
+        `Allocating ${normalizedStaffingTemplate} dedicated team...`
+      );
+      const runtimeSync = await syncProjectDedicatedAgentPool({
+        projectId: project.id,
+        template: normalizedStaffingTemplate,
+        roleCounts: resolvedRoleCounts,
+      });
+      await setBootstrapStage('creating_mission_control', 'done', 'Dedicated Mission Control team ready.');
+
+      await setBootstrapStage('fetching_pages', 'running', 'Running discovery and initial crawl bootstrap...');
       const discovery = await runDiscoveryForProject({
         projectId: project.id,
         sitemapUrl: normalizedSitemapUrl,
@@ -188,8 +330,14 @@ export async function POST(req: NextRequest) {
         projectId: project.id,
         limit: 16,
       });
+      await setBootstrapStage('fetching_pages', 'done', 'Pages discovered and initial crawl completed.');
 
       bootstrap = {
+        agents: {
+          seededProfiles: seeded.seededRoles.length,
+          runtimeCreated: runtimeSync.created,
+          runtimeUpdated: runtimeSync.updated,
+        },
         discovery: {
           discovered: discovery.totals.discovered,
           candidates: discovery.totals.candidates,
@@ -210,11 +358,29 @@ export async function POST(req: NextRequest) {
       };
     } catch (error) {
       console.error('Project crawl bootstrap failed:', error);
+      const detail = error instanceof Error ? error.message : 'Unknown bootstrap error';
+      const firstPending = bootstrapStages.find((stage) => stage.status === 'running');
+      if (firstPending) {
+        await setBootstrapStage(firstPending.stage, 'failed', detail);
+      }
     }
+
+    await logAuditEvent({
+      userId: auth.user.id,
+      action: 'project.bootstrap.completed',
+      resourceType: 'project',
+      resourceId: project.id,
+      projectId: project.id,
+      severity: bootstrapStages.some((stage) => stage.status === 'failed') ? 'warning' : 'info',
+      metadata: {
+        stages: bootstrapStages,
+      },
+    });
 
     return NextResponse.json({
       ...project,
       site,
+      bootstrapStages,
       bootstrap,
     });
   } catch (error) {
