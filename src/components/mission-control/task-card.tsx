@@ -56,6 +56,32 @@ const ROUTED_STAGE_ORDER = [
   'final_review',
 ] as const;
 
+function plannedStageLineup(task: Task): string[] {
+  const plan =
+    task.workflowStagePlan && typeof task.workflowStagePlan === 'object'
+      ? (task.workflowStagePlan as Record<string, unknown>)
+      : null;
+  const owners =
+    plan?.owners && typeof plan.owners === 'object'
+      ? (plan.owners as Record<string, unknown>)
+      : null;
+  if (!owners) {
+    return ROUTED_STAGE_ORDER.map(
+      (stage) => TOPIC_STAGE_LABELS[stage as keyof typeof TOPIC_STAGE_LABELS] || stage
+    );
+  }
+
+  return ROUTED_STAGE_ORDER.filter((stage) => {
+    const owner =
+      owners[stage] && typeof owners[stage] === 'object'
+        ? (owners[stage] as Record<string, unknown>)
+        : null;
+    if (!owner) return true;
+    if (owner.enabled === undefined) return true;
+    return owner.enabled === true || String(owner.enabled).toLowerCase() === 'true';
+  }).map((stage) => TOPIC_STAGE_LABELS[stage as keyof typeof TOPIC_STAGE_LABELS] || stage);
+}
+
 function summarizePlannedOwners(task: Task): string | null {
   const plan =
     task.workflowStagePlan && typeof task.workflowStagePlan === 'object'
@@ -193,6 +219,7 @@ function TaskCardContent({
   const hiddenDeliverableCount =
     task.deliverables && task.deliverables.length > 2 ? task.deliverables.length - 2 : 0;
   const plannedOwnersSummary = isTopicWorkflow ? summarizePlannedOwners(task) : null;
+  const stageLineup = isTopicWorkflow ? plannedStageLineup(task) : [];
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -295,6 +322,14 @@ function TaskCardContent({
           <p className="mc-header-mono text-[9px]">Planned owners</p>
           <p className="text-[10px] leading-4 line-clamp-2" style={{ color: 'var(--mc-text-tertiary)' }}>
             {plannedOwnersSummary}
+          </p>
+        </div>
+      )}
+      {isTopicWorkflow && stageLineup.length > 0 && (
+        <div className="rounded-md px-2 py-1.5 space-y-0.5" style={{ background: 'var(--mc-overlay)' }}>
+          <p className="mc-header-mono text-[9px]">Stage lineup</p>
+          <p className="text-[10px] leading-4 line-clamp-2" style={{ color: 'var(--mc-text-tertiary)' }}>
+            {stageLineup.join(' -> ')}
           </p>
         </div>
       )}

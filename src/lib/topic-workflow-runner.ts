@@ -125,6 +125,15 @@ const RUNNABLE_STAGES = new Set<TopicStageKey>([
   'final_review',
 ]);
 
+const ROUTED_STAGE_ORDER = [
+  'research',
+  'seo_intel_review',
+  'outline_build',
+  'writing',
+  'editing',
+  'final_review',
+] as const;
+
 const ROLE_ALIASES: Record<string, string[]> = {
   researcher: ['researcher', 'seo', 'editor'],
   outliner: ['outliner', 'editor', 'content'],
@@ -739,35 +748,58 @@ function stageActionKey(stage: TopicStageKey): AIAction {
   }
 }
 
-function resolveAutoAdvance(
-  _task: Doc<'tasks'>,
-  stage: TopicStageKey
-): { toStage: TopicStageKey; skipOptionalOutlineReview?: boolean } | null {
-  if (stage === 'research') {
-    return { toStage: 'seo_intel_review' };
+function isPlannedStageEnabled(task: Doc<'tasks'>, stage: TopicStageKey): boolean {
+  if (!ROUTED_STAGE_ORDER.includes(stage as (typeof ROUTED_STAGE_ORDER)[number])) {
+    return true;
   }
+  const plan =
+    task.workflowStagePlan && typeof task.workflowStagePlan === 'object'
+      ? (task.workflowStagePlan as Record<string, unknown>)
+      : null;
+  const owners =
+    plan?.owners && typeof plan.owners === 'object'
+      ? (plan.owners as Record<string, unknown>)
+      : null;
+  const owner =
+    owners?.[stage] && typeof owners[stage] === 'object'
+      ? (owners[stage] as Record<string, unknown>)
+      : null;
+  if (!owner || owner.enabled === undefined) return true;
+  return owner.enabled === true || String(owner.enabled).toLowerCase() === 'true';
+}
 
-  if (stage === 'seo_intel_review') {
-    return { toStage: 'outline_build' };
-  }
-
-  if (stage === 'outline_build') {
-    return { toStage: 'writing' };
-  }
-
-  if (stage === 'writing') {
-    return { toStage: 'editing' };
-  }
-
-  if (stage === 'editing') {
-    return { toStage: 'final_review' };
-  }
-
-  if (stage === 'prewrite_context') {
-    return { toStage: 'writing' };
-  }
-
+function nextCanonicalStage(stage: TopicStageKey): TopicStageKey | null {
+  if (stage === 'research') return 'seo_intel_review';
+  if (stage === 'seo_intel_review') return 'outline_build';
+  if (stage === 'outline_build') return 'writing';
+  if (stage === 'writing') return 'editing';
+  if (stage === 'editing') return 'final_review';
+  if (stage === 'prewrite_context') return 'writing';
   return null;
+}
+
+function resolveAutoAdvance(
+  task: Doc<'tasks'>,
+  stage: TopicStageKey
+): {
+  toStage: TopicStageKey;
+  skipOptionalOutlineReview?: boolean;
+  skippedStages?: TopicStageKey[];
+} | null {
+  let next = nextCanonicalStage(stage);
+  if (!next) return null;
+  const skippedStages: TopicStageKey[] = [];
+
+  while (next && !isPlannedStageEnabled(task, next)) {
+    skippedStages.push(next);
+    next = nextCanonicalStage(next);
+  }
+  if (!next) return null;
+
+  return {
+    toStage: next,
+    skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
+  };
 }
 
 async function resolveProviderForStage(
@@ -2372,6 +2404,55 @@ export async function runTopicWorkflow(
       continue;
     }
 
+    if (RUNNABLE_STAGES.has(stage) && !isPlannedStageEnabled(currentTask, stage)) {
+      const skipSummary = `Template sequencing skipped disabled stage ${stage}.`;
+      const nextFromDisabled = resolveAutoAdvance(currentTask, stage);
+      if (!nextFromDisabled) {
+        runs.push({ stage, summary: skipSummary });
+        stoppedReason = `Stage ${stage} is disabled and has no enabled downstream stage.`;
+        break;
+      }
+
+      await convex.mutation(api.topicWorkflow.recordStageProgress, {
+        taskId: currentTask._id,
+        stageKey: stage,
+        summary: skipSummary,
+        actorType: 'system',
+        actorId: input.user.id,
+        actorName: 'Workflow PM',
+        payload: {
+          status: 'skipped',
+          reasonCode: 'stage_disabled_by_template',
+          toStage: nextFromDisabled.toStage,
+        },
+      });
+
+      await convex.mutation(api.topicWorkflow.advanceStage, {
+        taskId: currentTask._id,
+        toStage: nextFromDisabled.toStage,
+        actorType: 'system',
+        actorId: input.user.id,
+        actorName: 'Workflow PM',
+        note: skipSummary,
+      });
+
+      runs.push({
+        stage,
+        summary: skipSummary,
+        nextStage: nextFromDisabled.toStage,
+      });
+
+      const refreshedAfterSkip = await convex.query(api.tasks.get, {
+        id: currentTask._id,
+        projectId: currentTask.projectId ?? undefined,
+      });
+      if (!refreshedAfterSkip) {
+        throw new Error('Task not found after disabled-stage skip.');
+      }
+      currentTask = refreshedAfterSkip;
+      continue;
+    }
+
     if (!RUNNABLE_STAGES.has(stage)) {
       stoppedReason = `No stage runner configured for ${stage}.`;
       break;
@@ -3022,6 +3103,23 @@ export async function runTopicWorkflow(
       runs.push(runRecord);
       stoppedReason = `No automatic transition after ${stage}.`;
       break;
+    }
+
+    if (next.skippedStages && next.skippedStages.length > 0) {
+      await convex.mutation(api.topicWorkflow.recordStageProgress, {
+        taskId: currentTask._id,
+        stageKey: stage,
+        summary: `Template sequencing bypassed: ${next.skippedStages.join(' -> ')}.`,
+        actorType: 'system',
+        actorId: input.user.id,
+        actorName: 'Workflow PM',
+        payload: {
+          status: 'skipped',
+          reasonCode: 'stage_disabled_by_template',
+          skippedStages: next.skippedStages,
+          toStage: next.toStage,
+        },
+      });
     }
 
     await convex.mutation(api.topicWorkflow.advanceStage, {

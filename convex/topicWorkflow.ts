@@ -628,6 +628,104 @@ async function healWriterAvailability(
   };
 }
 
+async function healConfiguredWriterSlotAvailability(
+  ctx: MutationCtx,
+  args: {
+    task: Doc<"tasks">;
+    slotKey: string;
+    projectId?: number;
+    laneKey?: AgentLaneKey;
+  }
+): Promise<{ healed: boolean; reasonCode: string; diagnostics?: Record<string, unknown> }> {
+  const rows = await ctx.db
+    .query("agents")
+    .withIndex("by_slot", (q) => q.eq("slotKey", args.slotKey))
+    .collect();
+
+  const writer = rows.find((agent) => {
+    if (
+      !isAgentRoutableForStage({
+        agent,
+        stage: "writing",
+        projectId: args.projectId,
+        laneKey: args.laneKey,
+      })
+    ) {
+      return false;
+    }
+    return normalizedRoleCandidates("writer").includes(agent.role.toLowerCase());
+  });
+
+  if (!writer) {
+    return {
+      healed: false,
+      reasonCode: "configured_writer_missing",
+      diagnostics: { slotKey: args.slotKey },
+    };
+  }
+
+  let stale = false;
+  const now = Date.now();
+  const writerLockTimeoutMs = resolveWriterLockTimeoutMs();
+  const status = normalizeAgentStatus(writer.status);
+  if (status === "OFFLINE") {
+    stale = true;
+  } else if (status === "WORKING") {
+    if (!writer.currentTaskId) {
+      stale = true;
+    } else {
+      const currentTask = await ctx.db.get(writer.currentTaskId);
+      if (!currentTask) {
+        stale = true;
+      } else {
+        const taskStage = (currentTask.workflowCurrentStageKey || "research") as TopicStageKey;
+        const taskStageStatus = currentTask.workflowStageStatus || "in_progress";
+        const stillWriting =
+          taskStage === "writing" &&
+          taskStageStatus === "in_progress" &&
+          currentTask.status === "IN_PROGRESS";
+        if (!stillWriting) {
+          stale = true;
+        } else {
+          const lastTouch =
+            currentTask.workflowLastEventAt ||
+            currentTask.workflowUpdatedAt ||
+            currentTask.updatedAt ||
+            0;
+          if (lastTouch > 0 && now - lastTouch > writerLockTimeoutMs) {
+            stale = true;
+          }
+        }
+      }
+    }
+  }
+
+  if (!stale) {
+    return {
+      healed: false,
+      reasonCode: "configured_writer_healthy",
+      diagnostics: { slotKey: args.slotKey, status },
+    };
+  }
+
+  await ctx.db.patch(writer._id, {
+    status: "IDLE",
+    currentTaskId: undefined,
+    updatedAt: now,
+  });
+
+  return {
+    healed: true,
+    reasonCode: "configured_writer_recovered",
+    diagnostics: {
+      slotKey: args.slotKey,
+      writerId: writer._id,
+      writerName: writer.name,
+      previousStatus: status,
+    },
+  };
+}
+
 function outlinePayloadLooksValid(payload: unknown): boolean {
   if (!payload || typeof payload !== "object") return false;
   const p = payload as {
@@ -1041,6 +1139,27 @@ async function assignStageOwner(
       });
       if (!assignment) {
         assignmentDiagnostics.reasonCode = "configured_agent_unavailable";
+        if (args.stageKey === "writing") {
+          const slotHeal = await healConfiguredWriterSlotAvailability(ctx, {
+            task: currentTask,
+            slotKey: configuredOwner.slotKey,
+            projectId: args.projectId,
+            laneKey: effectiveLaneKey,
+          });
+          assignmentDiagnostics.slotHeal = slotHeal;
+          if (slotHeal.healed) {
+            assignment = await resolveConfiguredStageOwnerAgent(ctx, {
+              task: currentTask,
+              stage: args.stageKey,
+              projectId: args.projectId,
+              laneKey: effectiveLaneKey,
+              slotKey: configuredOwner.slotKey,
+            });
+            if (assignment) {
+              assignmentDiagnostics.reasonCode = "configured_writer_recovered";
+            }
+          }
+        }
       }
     }
   }

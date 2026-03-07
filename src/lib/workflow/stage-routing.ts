@@ -78,7 +78,17 @@ function defaultStageSlots(projectId: number, laneKey: AgentLaneKey): Record<Rou
   };
 }
 
-function defaultStageEnabled(): Record<RoutableWorkflowStage, boolean> {
+function defaultStageEnabled(contentFormat?: ContentFormat): Record<RoutableWorkflowStage, boolean> {
+  if (contentFormat === 'product_category') {
+    return {
+      research: false,
+      seo_intel_review: true,
+      outline_build: true,
+      writing: true,
+      editing: true,
+      final_review: true,
+    };
+  }
   return {
     research: true,
     seo_intel_review: true,
@@ -120,8 +130,11 @@ function parseStageSlots(
   return out;
 }
 
-function parseStageEnabled(value: unknown): Record<RoutableWorkflowStage, boolean> {
-  const defaults = defaultStageEnabled();
+function parseStageEnabled(
+  value: unknown,
+  contentFormat?: ContentFormat
+): Record<RoutableWorkflowStage, boolean> {
+  const defaults = defaultStageEnabled(contentFormat);
   const parsed = parseObject(value);
   const out = { ...defaults };
   for (const stage of ROUTABLE_WORKFLOW_STAGES) {
@@ -140,7 +153,7 @@ function mapRouteRow(row: RouteRow): ProjectWorkflowStageRoute {
     contentFormat: row.contentFormat,
     laneKey,
     stageSlots: parseStageSlots(row.stageSlots, Number(row.projectId), laneKey),
-    stageEnabled: parseStageEnabled(row.stageEnabled),
+    stageEnabled: parseStageEnabled(row.stageEnabled, row.contentFormat),
     createdById: row.createdById,
     updatedById: row.updatedById,
     createdAt: row.createdAt,
@@ -170,9 +183,10 @@ function mergeStageSlots(
 
 function mergeStageEnabled(
   existing: Record<RoutableWorkflowStage, boolean>,
-  incoming?: Partial<Record<RoutableWorkflowStage, boolean>>
+  incoming?: Partial<Record<RoutableWorkflowStage, boolean>>,
+  contentFormat?: ContentFormat
 ): Record<RoutableWorkflowStage, boolean> {
-  const base = { ...defaultStageEnabled(), ...existing };
+  const base = { ...defaultStageEnabled(contentFormat), ...existing };
   if (!incoming) return base;
   for (const stage of ROUTABLE_WORKFLOW_STAGES) {
     const value = incoming[stage];
@@ -215,7 +229,7 @@ export async function seedProjectWorkflowStageRoutes(
       contentFormat,
       laneKey,
       stageSlots: defaultStageSlots(projectId, laneKey),
-      stageEnabled: defaultStageEnabled(),
+      stageEnabled: defaultStageEnabled(contentFormat),
       createdById: userId ?? null,
       updatedById: userId ?? null,
       createdAt: dbNow(),
@@ -293,7 +307,11 @@ export async function upsertProjectWorkflowStageRoute(
       defaultStageSlots(input.projectId, laneKey),
       input.stageSlots
     );
-    const stageEnabled = mergeStageEnabled(defaultStageEnabled(), input.stageEnabled);
+    const stageEnabled = mergeStageEnabled(
+      defaultStageEnabled(input.contentFormat),
+      input.stageEnabled,
+      input.contentFormat
+    );
     await db.insert(projectWorkflowStageRoutes).values({
       projectId: input.projectId,
       contentFormat: input.contentFormat,
@@ -316,7 +334,11 @@ export async function upsertProjectWorkflowStageRoute(
     existing.stageSlots,
     input.stageSlots
   );
-  const stageEnabled = mergeStageEnabled(existing.stageEnabled, input.stageEnabled);
+  const stageEnabled = mergeStageEnabled(
+    existing.stageEnabled,
+    input.stageEnabled,
+    input.contentFormat
+  );
 
   await db
     .update(projectWorkflowStageRoutes)

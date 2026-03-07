@@ -18,15 +18,58 @@ import type {
   TemplateAssignment,
 } from '@/types/content-template-config';
 import { CONTENT_FORMAT_LABELS, type ContentFormat } from '@/types/document';
+import { resolveLaneFromContentType } from '@/lib/content-workflow-taxonomy';
+import {
+  ROUTABLE_WORKFLOW_STAGES,
+  type RoutableWorkflowStage,
+} from '@/types/workflow-routing';
+import type { AgentLaneKey } from '@/types/agent-runtime';
 
 interface Project {
   id: number;
   name: string;
 }
 
+interface WorkflowRouteConfig {
+  id: number;
+  projectId: number;
+  contentFormat: ContentFormat;
+  laneKey: AgentLaneKey;
+  stageSlots: Record<RoutableWorkflowStage, string>;
+  stageEnabled: Record<RoutableWorkflowStage, boolean>;
+}
+
+interface RoutingRuntimeAgent {
+  id: string;
+  name: string;
+  role: string;
+  status: string;
+  slotKey: string;
+  laneKey: string;
+  currentTaskId: string | null;
+}
+
 const CONTENT_FORMAT_OPTIONS = Object.entries(CONTENT_FORMAT_LABELS) as Array<
   [ContentFormat, string]
 >;
+
+const STAGE_LABELS: Record<RoutableWorkflowStage, string> = {
+  research: 'Research',
+  seo_intel_review: 'SERP',
+  outline_build: 'Outline',
+  writing: 'Writing',
+  editing: 'Editing',
+  final_review: 'SEO Review',
+};
+
+const STAGE_REQUIRED_ROLE: Record<RoutableWorkflowStage, string> = {
+  research: 'researcher',
+  seo_intel_review: 'seo',
+  outline_build: 'outliner',
+  writing: 'writer',
+  editing: 'editor',
+  final_review: 'seo-reviewer',
+};
 
 function emptyTemplate(): ContentTemplateConfig {
   return {
@@ -59,6 +102,9 @@ export default function SuperAdminTemplatesPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [templates, setTemplates] = useState<ContentTemplateConfig[]>([]);
   const [assignments, setAssignments] = useState<TemplateAssignment[]>([]);
+  const [routingRoutes, setRoutingRoutes] = useState<WorkflowRouteConfig[]>([]);
+  const [routingAgents, setRoutingAgents] = useState<RoutingRuntimeAgent[]>([]);
+  const [routingSavingFormat, setRoutingSavingFormat] = useState<ContentFormat | null>(null);
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string>('');
   const [draft, setDraft] = useState<ContentTemplateConfig>(() => emptyTemplate());
 
@@ -79,7 +125,7 @@ export default function SuperAdminTemplatesPage() {
     setLoading(true);
     setError(null);
     try {
-      const [projectsRes, templatesRes, assignmentsRes] = await Promise.all([
+      const requests: Promise<Response>[] = [
         fetch('/api/projects'),
         fetch('/api/super-admin/templates'),
         fetch(
@@ -87,9 +133,18 @@ export default function SuperAdminTemplatesPage() {
             ? `/api/super-admin/templates/assignments?projectId=${selectedProjectId}`
             : '/api/super-admin/templates/assignments'
         ),
-      ]);
+      ];
+      if (selectedProjectId) {
+        requests.push(fetch(`/api/admin/agents/routing?projectId=${selectedProjectId}`));
+      }
+      const [projectsRes, templatesRes, assignmentsRes, routingRes] = await Promise.all(requests);
 
-      if (!projectsRes.ok || !templatesRes.ok || !assignmentsRes.ok) {
+      if (
+        !projectsRes.ok ||
+        !templatesRes.ok ||
+        !assignmentsRes.ok ||
+        (selectedProjectId && (!routingRes || !routingRes.ok))
+      ) {
         throw new Error('Failed to load templates data');
       }
 
@@ -98,10 +153,18 @@ export default function SuperAdminTemplatesPage() {
         templates: ContentTemplateConfig[];
       };
       const assignmentData = (await assignmentsRes.json()) as TemplateAssignment[];
+      const routingData = routingRes
+        ? ((await routingRes.json()) as {
+            routes?: WorkflowRouteConfig[];
+            runtimeAgents?: RoutingRuntimeAgent[];
+          })
+        : null;
 
       setProjects(projectsData);
       setTemplates(templatesData.templates || []);
       setAssignments(assignmentData || []);
+      setRoutingRoutes(routingData?.routes || []);
+      setRoutingAgents(routingData?.runtimeAgents || []);
 
       if (!selectedTemplateKey && templatesData.templates?.length) {
         setSelectedTemplateKey(templatesData.templates[0].key);
@@ -183,6 +246,112 @@ export default function SuperAdminTemplatesPage() {
     }
     return map;
   }, [assignments]);
+
+  const routeByFormat = useMemo(() => {
+    const map = new Map<ContentFormat, WorkflowRouteConfig>();
+    for (const route of routingRoutes) {
+      map.set(route.contentFormat, route);
+    }
+    return map;
+  }, [routingRoutes]);
+
+  const saveRouteForFormat = useCallback(
+    async (
+      contentFormat: ContentFormat,
+      next: {
+        laneKey: AgentLaneKey;
+        stageSlots: Partial<Record<RoutableWorkflowStage, string>>;
+        stageEnabled: Partial<Record<RoutableWorkflowStage, boolean>>;
+      }
+    ) => {
+      if (!selectedProjectId) return;
+      setRoutingSavingFormat(contentFormat);
+      setError(null);
+      setNotice(null);
+      try {
+        const response = await fetch('/api/admin/agents/routing', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: selectedProjectId,
+            contentFormat,
+            laneKey: next.laneKey,
+            stageSlots: next.stageSlots,
+            stageEnabled: next.stageEnabled,
+          }),
+        });
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(payload.error || 'Failed to update workflow route');
+        }
+        const updated = (await response.json()) as WorkflowRouteConfig;
+        setRoutingRoutes((prev) => {
+          const without = prev.filter((route) => route.contentFormat !== contentFormat);
+          return [...without, updated];
+        });
+        setNotice(`Workflow route updated for ${CONTENT_FORMAT_LABELS[contentFormat]}.`);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to update workflow route');
+      } finally {
+        setRoutingSavingFormat(null);
+      }
+    },
+    [selectedProjectId]
+  );
+
+  const saveRouteStageSlot = useCallback(
+    async (
+      contentFormat: ContentFormat,
+      stage: RoutableWorkflowStage,
+      slotKey: string,
+      laneKey: AgentLaneKey
+    ) => {
+      const route = routeByFormat.get(contentFormat);
+      const stageSlots = {
+        ...(route?.stageSlots || ({} as Record<RoutableWorkflowStage, string>)),
+        [stage]: slotKey,
+      };
+      const stageEnabled = {
+        ...(route?.stageEnabled || ({} as Record<RoutableWorkflowStage, boolean>)),
+      };
+      await saveRouteForFormat(contentFormat, { laneKey, stageSlots, stageEnabled });
+    },
+    [routeByFormat, saveRouteForFormat]
+  );
+
+  const saveRouteStageEnabled = useCallback(
+    async (
+      contentFormat: ContentFormat,
+      stage: RoutableWorkflowStage,
+      enabled: boolean,
+      laneKey: AgentLaneKey
+    ) => {
+      const route = routeByFormat.get(contentFormat);
+      const stageSlots = {
+        ...(route?.stageSlots || ({} as Record<RoutableWorkflowStage, string>)),
+      };
+      const stageEnabled = {
+        ...(route?.stageEnabled || ({} as Record<RoutableWorkflowStage, boolean>)),
+        [stage]: enabled,
+      };
+      await saveRouteForFormat(contentFormat, { laneKey, stageSlots, stageEnabled });
+    },
+    [routeByFormat, saveRouteForFormat]
+  );
+
+  const optionsForStage = useCallback(
+    (stage: RoutableWorkflowStage, laneKey: AgentLaneKey) => {
+      const requiredRole = STAGE_REQUIRED_ROLE[stage];
+      return routingAgents
+        .filter((agent) => {
+          if (agent.role.toLowerCase() !== requiredRole) return false;
+          if (stage === 'writing' && laneKey && agent.laneKey !== laneKey) return false;
+          return agent.slotKey.trim().length > 0;
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+    },
+    [routingAgents]
+  );
 
   if (loading) {
     return (
@@ -495,9 +664,130 @@ export default function SuperAdminTemplatesPage() {
               })}
             </div>
           </div>
+
+          <div className="border border-border rounded-lg bg-card p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="font-semibold text-sm">Workflow Sequencing & Stage Owners</h2>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!selectedProjectId || saving}
+                onClick={async () => {
+                  if (!selectedProjectId) return;
+                  setSaving(true);
+                  setError(null);
+                  setNotice(null);
+                  try {
+                    const response = await fetch('/api/admin/agents/routing', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        projectId: selectedProjectId,
+                        backfillActiveTasks: true,
+                      }),
+                    });
+                    if (!response.ok) {
+                      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+                      throw new Error(payload.error || 'Failed to sync routing');
+                    }
+                    await refreshData();
+                    setNotice('Workflow routing synced and active tasks backfilled.');
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : 'Failed to sync workflow routing');
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+              >
+                {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
+                Sync & Backfill
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Configure stage sequence and strict owner per content format. Disabled stages are skipped automatically.
+            </p>
+            {!selectedProjectId ? (
+              <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                Select a project to configure stage sequencing and assigned stage owners.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {draft.contentFormats.map((contentFormat) => {
+                  const route = routeByFormat.get(contentFormat);
+                  const laneKey = (route?.laneKey ||
+                    resolveLaneFromContentType(contentFormat)) as AgentLaneKey;
+                  return (
+                    <div key={`route-${contentFormat}`} className="rounded-md border border-border p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium">{CONTENT_FORMAT_LABELS[contentFormat]}</p>
+                        {routingSavingFormat === contentFormat ? (
+                          <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
+                            <Loader2 className="h-3 w-3 animate-spin" /> Saving
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground">Lane: {laneKey}</span>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        {ROUTABLE_WORKFLOW_STAGES.map((stage) => {
+                          const stageEnabled = route?.stageEnabled?.[stage] !== false;
+                          const slotValue = route?.stageSlots?.[stage] || '__none';
+                          const options = optionsForStage(stage, laneKey);
+                          return (
+                            <div
+                              key={`${contentFormat}-${stage}`}
+                              className="grid grid-cols-[120px_90px_minmax(0,1fr)] items-center gap-2"
+                            >
+                              <p className="text-xs font-medium">{STAGE_LABELS[stage]}</p>
+                              <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                                <Checkbox
+                                  checked={stageEnabled}
+                                  onCheckedChange={(checked) =>
+                                    void saveRouteStageEnabled(
+                                      contentFormat,
+                                      stage,
+                                      checked === true,
+                                      laneKey
+                                    )
+                                  }
+                                />
+                                Enabled
+                              </label>
+                              <Select
+                                value={slotValue}
+                                onValueChange={(value) =>
+                                  void saveRouteStageSlot(
+                                    contentFormat,
+                                    stage,
+                                    value === '__none' ? '' : value,
+                                    laneKey
+                                  )
+                                }
+                              >
+                                <SelectTrigger className="h-8 text-xs">
+                                  <SelectValue placeholder="Select stage owner" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none">Unconfigured</SelectItem>
+                                  {options.map((agent) => (
+                                    <SelectItem key={`${stage}-${agent.id}`} value={agent.slotKey}>
+                                      {agent.name} · {agent.status}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 }
-

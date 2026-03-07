@@ -415,7 +415,6 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
   const isTopicWorkflow = task.workflowTemplateKey === 'topic_production_v1';
   const workflowStage = (task.workflowCurrentStageKey || 'research') as TopicStageKey;
   const workflowApprovals = task.workflowApprovals || {};
-  const visibleWorkflowStages = Array.from(TOPIC_STAGES) as TopicStageKey[];
   const workflowNextStage = TOPIC_STAGE_NEXT[workflowStage];
 
   const assignedAgent = agents?.find((a) => a._id === task.assignedAgentId);
@@ -431,6 +430,20 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
     ? WORKFLOW_RUNTIME_STATE_STYLES[workflowRuntimeState]
     : null;
   const plannedStageOwners = isTopicWorkflow ? parseWorkflowStagePlan(task) : [];
+  const visibleWorkflowStages = (() => {
+    if (!isTopicWorkflow) {
+      return Array.from(TOPIC_STAGES) as TopicStageKey[];
+    }
+    const stageSet = new Set<TopicStageKey>(['human_review', 'complete', workflowStage]);
+    if (plannedStageOwners.length > 0) {
+      for (const owner of plannedStageOwners) {
+        if (owner.enabled) stageSet.add(owner.stage);
+      }
+    } else {
+      for (const stage of TOPIC_STAGES) stageSet.add(stage);
+    }
+    return (Array.from(TOPIC_STAGES) as TopicStageKey[]).filter((stage) => stageSet.has(stage));
+  })();
 
   const handleAdvanceWorkflowStage = async (
     toStage: TopicStageKey,

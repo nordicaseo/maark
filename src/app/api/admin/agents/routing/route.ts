@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { api } from '../../../../../../convex/_generated/api';
 import { requireRole } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
@@ -10,6 +11,7 @@ import {
 } from '@/lib/workflow/stage-routing';
 import { syncProjectDedicatedAgentPool } from '@/lib/agents/runtime-agent-pools';
 import { parseProjectRuntimeSettings } from '@/lib/agents/runtime-agent-pools';
+import { getConvexClient } from '@/lib/convex/server';
 import { db, ensureDb } from '@/db';
 import { projects } from '@/db/schema';
 import { eq } from 'drizzle-orm';
@@ -80,10 +82,38 @@ export async function GET(req: NextRequest) {
     const filtered = isContentFormat(contentFormat)
       ? routes.filter((route) => route.contentFormat === contentFormat)
       : routes;
+    const convex = getConvexClient();
+    const runtimeAgents = convex
+      ? (
+          (await convex.query(api.agents.list, {
+            projectId,
+            limit: 1200,
+          })) as Array<{
+            _id: string;
+            name: string;
+            role: string;
+            status: string;
+            slotKey?: string;
+            laneKey?: string;
+            currentTaskId?: string;
+          }>
+        )
+          .filter((agent) => String(agent.slotKey || '').trim().length > 0)
+          .map((agent) => ({
+            id: String(agent._id),
+            name: agent.name,
+            role: agent.role,
+            status: agent.status,
+            slotKey: String(agent.slotKey || ''),
+            laneKey: String(agent.laneKey || ''),
+            currentTaskId: agent.currentTaskId ? String(agent.currentTaskId) : null,
+          }))
+      : [];
     return NextResponse.json({
       projectId,
       seededFormats: seeded.seededFormats,
       routes: filtered,
+      runtimeAgents,
     });
   } catch (error) {
     await logAlertEvent({
