@@ -62,6 +62,25 @@ interface WorkflowOpsPayload {
       writingIncompleteBlockedLast24h: number;
       assignmentBlockedLast24h: number;
     };
+    writerPool: {
+      totalWriters: number;
+      availableWriters: number;
+      onlineWriters: number;
+      idleWriters: number;
+      workingWriters: number;
+      offlineWriters: number;
+      staleWorkingLocks: number;
+      unknownTaskLocks: number;
+      queuedWritingTasks: number;
+      sampledAt: string | null;
+      writers: Array<{
+        id: string;
+        name: string;
+        status: string;
+        currentTaskId: string | null;
+        lockHealth: 'healthy' | 'stale' | 'unknown_task' | 'idle' | 'offline';
+      }>;
+    };
   };
   blockedTasks: Array<{
     id: string;
@@ -482,6 +501,55 @@ export default function WorkflowOpsPage() {
             Assignment blocked: {payload?.metrics.retries.assignmentBlockedLast24h ?? 0}
           </p>
         </div>
+      </section>
+
+      <section className="rounded-lg border border-border bg-card p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold">Writer Pool Health</h2>
+          <p className="text-xs text-muted-foreground">
+            Sampled:{' '}
+            {payload?.metrics.writerPool.sampledAt
+              ? new Date(payload.metrics.writerPool.sampledAt).toLocaleString()
+              : '—'}
+          </p>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <Metric label="Total Writers" value={payload?.metrics.writerPool.totalWriters ?? 0} />
+          <Metric label="Available" value={payload?.metrics.writerPool.availableWriters ?? 0} />
+          <Metric label="Working" value={payload?.metrics.writerPool.workingWriters ?? 0} />
+          <Metric label="Queued Writing" value={payload?.metrics.writerPool.queuedWritingTasks ?? 0} />
+          <Metric label="Stale Locks" value={payload?.metrics.writerPool.staleWorkingLocks ?? 0} />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+          <p>Online: {payload?.metrics.writerPool.onlineWriters ?? 0}</p>
+          <p>IDLE: {payload?.metrics.writerPool.idleWriters ?? 0}</p>
+          <p>Offline: {payload?.metrics.writerPool.offlineWriters ?? 0}</p>
+          <p>Unknown-task locks: {payload?.metrics.writerPool.unknownTaskLocks ?? 0}</p>
+        </div>
+        {(payload?.metrics.writerPool.writers?.length || 0) > 0 && (
+          <div className="rounded-md border border-border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className="text-left px-3 py-2">Writer</th>
+                  <th className="text-left px-3 py-2">Status</th>
+                  <th className="text-left px-3 py-2">Lock Health</th>
+                  <th className="text-left px-3 py-2">Task</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payload?.metrics.writerPool.writers.map((writer) => (
+                  <tr key={writer.id} className="border-t border-border">
+                    <td className="px-3 py-2 font-medium">{writer.name}</td>
+                    <td className="px-3 py-2">{writer.status}</td>
+                    <td className="px-3 py-2">{writer.lockHealth}</td>
+                    <td className="px-3 py-2">{writer.currentTaskId || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="rounded-lg border border-border bg-card overflow-hidden">

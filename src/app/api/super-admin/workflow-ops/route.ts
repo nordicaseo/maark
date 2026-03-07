@@ -33,6 +33,17 @@ type WorkflowTask = {
   createdAt?: number;
 };
 
+type WorkflowAgent = {
+  _id: string;
+  name: string;
+  role: string;
+  status: string;
+  currentTaskId?: string | null;
+  updatedAt?: number | null;
+};
+
+const DEFAULT_WRITER_LOCK_TIMEOUT_MS = 25 * 60 * 1000;
+
 const WORKFLOW_STAGE_KEYS: TopicStageKey[] = [
   'research',
   'seo_intel_review',
@@ -80,6 +91,15 @@ function toEpochMs(value: unknown): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function resolveWriterLockTimeoutMs(): number {
+  const parsed = Number.parseInt(
+    String(process.env.WORKFLOW_WRITER_LOCK_TIMEOUT_MINUTES ?? ''),
+    10
+  );
+  if (!Number.isFinite(parsed)) return DEFAULT_WRITER_LOCK_TIMEOUT_MS;
+  return clamp(parsed, 5, 180) * 60 * 1000;
 }
 
 export async function GET(req: NextRequest) {
@@ -142,12 +162,25 @@ export async function GET(req: NextRequest) {
             writingIncompleteBlockedLast24h: 0,
             assignmentBlockedLast24h: 0,
           },
+          writerPool: {
+            totalWriters: 0,
+            availableWriters: 0,
+            onlineWriters: 0,
+            idleWriters: 0,
+            workingWriters: 0,
+            offlineWriters: 0,
+            staleWorkingLocks: 0,
+            unknownTaskLocks: 0,
+            queuedWritingTasks: 0,
+            sampledAt: null,
+            writers: [],
+          },
         },
         blockedTasks: [],
       });
     }
 
-    const [taskChunks, settingsPairs, autoResumeAudits, workflowAlerts] = await Promise.all([
+    const [taskChunks, settingsPairs, autoResumeAudits, workflowAlerts, allAgents] = await Promise.all([
       Promise.all(
         selectedProjectIds.map((projectId: number) =>
           convex.query(api.tasks.list, { projectId, limit: MAX_TASKS_PER_PROJECT })
@@ -178,6 +211,7 @@ export async function GET(req: NextRequest) {
         .where(eq(alertEvents.source, 'topic_workflow'))
         .orderBy(desc(alertEvents.createdAt))
         .limit(500),
+      convex.query(api.agents.list, { limit: 500 }),
     ]);
 
     const settingsMap = new Map<number, WorkflowOpsSettings>(settingsPairs);
@@ -188,9 +222,13 @@ export async function GET(req: NextRequest) {
         : defaultSettings;
 
     const allTasks = taskChunks.flat() as WorkflowTask[];
+    const taskById = new Map<string, WorkflowTask>(
+      allTasks.map((task) => [String(task._id), task])
+    );
     const workflowTasks = allTasks.filter((task) => task.workflowTemplateKey === 'topic_production_v1');
     const now = Date.now();
     const windowStart = now - 24 * 60 * 60 * 1000;
+    const writerLockTimeoutMs = resolveWriterLockTimeoutMs();
 
     const totals = {
       total: workflowTasks.length,
@@ -326,6 +364,62 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    const writers = (allAgents as WorkflowAgent[]).filter(
+      (agent) => agent.role.toLowerCase() === 'writer'
+    );
+    let staleWorkingLocks = 0;
+    let unknownTaskLocks = 0;
+    const writerRows = writers.map((writer) => {
+      const currentTaskId = writer.currentTaskId ? String(writer.currentTaskId) : null;
+      const linkedTask = currentTaskId ? taskById.get(currentTaskId) : undefined;
+      let lockHealth: 'healthy' | 'stale' | 'unknown_task' | 'idle' | 'offline' = 'healthy';
+
+      if (writer.status === 'OFFLINE') {
+        lockHealth = 'offline';
+      } else if (writer.status !== 'WORKING') {
+        lockHealth = 'idle';
+      } else if (!currentTaskId) {
+        staleWorkingLocks += 1;
+        lockHealth = 'stale';
+      } else if (!linkedTask) {
+        unknownTaskLocks += 1;
+        lockHealth = 'unknown_task';
+      } else {
+        const taskStage = (linkedTask.workflowCurrentStageKey || 'research') as TopicStageKey;
+        const taskStageStatus = linkedTask.workflowStageStatus || 'in_progress';
+        const taskStillWriting =
+          taskStage === 'writing' &&
+          taskStageStatus === 'in_progress' &&
+          linkedTask.status === 'IN_PROGRESS';
+        const taskLastTouch =
+          linkedTask.workflowLastEventAt || linkedTask.updatedAt || linkedTask.createdAt || 0;
+        const timedOut =
+          taskLastTouch > 0 ? now - taskLastTouch > writerLockTimeoutMs : false;
+        if (!taskStillWriting || timedOut) {
+          staleWorkingLocks += 1;
+          lockHealth = 'stale';
+        }
+      }
+
+      return {
+        id: String(writer._id),
+        name: writer.name,
+        status: writer.status,
+        currentTaskId,
+        lockHealth,
+      };
+    });
+
+    const onlineWriters = writers.filter((writer) => writer.status === 'ONLINE').length;
+    const idleWriters = writers.filter((writer) => writer.status === 'IDLE').length;
+    const workingWriters = writers.filter((writer) => writer.status === 'WORKING').length;
+    const offlineWriters = writers.filter((writer) => writer.status === 'OFFLINE').length;
+    const queuedWritingTasks = workflowTasks.filter(
+      (task) =>
+        task.workflowCurrentStageKey === 'writing' &&
+        task.workflowStageStatus === 'queued'
+    ).length;
+
     const recommended = {
       stageTimeoutMinutes: clamp(
         settings.stageTimeoutMinutes + (watchdogBlockedLast24h > 2 ? 5 : 0),
@@ -367,6 +461,19 @@ export async function GET(req: NextRequest) {
           failuresLast24h,
         },
         retries,
+        writerPool: {
+          totalWriters: writers.length,
+          availableWriters: onlineWriters + idleWriters,
+          onlineWriters,
+          idleWriters,
+          workingWriters,
+          offlineWriters,
+          staleWorkingLocks,
+          unknownTaskLocks,
+          queuedWritingTasks,
+          sampledAt: new Date().toISOString(),
+          writers: writerRows,
+        },
       },
       blockedTasks,
       recommendations: recommended,
