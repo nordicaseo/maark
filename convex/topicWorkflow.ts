@@ -2,6 +2,11 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
+import {
+  WORKFLOW_ROLE_ALIASES,
+  WORKFLOW_STAGE_OWNER_CHAINS,
+  WORKFLOW_STAGE_TRANSITIONS,
+} from "../workflow-contract";
 
 const WORKFLOW_TEMPLATE_KEY = "topic_production_v1";
 const INITIAL_WORKFLOW_START_DELAY_MS = 20_000;
@@ -73,43 +78,23 @@ const deliverableValidator = v.object({
   url: v.optional(v.string()),
 });
 
-const stageTransitions: Record<TopicStageKey, TopicStageKey[]> = {
-  research: ["seo_intel_review"],
-  seo_intel_review: ["outline_build"],
-  outline_build: ["writing"],
-  outline_review: ["writing"],
-  prewrite_context: ["writing"],
-  writing: ["editing"],
-  editing: ["final_review"],
-  final_review: ["human_review"],
-  human_review: ["complete"],
-  complete: [],
-};
+const stageTransitions: Record<TopicStageKey, TopicStageKey[]> = Object.fromEntries(
+  Object.entries(WORKFLOW_STAGE_TRANSITIONS).map(([stage, nextStages]) => [
+    stage,
+    [...nextStages],
+  ])
+) as Record<TopicStageKey, TopicStageKey[]>;
 
-const stageOwnerChains: Record<TopicStageKey, string[]> = {
-  research: ["researcher", "seo", "lead"],
-  seo_intel_review: ["seo", "seo-reviewer", "lead"],
-  outline_build: ["outliner", "content", "lead"],
-  outline_review: ["human", "seo-reviewer"],
-  prewrite_context: ["project-manager"],
-  writing: ["writer"],
-  editing: ["editor"],
-  final_review: ["seo-reviewer", "seo", "lead"],
-  human_review: ["human"],
-  complete: [],
-};
+const stageOwnerChains: Record<TopicStageKey, string[]> = Object.fromEntries(
+  Object.entries(WORKFLOW_STAGE_OWNER_CHAINS).map(([stage, owners]) => [
+    stage,
+    [...owners],
+  ])
+) as Record<TopicStageKey, string[]>;
 
-const roleAliases: Record<string, string[]> = {
-  researcher: ["researcher", "seo", "editor"],
-  outliner: ["outliner", "editor", "content"],
-  writer: ["writer"],
-  editor: ["editor", "content"],
-  "seo-reviewer": ["seo-reviewer", "seo", "editor"],
-  "project-manager": ["project-manager", "lead", "editor"],
-  seo: ["seo", "seo-reviewer", "editor"],
-  content: ["content", "editor"],
-  lead: ["lead", "project-manager", "editor", "seo-reviewer"],
-};
+const roleAliases: Record<string, string[]> = Object.fromEntries(
+  Object.entries(WORKFLOW_ROLE_ALIASES).map(([role, aliases]) => [role, [...aliases]])
+) as Record<string, string[]>;
 
 const WORKFLOW_ROLE_SEEDS: Array<{
   name: string;

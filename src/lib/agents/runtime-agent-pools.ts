@@ -99,6 +99,8 @@ const WRITER_LANE_NAMES: Record<AgentLaneKey, string> = {
   landing: 'Atlas Landing',
 };
 
+const DEFAULT_PROJECT_AGENT_POOL_MODE = 'strict';
+
 const TEMPLATE_COUNTS: Record<AgentStaffingTemplate, Record<AgentRole, number>> = {
   small: {
     researcher: 1,
@@ -134,6 +136,13 @@ const TEMPLATE_COUNTS: Record<AgentStaffingTemplate, Record<AgentRole, number>> 
     lead: 1,
   },
 };
+
+export function strictProjectAgentPoolsEnabled(): boolean {
+  const mode = String(process.env.PROJECT_AGENT_POOL_MODE ?? DEFAULT_PROJECT_AGENT_POOL_MODE)
+    .trim()
+    .toLowerCase();
+  return !['legacy', 'shared', 'global', '0', 'false', 'off'].includes(mode);
+}
 
 function normalizeStatus(status: string | null | undefined): 'ONLINE' | 'IDLE' | 'WORKING' | 'OFFLINE' {
   const normalized = String(status || '')

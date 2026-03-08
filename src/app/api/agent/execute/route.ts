@@ -28,7 +28,9 @@ import { resolveTaskLinkedPageCleanContent } from '@/lib/pages/artifacts';
 import { applyStyleGuard, styleGuardPassed } from '@/lib/workflow/style-guard';
 import { resolveTemplatePolicy } from '@/lib/workflow/content-templates';
 import { isAgentLaneKey, resolveLaneFromContentType } from '@/lib/content-workflow-taxonomy';
+import { resolveTrustedAgentId } from '@/lib/workflow/agent-scope';
 import type { ContentFormat } from '@/types/document';
+import type { Id } from '../../../../../convex/_generated/dataModel';
 
 /**
  * POST /api/agent/execute
@@ -79,20 +81,22 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+    const taskIdString = String(taskId).trim();
+    const convexTaskId = taskIdString as Id<'tasks'>;
 
     await ensureDb();
+    const convex = getConvexClient();
+    if (!convex) {
+      return NextResponse.json(
+        { error: 'Mission Control is not configured (Convex URL missing)' },
+        { status: 500 }
+      );
+    }
 
     if (
       existingDocId !== undefined &&
       existingDocId !== null &&
       !(await userCanAccessDocument(auth.user, Number(existingDocId)))
-    ) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-    if (
-      projectId !== undefined &&
-      projectId !== null &&
-      !(await userCanAccessProject(auth.user, Number(projectId)))
     ) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
@@ -104,15 +108,48 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    let taskRecord: {
+      projectId?: number | null;
+      assignedAgentId?: Id<'agents'> | null;
+    } | null = null;
+    try {
+      taskRecord = await convex.query(api.tasks.get, { id: convexTaskId });
+    } catch {
+      return NextResponse.json({ error: 'Invalid taskId' }, { status: 400 });
+    }
+    if (!taskRecord) {
+      return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+    }
+    if (
+      taskRecord.projectId !== undefined &&
+      taskRecord.projectId !== null &&
+      !(await userCanAccessProject(auth.user, Number(taskRecord.projectId)))
+    ) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    if (
+      projectId !== undefined &&
+      projectId !== null &&
+      taskRecord.projectId !== undefined &&
+      taskRecord.projectId !== null &&
+      Number(projectId) !== Number(taskRecord.projectId)
+    ) {
+      return NextResponse.json(
+        { error: 'projectId does not match task project scope' },
+        { status: 400 }
+      );
+    }
+    const taskProjectId = Number(taskRecord.projectId ?? projectId ?? 0) || null;
+
     // ─── Auto-resolve skillId if not provided ─────────────────────
     let resolvedSkillId = skillId;
     if (!resolvedSkillId) {
-      if (projectId) {
+      if (taskProjectId) {
         // Try first skill for this project
         const [projectSkill] = await db
           .select({ id: skills.id })
           .from(skills)
-          .where(eq(skills.projectId, projectId))
+          .where(eq(skills.projectId, taskProjectId))
           .limit(1);
         if (projectSkill) {
           resolvedSkillId = projectSkill.id;
@@ -153,7 +190,7 @@ export async function POST(req: NextRequest) {
           status: 'draft',
           contentType,
           targetKeyword: targetKeyword || null,
-          projectId: projectId || null,
+          projectId: taskProjectId,
           authorId: auth.user.id,
           content: null,
           plainText: null,
@@ -163,9 +200,24 @@ export async function POST(req: NextRequest) {
       docId = newDoc.id;
     }
 
+    if (
+      doc &&
+      (doc as { projectId?: number | null }).projectId !== null &&
+      (doc as { projectId?: number | null }).projectId !== undefined &&
+      taskRecord.projectId !== null &&
+      taskRecord.projectId !== undefined &&
+      Number((doc as { projectId?: number | null }).projectId) !== Number(taskRecord.projectId)
+    ) {
+      return NextResponse.json(
+        { error: 'Document does not belong to the task project scope' },
+        { status: 400 }
+      );
+    }
+
     const effectiveProjectId =
       Number(
-        (doc as { projectId?: number | null }).projectId ??
+        taskRecord.projectId ??
+          (doc as { projectId?: number | null }).projectId ??
           (projectId ?? null)
       ) || null;
     const writerLaneKey = isAgentLaneKey(body.laneKey)
@@ -288,14 +340,24 @@ ${trimTo(linkedPageContext.text, 1500)}`
       .join('\n\n');
 
     let modelOverride: ModelOverride | undefined;
-    if (agentId) {
+    const trustedAgentId = resolveTrustedAgentId({
+      requestedAgentId: agentId,
+      assignedAgentId: taskRecord.assignedAgentId ? String(taskRecord.assignedAgentId) : null,
+    });
+    if (trustedAgentId) {
       try {
-        const convex = getConvexClient();
-        if (convex) {
-          const agent = await convex.query(api.agents.get, { id: agentId });
-          modelOverride =
-            agent?.modelOverrides?.workflow_writing ||
-            agent?.modelOverrides?.writing;
+        const agent = await convex.query(api.agents.get, {
+          id: trustedAgentId as Id<'agents'>,
+        });
+        const agentProjectId =
+          agent?.projectId !== undefined && agent?.projectId !== null
+            ? Number(agent.projectId)
+            : null;
+        if (
+          agent &&
+          (effectiveProjectId === null || agentProjectId === null || agentProjectId === effectiveProjectId)
+        ) {
+          modelOverride = agent.modelOverrides?.workflow_writing || agent.modelOverrides?.writing;
         }
       } catch (error) {
         console.error('Failed to resolve agent model override:', error);

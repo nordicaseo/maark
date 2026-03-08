@@ -1,5 +1,9 @@
 import type { ContentFormat, DocumentStatus } from '@/types/document';
 import type { AgentLaneKey } from '@/types/agent-runtime';
+import {
+  WORKFLOW_STAGE_OWNER_CHAINS,
+  WORKFLOW_STAGE_TRANSITIONS,
+} from '../../workflow-contract';
 
 export const TASK_STATUS_ORDER = [
   'BACKLOG',
@@ -64,15 +68,15 @@ export const TOPIC_STAGE_LABELS: Record<TopicStageKey, string> = {
 };
 
 export const TOPIC_STAGE_NEXT: Record<TopicStageKey, TopicStageKey | null> = {
-  research: 'seo_intel_review',
-  seo_intel_review: 'outline_build',
-  outline_build: 'writing',
-  outline_review: 'writing',
-  prewrite_context: 'writing',
-  writing: 'editing',
-  editing: 'final_review',
-  final_review: 'human_review',
-  human_review: 'complete',
+  research: WORKFLOW_STAGE_TRANSITIONS.research[0],
+  seo_intel_review: WORKFLOW_STAGE_TRANSITIONS.seo_intel_review[0],
+  outline_build: WORKFLOW_STAGE_TRANSITIONS.outline_build[0],
+  outline_review: WORKFLOW_STAGE_TRANSITIONS.outline_review[0],
+  prewrite_context: WORKFLOW_STAGE_TRANSITIONS.prewrite_context[0],
+  writing: WORKFLOW_STAGE_TRANSITIONS.writing[0],
+  editing: WORKFLOW_STAGE_TRANSITIONS.editing[0],
+  final_review: WORKFLOW_STAGE_TRANSITIONS.final_review[0],
+  human_review: WORKFLOW_STAGE_TRANSITIONS.human_review[0],
   complete: null,
 };
 
@@ -90,16 +94,16 @@ export const TOPIC_STAGE_OWNERS: Record<TopicStageKey, string> = {
 };
 
 export const TOPIC_STAGE_OWNER_CHAINS: Record<TopicStageKey, string[]> = {
-  research: ['researcher', 'seo', 'lead'],
-  seo_intel_review: ['seo', 'seo-reviewer', 'lead'],
-  outline_build: ['outliner', 'content', 'lead'],
-  outline_review: ['human', 'seo-reviewer'],
-  writing: ['writer'],
-  prewrite_context: ['project-manager'],
-  editing: ['editor'],
-  final_review: ['seo-reviewer', 'seo', 'lead'],
-  human_review: ['human'],
-  complete: [],
+  research: [...WORKFLOW_STAGE_OWNER_CHAINS.research],
+  seo_intel_review: [...WORKFLOW_STAGE_OWNER_CHAINS.seo_intel_review],
+  outline_build: [...WORKFLOW_STAGE_OWNER_CHAINS.outline_build],
+  outline_review: [...WORKFLOW_STAGE_OWNER_CHAINS.outline_review],
+  writing: [...WORKFLOW_STAGE_OWNER_CHAINS.writing],
+  prewrite_context: [...WORKFLOW_STAGE_OWNER_CHAINS.prewrite_context],
+  editing: [...WORKFLOW_STAGE_OWNER_CHAINS.editing],
+  final_review: [...WORKFLOW_STAGE_OWNER_CHAINS.final_review],
+  human_review: [...WORKFLOW_STAGE_OWNER_CHAINS.human_review],
+  complete: [...WORKFLOW_STAGE_OWNER_CHAINS.complete],
 };
 
 export const WORKFLOW_RUNTIME_STATE_ORDER = [

@@ -8,10 +8,12 @@ import { contentToHtml } from '@/lib/tiptap/to-html';
 import { normalizeGeneratedHtml, validateRevisedHtmlOutput } from '@/lib/utils/html-normalize';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import { requireRole } from '@/lib/auth';
-import { userCanAccessDocument } from '@/lib/access';
+import { userCanAccessDocument, userCanAccessProject } from '@/lib/access';
 import { resolveProviderForAction, type ModelOverride } from '@/lib/ai/model-resolution';
 import { getConvexClient } from '@/lib/convex/server';
 import { api } from '../../../../../convex/_generated/api';
+import { resolveTrustedAgentId } from '@/lib/workflow/agent-scope';
+import type { Id } from '../../../../../convex/_generated/dataModel';
 
 /**
  * POST /api/agent/process-feedback
@@ -48,9 +50,48 @@ export async function POST(req: NextRequest) {
     }
 
     await ensureDb();
+    const convex = getConvexClient();
+    if (!convex) {
+      return NextResponse.json(
+        { error: 'Mission Control is not configured (Convex URL missing)' },
+        { status: 500 }
+      );
+    }
 
     if (!(await userCanAccessDocument(auth.user, Number(documentId)))) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const taskIdString = String(taskId).trim();
+    const convexTaskId = taskIdString as Id<'tasks'>;
+    let taskRecord: {
+      projectId?: number | null;
+      assignedAgentId?: Id<'agents'> | null;
+      documentId?: number | null;
+    } | null = null;
+    try {
+      taskRecord = await convex.query(api.tasks.get, { id: convexTaskId });
+    } catch {
+      return NextResponse.json({ error: 'Invalid taskId' }, { status: 400 });
+    }
+    if (!taskRecord) {
+      return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+    }
+    if (
+      taskRecord.projectId !== undefined &&
+      taskRecord.projectId !== null &&
+      !(await userCanAccessProject(auth.user, Number(taskRecord.projectId)))
+    ) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    if (
+      taskRecord.documentId !== undefined &&
+      taskRecord.documentId !== null &&
+      Number(taskRecord.documentId) !== Number(documentId)
+    ) {
+      return NextResponse.json(
+        { error: 'documentId does not match task document scope' },
+        { status: 400 }
+      );
     }
 
     // ─── Step 1: Fetch document ─────────────────────────────────────
@@ -64,6 +105,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: 'Document not found' },
         { status: 404 }
+      );
+    }
+    if (
+      doc.projectId !== null &&
+      doc.projectId !== undefined &&
+      taskRecord.projectId !== null &&
+      taskRecord.projectId !== undefined &&
+      Number(doc.projectId) !== Number(taskRecord.projectId)
+    ) {
+      return NextResponse.json(
+        { error: 'Document does not belong to task project scope' },
+        { status: 400 }
       );
     }
 
@@ -123,12 +176,28 @@ export async function POST(req: NextRequest) {
 
     // ─── Step 4: Revise article via AI ──────────────────────────────
     let modelOverride: ModelOverride | undefined;
-    if (agentId) {
+    const trustedAgentId = resolveTrustedAgentId({
+      requestedAgentId: agentId,
+      assignedAgentId: taskRecord.assignedAgentId ? String(taskRecord.assignedAgentId) : null,
+    });
+    if (trustedAgentId) {
       try {
-        const convex = getConvexClient();
-        if (convex) {
-          const agent = await convex.query(api.agents.get, { id: agentId });
-          modelOverride = agent?.modelOverrides?.comment_processing || agent?.modelOverrides?.writing;
+        const agent = await convex.query(api.agents.get, {
+          id: trustedAgentId as Id<'agents'>,
+        });
+        const agentProjectId =
+          agent?.projectId !== undefined && agent?.projectId !== null
+            ? Number(agent.projectId)
+            : null;
+        const taskProjectId =
+          taskRecord.projectId !== undefined && taskRecord.projectId !== null
+            ? Number(taskRecord.projectId)
+            : null;
+        if (
+          agent &&
+          (taskProjectId === null || agentProjectId === null || agentProjectId === taskProjectId)
+        ) {
+          modelOverride = agent.modelOverrides?.comment_processing || agent.modelOverrides?.writing;
         }
       } catch (error) {
         console.error('Failed to resolve agent model override:', error);

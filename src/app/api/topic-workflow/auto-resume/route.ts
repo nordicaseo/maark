@@ -17,14 +17,19 @@ import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import {
   autoScaleProjectWriterLanes,
   parseProjectRuntimeSettings,
+  strictProjectAgentPoolsEnabled,
 } from '@/lib/agents/runtime-agent-pools';
-import { repairProjectWriterRoutes } from '@/lib/workflow/stage-routing';
+import {
+  backfillProjectTaskStagePlans,
+  repairProjectWriterRoutes,
+} from '@/lib/workflow/stage-routing';
 import type { TopicStageKey } from '@/lib/content-workflow-taxonomy';
 import {
   getDefaultWorkflowOpsSettings,
   getWorkflowOpsSettings,
   type WorkflowOpsSettings,
 } from '@/lib/workflow/ops-settings';
+import { isWorkflowCronAuthorized } from '@/lib/workflow/cron-auth';
 
 const DEFAULT_MAX_RESUMES = 4;
 const MAX_SCAN_PER_PROJECT = 500;
@@ -60,17 +65,6 @@ type WorkflowEventLike = {
   eventType?: string;
   payload?: unknown;
 };
-
-function isCronAuthorized(req: NextRequest): boolean {
-  if (req.headers.get('x-vercel-cron')) return true;
-  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
-  if (!token) return false;
-  const allowed = [process.env.WORKFLOW_CRON_SECRET, process.env.CRAWL_CRON_SECRET]
-    .map((value) => value?.trim())
-    .filter((value): value is string => Boolean(value));
-  if (allowed.length === 0) return false;
-  return allowed.includes(token);
-}
 
 function parseOptionalNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
@@ -177,7 +171,7 @@ async function parseInput(
 
 async function executeAutoResume(req: NextRequest) {
   await ensureDb();
-  const cronAuthorized = isCronAuthorized(req);
+  const cronAuthorized = isWorkflowCronAuthorized(req.headers);
   let actorUser: AppUser | null = null;
 
   if (cronAuthorized) {
@@ -366,19 +360,22 @@ async function executeAutoResume(req: NextRequest) {
       watchdogBlocked += 1;
     }
 
+    const strictPools = strictProjectAgentPoolsEnabled();
     const laneScalingByProject = new Map<number, { scaledUp: number; scaledDown: number }>();
-    for (const projectId of projectIds) {
-      const [projectRow] = await db
-        .select({ settings: projects.settings })
-        .from(projects)
-        .where(eq(projects.id, projectId))
-        .limit(1);
-      const runtimeSettings = parseProjectRuntimeSettings(projectRow?.settings ?? {});
-      const scaled = await autoScaleProjectWriterLanes({
-        projectId,
-        laneCapacity: runtimeSettings.laneCapacity,
-      });
-      laneScalingByProject.set(projectId, scaled);
+    if (!strictPools) {
+      for (const projectId of projectIds) {
+        const [projectRow] = await db
+          .select({ settings: projects.settings })
+          .from(projects)
+          .where(eq(projects.id, projectId))
+          .limit(1);
+        const runtimeSettings = parseProjectRuntimeSettings(projectRow?.settings ?? {});
+        const scaled = await autoScaleProjectWriterLanes({
+          projectId,
+          laneCapacity: runtimeSettings.laneCapacity,
+        });
+        laneScalingByProject.set(projectId, scaled);
+      }
     }
     const scaledUpWriters = Array.from(laneScalingByProject.values()).reduce(
       (sum, item) => sum + item.scaledUp,
@@ -416,6 +413,9 @@ async function executeAutoResume(req: NextRequest) {
         routesPatched: number;
         writersSeeded: number;
         staleLocksRecovered: number;
+        stagePlanScanned: number;
+        stagePlanUpdated: number;
+        stagePlanSkipped: number;
       }
     > = {};
     for (const [projectId, queued] of queuedByProject.entries()) {
@@ -431,6 +431,20 @@ async function executeAutoResume(req: NextRequest) {
           routesPatched: repair.routesPatched,
           writersSeeded: repair.writersSeeded,
           staleLocksRecovered: repair.staleLocksRecovered,
+          stagePlanScanned: 0,
+          stagePlanUpdated: 0,
+          stagePlanSkipped: 0,
+        };
+        const stagePlanBackfill = await backfillProjectTaskStagePlans({
+          projectId,
+          userId: actorUser.id,
+          force: true,
+        });
+        writerRouteRepairs[projectId] = {
+          ...writerRouteRepairs[projectId],
+          stagePlanScanned: stagePlanBackfill.scanned,
+          stagePlanUpdated: stagePlanBackfill.updated,
+          stagePlanSkipped: stagePlanBackfill.skipped,
         };
       } catch (error) {
         await logAlertEvent({
@@ -551,6 +565,7 @@ async function executeAutoResume(req: NextRequest) {
         blockedAfterRetries,
         watchdogBlocked,
         watchdogMaxRetries,
+        strictPoolRouting: strictPools,
         scaledUpWriters,
         scaledDownWriters,
         laneScalingByProject: Object.fromEntries(laneScalingByProject.entries()),
@@ -580,6 +595,7 @@ async function executeAutoResume(req: NextRequest) {
       retried,
       blockedAfterRetries,
       watchdogBlocked,
+      strictPoolRouting: strictPools,
       scaledUpWriters,
       scaledDownWriters,
       writerRouteRepairs,

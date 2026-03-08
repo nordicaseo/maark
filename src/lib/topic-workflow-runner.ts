@@ -51,6 +51,7 @@ import type {
   StyleGuardPolicy,
 } from '@/types/content-template-config';
 import type { ContentFormat } from '@/types/document';
+import { WORKFLOW_ROLE_ALIASES } from '../../workflow-contract';
 
 interface StageRunResult {
   summary: string;
@@ -134,16 +135,9 @@ const ROUTED_STAGE_ORDER = [
   'final_review',
 ] as const;
 
-const ROLE_ALIASES: Record<string, string[]> = {
-  researcher: ['researcher', 'seo', 'editor'],
-  outliner: ['outliner', 'editor', 'content'],
-  writer: ['writer'],
-  'seo-reviewer': ['seo-reviewer', 'seo', 'editor'],
-  'project-manager': ['project-manager', 'lead', 'editor'],
-  seo: ['seo', 'seo-reviewer', 'editor'],
-  content: ['content', 'editor'],
-  lead: ['lead', 'project-manager', 'editor', 'seo-reviewer'],
-};
+const ROLE_ALIASES: Record<string, string[]> = Object.fromEntries(
+  Object.entries(WORKFLOW_ROLE_ALIASES).map(([role, aliases]) => [role, [...aliases]])
+) as Record<string, string[]>;
 
 const STAGE_PRIMARY_ROLE: Record<TopicStageKey, AgentRole> = {
   research: 'researcher',

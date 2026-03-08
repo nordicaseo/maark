@@ -176,6 +176,36 @@ function parseWriterSlotKey(slotKey: string): { projectId: number; laneKey: Agen
   };
 }
 
+function isBlogContentFormat(contentFormat: ContentFormat): boolean {
+  return BLOG_CONTENT_FORMATS.has(contentFormat);
+}
+
+function assertStrictBlogWriterRoute(args: {
+  projectId: number;
+  contentFormat: ContentFormat;
+  laneKey: AgentLaneKey;
+  writingSlot: string;
+}) {
+  if (!isBlogContentFormat(args.contentFormat)) return;
+  if (args.laneKey !== 'blog') {
+    throw new Error(
+      `Invalid workflow route for ${args.contentFormat}: blog formats require lane "blog".`
+    );
+  }
+  const slot = String(args.writingSlot || '').trim();
+  if (!slot) {
+    throw new Error(
+      `Invalid workflow route for ${args.contentFormat}: writing slot is required for strict blog routing.`
+    );
+  }
+  const parsed = parseWriterSlotKey(slot);
+  if (!parsed || parsed.projectId !== args.projectId || parsed.laneKey !== 'blog') {
+    throw new Error(
+      `Invalid workflow route for ${args.contentFormat}: writing slot "${slot}" must match project ${args.projectId} and lane "blog".`
+    );
+  }
+}
+
 function isRoutable(assignmentHealth: unknown): boolean {
   if (!assignmentHealth || typeof assignmentHealth !== 'object') return true;
   const record = assignmentHealth as Record<string, unknown>;
@@ -837,7 +867,33 @@ export async function repairProjectWriterRoutes(args: {
     let repairOutcomeCode = validation.code === 'ok' ? 'healthy' : validation.code;
     let effectiveSlot = writingSlot;
 
-    if (!validation.ok && BLOG_CONTENT_FORMATS.has(route.contentFormat) && args.canonicalizeInvalidBlog !== false) {
+    if (validation.code === 'slot_not_found') {
+      const seeded = await ensureWriterAgentAtSlot({
+        projectId: args.projectId,
+        laneKey: effectiveLane,
+        slotKey: effectiveSlot,
+        runtimeAgents,
+      });
+      if (seeded.created) writersSeeded += 1;
+      repairOutcomeCode = seeded.outcomeCode;
+      runtimeAgents = await getProjectRuntimeAgents(args.projectId);
+      validation = await validateConfiguredWritingSlot({
+        projectId: args.projectId,
+        laneKey: effectiveLane,
+        slotKey: effectiveSlot,
+        runtimeAgents,
+      });
+    }
+
+    const shouldCanonicalizeBlogRoute =
+      !validation.ok &&
+      isBlogContentFormat(route.contentFormat) &&
+      args.canonicalizeInvalidBlog !== false &&
+      (validation.code === 'invalid_slot' ||
+        validation.code === 'wrong_lane' ||
+        validation.code === 'wrong_role');
+
+    if (shouldCanonicalizeBlogRoute) {
       const canonicalBlogSlot = `p${args.projectId}:writer:blog:1`;
       const updatedSlots = { ...route.stageSlots, writing: canonicalBlogSlot };
       await upsertProjectWorkflowStageRoute({
@@ -860,24 +916,23 @@ export async function repairProjectWriterRoutes(args: {
         runtimeAgents,
       });
       repairOutcomeCode = `patched:${repairOutcomeCode}`;
-    }
-
-    if (validation.code === 'slot_not_found') {
-      const seeded = await ensureWriterAgentAtSlot({
-        projectId: args.projectId,
-        laneKey: effectiveLane,
-        slotKey: effectiveSlot,
-        runtimeAgents,
-      });
-      if (seeded.created) writersSeeded += 1;
-      repairOutcomeCode = seeded.outcomeCode;
-      runtimeAgents = await getProjectRuntimeAgents(args.projectId);
-      validation = await validateConfiguredWritingSlot({
-        projectId: args.projectId,
-        laneKey: effectiveLane,
-        slotKey: effectiveSlot,
-        runtimeAgents,
-      });
+      if (validation.code === 'slot_not_found') {
+        const seeded = await ensureWriterAgentAtSlot({
+          projectId: args.projectId,
+          laneKey: effectiveLane,
+          slotKey: effectiveSlot,
+          runtimeAgents,
+        });
+        if (seeded.created) writersSeeded += 1;
+        repairOutcomeCode = seeded.outcomeCode;
+        runtimeAgents = await getProjectRuntimeAgents(args.projectId);
+        validation = await validateConfiguredWritingSlot({
+          projectId: args.projectId,
+          laneKey: effectiveLane,
+          slotKey: effectiveSlot,
+          runtimeAgents,
+        });
+      }
     }
 
     if (validation.ok) {
@@ -930,6 +985,12 @@ export async function resolveWorkflowStagePlanSnapshot(args: {
     }));
 
   const laneKey = normalizeLaneKey(args.laneKey ?? route.laneKey);
+  assertStrictBlogWriterRoute({
+    projectId: args.projectId,
+    contentFormat: args.contentFormat,
+    laneKey,
+    writingSlot: route.stageSlots.writing || '',
+  });
   const normalizedSlots = {
     ...route.stageSlots,
     writing:
