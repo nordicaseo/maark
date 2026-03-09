@@ -1151,14 +1151,23 @@ export async function buildRolePromptContext(
     };
   }
 
+  // Fix 3A: If non-writer role has empty knowledge, inherit from writer profile
+  let effectiveKnowledgeParts = profile.knowledgeParts;
+  if (effectiveKnowledgeParts.length === 0 && role !== 'writer') {
+    const writerProfile = await getProjectAgentProfile(projectId, 'writer');
+    if (writerProfile && writerProfile.knowledgeParts.length > 0) {
+      effectiveKnowledgeParts = writerProfile.knowledgeParts;
+    }
+  }
+
   const sharedUserProfile = await getSharedUserProfile();
   const sections: string[] = [];
   for (const key of ['IDENTITY', 'SOUL', 'AGENTS', 'TOOLS', 'HEARTBEAT'] as const) {
     const content = String(profile.fileBundle[key] || '').trim();
     if (content) sections.push(content);
   }
-  if (profile.knowledgeParts.length > 0) {
-    const knowledgeSections = profile.knowledgeParts
+  if (effectiveKnowledgeParts.length > 0) {
+    const knowledgeSections = effectiveKnowledgeParts
       .slice()
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map((part) => {

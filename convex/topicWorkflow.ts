@@ -631,6 +631,89 @@ async function healWriterAvailability(
   };
 }
 
+/**
+ * Generalized agent availability healing for non-writer stages.
+ * Recovers OFFLINE agents to IDLE and resets WORKING agents whose
+ * current task is complete, blocked, or no longer actively executing.
+ */
+async function healAgentAvailability(
+  ctx: MutationCtx,
+  stageKey: TopicStageKey,
+  projectId?: number
+): Promise<{ healed: boolean; recoveredCount: number }> {
+  const chain = stageOwnerChains[stageKey] || [];
+  if (chain.length === 0) return { healed: false, recoveredCount: 0 };
+
+  const allAgents = await ctx.db.query("agents").collect();
+  const now = Date.now();
+  const lockTimeoutMs = resolveWriterLockTimeoutMs(); // reuse same timeout
+  let recoveredCount = 0;
+
+  for (const requestedRole of chain) {
+    if (requestedRole === "human") continue;
+    const candidates = normalizedRoleCandidates(requestedRole);
+    const roleAgents = allAgents.filter(
+      (agent) =>
+        candidates.includes(agent.role.toLowerCase()) &&
+        isAgentRoutableForProject(agent, projectId)
+    );
+
+    for (const agent of roleAgents) {
+      const status = normalizeAgentStatus(agent.status);
+
+      if (status === "OFFLINE") {
+        await ctx.db.patch(agent._id, {
+          status: "IDLE",
+          currentTaskId: undefined,
+          updatedAt: now,
+        });
+        recoveredCount++;
+        continue;
+      }
+
+      if (status !== "WORKING") continue;
+
+      let stale = false;
+      if (!agent.currentTaskId) {
+        stale = true;
+      } else {
+        const task = await ctx.db.get(agent.currentTaskId);
+        if (
+          !task ||
+          task.status === "COMPLETED" ||
+          task.workflowCurrentStageKey === "complete"
+        ) {
+          stale = true;
+        } else {
+          // Agent WORKING but task is blocked/queued/pending — release
+          const taskStageStatus = task.workflowStageStatus || "in_progress";
+          if (taskStageStatus === "blocked" || taskStageStatus === "queued" || taskStageStatus === "pending") {
+            stale = true;
+          } else {
+            // Check for stale lock by time
+            const lastTouch =
+              task.workflowLastEventAt || task.workflowUpdatedAt || task.updatedAt || 0;
+            if (lastTouch > 0 && now - lastTouch > lockTimeoutMs) {
+              stale = true;
+            }
+          }
+        }
+      }
+
+      if (stale) {
+        await ctx.db.patch(agent._id, {
+          status: "IDLE",
+          currentTaskId: undefined,
+          updatedAt: now,
+        });
+        recoveredCount++;
+      }
+    }
+  }
+
+  return { healed: recoveredCount > 0, recoveredCount };
+}
+
 async function healConfiguredWriterSlotAvailability(
   ctx: MutationCtx,
   args: {
@@ -1228,6 +1311,19 @@ async function assignStageOwner(
           matchedRole: healedWriter.role,
         };
       }
+    }
+  }
+
+  // Generalized healing for non-writing stages (editing, final_review, etc.)
+  if (!strictConfiguredStage && !assignment && args.stageKey !== "writing") {
+    const generalHeal = await healAgentAvailability(ctx, args.stageKey, args.projectId);
+    if (generalHeal.healed) {
+      assignmentDiagnostics = {
+        ...assignmentDiagnostics,
+        generalHealRecovered: generalHeal.recoveredCount,
+      };
+      // Retry assignment after healing
+      assignment = await resolveStageOwnerAgent(ctx, args.stageKey, args.projectId, laneKey);
     }
   }
 

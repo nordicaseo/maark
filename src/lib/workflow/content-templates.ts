@@ -17,8 +17,8 @@ import type {
 const DEFAULT_WORD_RANGE: WordRangePolicy = { min: 1200, max: 2500 };
 const DEFAULT_OUTLINE_CONSTRAINTS: OutlineConstraintPolicy = { maxH2: 8, maxH3PerH2: 3 };
 const DEFAULT_STYLE_GUARD: StyleGuardPolicy = {
-  emDash: 'forbid',
-  colon: 'structural_only',
+  emDash: 'allow',
+  colon: 'allow',
   maxNarrativeColons: 0,
 };
 

@@ -2782,13 +2782,28 @@ export async function runTopicWorkflow(
           });
         }
         if (blockedBySafety) {
-          await convex.mutation(api.tasks.update, {
-            id: currentTask._id,
-            expectedProjectId: currentTask.projectId ?? undefined,
-            workflowStageStatus: 'blocked',
-            workflowLastEventAt: Date.now(),
-            workflowLastEventText: failedSummary,
-          });
+          // Allow up to 2 automatic retries for incomplete drafts before permanently blocking
+          const isRetryable =
+            incompleteDraftError &&
+            (incompleteDraftError.continuationAttempts ?? 0) < 3;
+          if (isRetryable) {
+            await convex.mutation(api.tasks.update, {
+              id: currentTask._id,
+              expectedProjectId: currentTask.projectId ?? undefined,
+              workflowStageStatus: 'pending',
+              workflowRunNotBeforeAt: Date.now() + 60_000,
+              workflowLastEventAt: Date.now(),
+              workflowLastEventText: `${failedSummary} — scheduling retry.`,
+            });
+          } else {
+            await convex.mutation(api.tasks.update, {
+              id: currentTask._id,
+              expectedProjectId: currentTask.projectId ?? undefined,
+              workflowStageStatus: 'blocked',
+              workflowLastEventAt: Date.now(),
+              workflowLastEventText: failedSummary,
+            });
+          }
         }
         await convex.mutation(api.topicWorkflow.recordStageProgress, {
           taskId: currentTask._id,
@@ -3079,15 +3094,38 @@ export async function runTopicWorkflow(
       });
     }
 
-    await convex.mutation(api.topicWorkflow.advanceStage, {
-      taskId: currentTask._id,
-      toStage: next.toStage,
-      actorType: 'system',
-      actorId: input.user.id,
-      actorName: 'Workflow PM',
-      note: `${stageSummary} Moving to ${next.toStage}.`,
-      skipOptionalOutlineReview: next.skipOptionalOutlineReview,
-    });
+    try {
+      await convex.mutation(api.topicWorkflow.advanceStage, {
+        taskId: currentTask._id,
+        toStage: next.toStage,
+        actorType: 'system',
+        actorId: input.user.id,
+        actorName: 'Workflow PM',
+        note: `${stageSummary} Moving to ${next.toStage}.`,
+        skipOptionalOutlineReview: next.skipOptionalOutlineReview,
+      });
+    } catch (advanceError) {
+      const advErrMsg = advanceError instanceof Error ? advanceError.message : 'Unknown advanceStage error';
+      await logAlertEvent({
+        source: 'topic_workflow',
+        eventType: 'advance_stage_failed',
+        severity: 'error',
+        projectId: currentTask.projectId ?? null,
+        resourceId: String(currentTask._id),
+        message: `advanceStage to ${next.toStage} failed: ${advErrMsg}`,
+        metadata: { taskId: String(currentTask._id), stage, toStage: next.toStage },
+      });
+      await convex.mutation(api.tasks.update, {
+        id: currentTask._id,
+        expectedProjectId: currentTask.projectId ?? undefined,
+        workflowStageStatus: 'blocked',
+        workflowLastEventAt: Date.now(),
+        workflowLastEventText: `advanceStage failed: ${advErrMsg}`,
+      });
+      stoppedReason = `advanceStage to ${next.toStage} failed: ${advErrMsg}`;
+      runs.push(runRecord);
+      break;
+    }
 
     runRecord.nextStage = next.toStage;
     runs.push(runRecord);

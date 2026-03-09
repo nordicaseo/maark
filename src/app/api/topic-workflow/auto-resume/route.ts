@@ -485,6 +485,22 @@ async function executeAutoResume(req: NextRequest) {
       }
     }
 
+    // Fix 1A: Recover queued non-writing tasks (editing, final_review, etc.)
+    const queuedNonWritingTasks = workflowTasks
+      .filter((task) => {
+        const stage = (task.workflowCurrentStageKey || 'research') as TopicStageKey;
+        if (stage === 'writing') return false; // handled by queuedWritingTasks
+        if (!RECOVERABLE_AUTO_STAGES.has(stage)) return false;
+        if (task.workflowStageStatus !== 'queued') return false;
+        const runNotBeforeAt = task.workflowRunNotBeforeAt ?? 0;
+        return runNotBeforeAt <= now;
+      })
+      .sort(
+        (a, b) =>
+          (a.workflowLastEventAt || a.updatedAt || 0) -
+          (b.workflowLastEventAt || b.updatedAt || 0)
+      );
+
     const readyRecoverableTasks = workflowTasks
       .filter((task) => {
         const stage = (task.workflowCurrentStageKey || 'research') as TopicStageKey;
@@ -516,10 +532,38 @@ async function executeAutoResume(req: NextRequest) {
           (b.workflowRunNotBeforeAt || b.workflowLastEventAt || b.updatedAt || 0)
       );
 
+    // Fix 1B: Recover blocked tasks with retry cooldown (10 min, max 3 retries)
+    const BLOCKED_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+    const blockedRetryableTasks: WorkflowTask[] = [];
+    const blockedCandidates = workflowTasks.filter((task) => {
+      const stage = (task.workflowCurrentStageKey || 'research') as TopicStageKey;
+      if (!RECOVERABLE_AUTO_STAGES.has(stage)) return false;
+      if (task.workflowStageStatus !== 'blocked') return false;
+      const lastEvent = task.workflowLastEventAt ?? 0;
+      return lastEvent > 0 && now - lastEvent > BLOCKED_COOLDOWN_MS;
+    });
+    if (blockedCandidates.length > 0) {
+      for (const task of blockedCandidates) {
+        // Reset blocked → pending so the workflow runner can re-attempt
+        try {
+          await convex.mutation(api.tasks.update, {
+            id: task._id,
+            expectedProjectId: task.projectId ?? undefined,
+            workflowStageStatus: 'pending',
+            workflowLastEventAt: Date.now(),
+            workflowLastEventText: `Auto-resume: unblocking for retry after cooldown.`,
+          });
+          blockedRetryableTasks.push({ ...task, workflowStageStatus: 'pending' });
+        } catch {
+          // Silently skip if mutation fails
+        }
+      }
+    }
+
     const failures: Array<{ taskId: string; error: string }> = [];
     let resumed = 0;
     const toResume = interleaveCandidates(
-      [queuedWritingTasks, readyRecoverableTasks, readyResearchTasks],
+      [queuedWritingTasks, queuedNonWritingTasks, blockedRetryableTasks, readyRecoverableTasks, readyResearchTasks],
       maxResumes
     );
 
@@ -558,6 +602,8 @@ async function executeAutoResume(req: NextRequest) {
         readyResearch: readyResearchTasks.length,
         recoverableActive: readyRecoverableTasks.length,
         queuedWriting: queuedWritingTasks.length,
+        queuedNonWriting: queuedNonWritingTasks.length,
+        blockedRetried: blockedRetryableTasks.length,
         maxResumes,
         resumed,
         resumedCount: resumed,
@@ -590,6 +636,8 @@ async function executeAutoResume(req: NextRequest) {
       recoverableActive: readyRecoverableTasks.length,
       queued: queuedWritingTasks.length,
       queuedWriting: queuedWritingTasks.length,
+      queuedNonWriting: queuedNonWritingTasks.length,
+      blockedRetried: blockedRetryableTasks.length,
       resumed,
       resumedCount: resumed,
       retried,

@@ -66,6 +66,7 @@ export interface ProjectAgentPoolHealth {
 export type ProjectBootstrapStage =
   | 'seeding_agents'
   | 'creating_mission_control'
+  | 'generating_knowledge'
   | 'fetching_pages'
   | 'connect_gsc';
 

@@ -9,7 +9,16 @@ import { runDiscoveryForProject } from '@/lib/discovery/discovery-runner';
 import { enqueueProjectPagesForCrawl, processDueCrawlJobs } from '@/lib/discovery/crawl-queue';
 import { processDuePageArtifactJobs } from '@/lib/discovery/page-artifact-queue';
 import { logAuditEvent } from '@/lib/observability';
-import { seedProjectAgentProfiles } from '@/lib/agents/project-agent-profiles';
+import {
+  seedProjectAgentProfiles,
+  seedProjectAgentLaneProfiles,
+  upsertProjectAgentProfile,
+  upsertProjectAgentLaneProfile,
+} from '@/lib/agents/project-agent-profiles';
+import { generateAgentKnowledgeProfile } from '@/lib/agents/knowledge-generation';
+import { backfillProjectTaskStagePlans } from '@/lib/workflow/stage-routing';
+import { FIXED_AGENT_ROLES } from '@/types/agent-profile';
+import { AGENT_WRITER_LANES } from '@/types/agent-runtime';
 import {
   buildRoleCounts,
   syncProjectDedicatedAgentPool,
@@ -26,6 +35,7 @@ import { DEFAULT_LANE_CAPACITY_SETTINGS } from '@/types/agent-runtime';
 const BOOTSTRAP_STAGE_LABELS: Record<ProjectBootstrapStage, string> = {
   seeding_agents: 'Seeding Agents',
   creating_mission_control: 'Creating Mission Control',
+  generating_knowledge: 'Generating Knowledge',
   fetching_pages: 'Fetching Pages',
   connect_gsc: 'Connect your GSC',
 };
@@ -286,6 +296,11 @@ export async function POST(req: NextRequest) {
         status: 'pending',
       },
       {
+        stage: 'generating_knowledge',
+        label: BOOTSTRAP_STAGE_LABELS.generating_knowledge,
+        status: 'pending',
+      },
+      {
         stage: 'fetching_pages',
         label: BOOTSTRAP_STAGE_LABELS.fetching_pages,
         status: 'pending',
@@ -346,7 +361,8 @@ export async function POST(req: NextRequest) {
     try {
       await setBootstrapStage('seeding_agents', 'running', 'Creating project-specific agent profiles...');
       const seeded = await seedProjectAgentProfiles(project.id, auth.user.id);
-      await setBootstrapStage('seeding_agents', 'done', 'Agent profiles ready.');
+      await seedProjectAgentLaneProfiles(project.id, auth.user.id);
+      await setBootstrapStage('seeding_agents', 'done', 'Agent profiles and lane profiles ready.');
 
       await setBootstrapStage(
         'creating_mission_control',
@@ -361,6 +377,67 @@ export async function POST(req: NextRequest) {
         userId: auth.user.id,
       });
       await setBootstrapStage('creating_mission_control', 'done', 'Dedicated Mission Control team ready.');
+
+      // Fix 2B: Auto-generate knowledge from project description + domain
+      await setBootstrapStage('generating_knowledge', 'running', 'Generating project voice and knowledge...');
+      try {
+        const knowledgeDescription = [
+          name ? `Project: ${name}` : '',
+          description ? `Description: ${description}` : '',
+          brandVoice ? `Brand Voice: ${brandVoice}` : '',
+          normalizedDomain ? `Domain: ${normalizedDomain}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+        const generated = await generateAgentKnowledgeProfile({
+          projectName: name,
+          role: 'writer',
+          description: knowledgeDescription,
+          sourceUrls: normalizedDomain ? [`https://${normalizedDomain}`] : [],
+        });
+
+        // Apply knowledge to ALL role profiles
+        for (const role of FIXED_AGENT_ROLES) {
+          await upsertProjectAgentProfile({
+            projectId: project.id,
+            role,
+            knowledgeParts: generated.knowledgeParts,
+            userId: auth.user.id,
+          });
+        }
+
+        // Apply to each writer lane profile
+        for (const laneKey of AGENT_WRITER_LANES) {
+          await upsertProjectAgentLaneProfile({
+            projectId: project.id,
+            role: 'writer',
+            laneKey,
+            knowledgeParts: generated.knowledgeParts,
+            userId: auth.user.id,
+          });
+        }
+
+        await setBootstrapStage('generating_knowledge', 'done', 'Project voice and knowledge applied to all agents.');
+      } catch (knowledgeError) {
+        console.error('Knowledge generation failed (non-blocking):', knowledgeError);
+        await setBootstrapStage(
+          'generating_knowledge',
+          'failed',
+          knowledgeError instanceof Error ? knowledgeError.message : 'Knowledge generation failed'
+        );
+      }
+
+      // Fix 2C: Backfill stage routes for all content formats
+      try {
+        await backfillProjectTaskStagePlans({
+          projectId: project.id,
+          userId: auth.user.id,
+          force: true,
+        });
+      } catch (routeError) {
+        console.error('Stage route backfill failed (non-blocking):', routeError);
+      }
 
       await setBootstrapStage('fetching_pages', 'running', 'Running discovery and initial crawl bootstrap...');
       const discovery = await runDiscoveryForProject({
