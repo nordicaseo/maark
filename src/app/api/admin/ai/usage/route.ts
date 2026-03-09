@@ -14,7 +14,7 @@ import { requireRole } from '@/lib/auth';
  */
 export async function GET(req: NextRequest) {
   await ensureDb();
-  const auth = await requireRole('super_admin');
+  const auth = await requireRole('admin');
   if (auth.error) return auth.error;
 
   const { searchParams } = req.nextUrl;
