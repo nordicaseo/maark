@@ -35,6 +35,28 @@ function normalizeHeading(value: string): string {
     .trim();
 }
 
+/**
+ * Fuzzy heading match: checks substring containment first, then falls
+ * back to word-overlap (60%+ of significant words must match).
+ * This handles the common case where the AI rephrases headings slightly.
+ */
+function headingsMatch(expected: string, actual: string): boolean {
+  if (actual.includes(expected) || expected.includes(actual)) return true;
+
+  // Word overlap: ignore short stop words
+  const significantWords = (s: string) =>
+    s.split(/\s+/).filter((w) => w.length > 2);
+  const expectedWords = significantWords(expected);
+  const actualSet = new Set(significantWords(actual));
+  if (expectedWords.length === 0) return false;
+
+  let overlap = 0;
+  for (const word of expectedWords) {
+    if (actualSet.has(word)) overlap++;
+  }
+  return overlap / expectedWords.length >= 0.6;
+}
+
 export function extractOutlineHeadings(markdown: string): string[] {
   return markdown
     .split("\n")
@@ -93,9 +115,7 @@ export function evaluateWritingCompleteness(args: {
 
   for (const expectedHeading of normalizedOutline) {
     const present = draftHeadings.some(
-      (actualHeading) =>
-        actualHeading.includes(expectedHeading) ||
-        expectedHeading.includes(actualHeading)
+      (actualHeading) => headingsMatch(expectedHeading, actualHeading)
     );
     if (!present) {
       missingHeadings.push(expectedHeading);
@@ -155,9 +175,12 @@ export function buildContinuationPrompt(args: {
   missingHeadings: string[];
   currentHtml: string;
 }): string {
+  const missingList = args.missingHeadings.slice(0, 8);
   return `The draft appears incomplete.
 Known issues: ${args.reasons.join("; ") || "Missing completion checks"}.
-Missing headings: ${args.missingHeadings.slice(0, 8).join(", ") || "none"}.
+
+${missingList.length > 0 ? `The following sections are MISSING. You MUST add each one using the EXACT heading text below:
+${missingList.map((h) => `- <h2>${h}</h2>`).join("\n")}` : ""}
 
 Current draft HTML:
 ${args.currentHtml}
@@ -166,7 +189,8 @@ Continue the article from where it stopped and finish all remaining sections.
 Critical rules:
 - Do NOT restart from the beginning.
 - Do NOT repeat the title or earlier sections.
-- If headings are missing, add them exactly and complete those sections.
+- Use the EXACT heading text listed above for missing sections — do not rephrase or shorten them.
+- Write substantive content (150+ words) under each missing heading.
 - End with a proper conclusion and a final complete sentence.
 
 Return HTML only for continuation content, with no preface or commentary.`;
