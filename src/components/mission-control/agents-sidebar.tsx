@@ -69,7 +69,7 @@ export function AgentsSidebar() {
     let intervalId: ReturnType<typeof setInterval> | null = null;
 
     const loadProfiles = async () => {
-      if (!activeProjectId) {
+      if (activeProjectId === null) {
         if (!cancelled) {
           setRuntimeAgents([]);
           setProfileMap({});
