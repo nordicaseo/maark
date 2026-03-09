@@ -5,9 +5,11 @@ import {
 } from '@/lib/workflow/cron-auth';
 
 const ORIGINAL_SECRET = process.env.WORKFLOW_CRON_SECRET;
+const ORIGINAL_CRON_SECRET = process.env.CRON_SECRET;
 
 afterEach(() => {
   process.env.WORKFLOW_CRON_SECRET = ORIGINAL_SECRET;
+  process.env.CRON_SECRET = ORIGINAL_CRON_SECRET;
 });
 
 describe('workflow cron auth', () => {
@@ -20,7 +22,15 @@ describe('workflow cron auth', () => {
 
   it('requires a matching bearer token', () => {
     process.env.WORKFLOW_CRON_SECRET = 'secret-1';
+    process.env.CRON_SECRET = '';
     const headers = new Headers({ authorization: 'Bearer secret-1' });
+    expect(isWorkflowCronAuthorized(headers)).toBe(true);
+  });
+
+  it('accepts vercel native CRON_SECRET bearer token', () => {
+    process.env.WORKFLOW_CRON_SECRET = '';
+    process.env.CRON_SECRET = 'vercel-secret';
+    const headers = new Headers({ authorization: 'Bearer vercel-secret' });
     expect(isWorkflowCronAuthorized(headers)).toBe(true);
   });
 

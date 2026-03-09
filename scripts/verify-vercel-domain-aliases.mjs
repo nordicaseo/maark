@@ -1,14 +1,31 @@
 import { execFileSync } from 'node:child_process';
 
-const CANONICAL_ALIAS =
-  process.env.VERCEL_CANONICAL_ALIAS || 'maark-nordicaseo.vercel.app';
+const DEFAULT_PROJECT_PRODUCTION_ALIAS = 'maark-nordicaseo.vercel.app';
+
+function normalizeRef(ref) {
+  return String(ref || '')
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/+$/, '');
+}
+
 const PROJECT_PRODUCTION_REF =
-  process.env.VERCEL_PROJECT_PRODUCTION_URL ||
-  process.env.VERCEL_PRODUCTION_ALIAS ||
-  'maark-nordicaseo.vercel.app';
-const REQUIRED_DOMAINS = (process.env.VERCEL_REQUIRED_DOMAINS || 'maark.ai,www.maark.ai')
+  normalizeRef(
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+      process.env.VERCEL_PRODUCTION_ALIAS ||
+      DEFAULT_PROJECT_PRODUCTION_ALIAS
+  );
+const CANONICAL_ALIAS = normalizeRef(
+  process.env.VERCEL_CANONICAL_ALIAS || PROJECT_PRODUCTION_REF
+);
+const EXPECTED_PROJECT_NAME =
+  process.env.EXPECTED_VERCEL_PROJECT_NAME || 'maark';
+const EXPECTED_CONTEXT_NAME =
+  process.env.EXPECTED_VERCEL_CONTEXT_NAME || 'nordicaseo';
+const REQUIRED_DOMAINS = (process.env.VERCEL_REQUIRED_DOMAINS ||
+  'maark.ai,www.maark.ai')
   .split(',')
-  .map((value) => value.trim())
+  .map((value) => normalizeRef(value))
   .filter(Boolean);
 
 function parseJsonFromCliOutput(output) {
@@ -21,7 +38,7 @@ function parseJsonFromCliOutput(output) {
 
 function inspectDeployment(ref) {
   try {
-    const raw = execFileSync('vercel', ['inspect', ref, '--json'], {
+    const raw = execFileSync('npx', ['vercel', 'inspect', ref, '--json'], {
       cwd: process.cwd(),
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -30,9 +47,11 @@ function inspectDeployment(ref) {
     return {
       ref,
       id: String(parsed.id || ''),
-      url: String(parsed.url || ''),
+      url: normalizeRef(parsed.url || ''),
       target: String(parsed.target || ''),
       readyState: String(parsed.readyState || ''),
+      name: String(parsed.name || ''),
+      contextName: String(parsed.contextName || ''),
     };
   } catch (error) {
     const output = `${error.stdout || ''}\n${error.stderr || ''}`.trim();
@@ -56,17 +75,33 @@ function validateCanonicalDeployment(deployment) {
       `Canonical alias "${deployment.ref}" is not ready (readyState=${deployment.readyState || 'unknown'}).`
     );
   }
+  if (deployment.name !== EXPECTED_PROJECT_NAME) {
+    throw new Error(
+      `Deployment "${deployment.ref}" belongs to project "${deployment.name || 'unknown'}" (expected "${EXPECTED_PROJECT_NAME}").`
+    );
+  }
+  if (deployment.contextName !== EXPECTED_CONTEXT_NAME) {
+    throw new Error(
+      `Deployment "${deployment.ref}" belongs to context "${deployment.contextName || 'unknown'}" (expected "${EXPECTED_CONTEXT_NAME}").`
+    );
+  }
 }
 
 function main() {
   if (REQUIRED_DOMAINS.length === 0) {
     throw new Error('No required domains configured for alias verification.');
   }
+  if (!PROJECT_PRODUCTION_REF) {
+    throw new Error('Project production alias reference is required for alias verification.');
+  }
 
-  const canonical = inspectDeployment(CANONICAL_ALIAS);
   const projectProduction = inspectDeployment(PROJECT_PRODUCTION_REF);
-  validateCanonicalDeployment(canonical);
   validateCanonicalDeployment(projectProduction);
+  const canonical =
+    CANONICAL_ALIAS === PROJECT_PRODUCTION_REF
+      ? projectProduction
+      : inspectDeployment(CANONICAL_ALIAS);
+  validateCanonicalDeployment(canonical);
 
   if (canonical.id !== projectProduction.id) {
     console.error('\nVercel production alias drift detected.\n');
@@ -90,21 +125,21 @@ function main() {
   if (mismatches.length > 0) {
     console.error('\nVercel domain alias drift detected.\n');
     console.error(
-      `Canonical deployment: ${CANONICAL_ALIAS} -> ${canonical.url} (${canonical.id})`
+      `Project production: ${PROJECT_PRODUCTION_REF} -> ${projectProduction.url} (${projectProduction.id})`
     );
     for (const mismatch of mismatches) {
       console.error(
         `- ${mismatch.domain} -> ${mismatch.inspected.url} (${mismatch.inspected.id})`
       );
       console.error(
-        `  Fix: vercel alias set ${canonical.url} ${mismatch.domain}`
+        `  Fix: npx vercel alias set ${projectProduction.url} ${mismatch.domain}`
       );
     }
     process.exit(1);
   }
 
   console.log(
-    `Vercel alias verification passed (${REQUIRED_DOMAINS.join(', ')} -> ${canonical.url}).`
+    `Vercel alias verification passed (${REQUIRED_DOMAINS.join(', ')} -> ${projectProduction.url}).`
   );
 }
 

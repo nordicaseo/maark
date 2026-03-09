@@ -142,6 +142,7 @@ export const updatePersonaAndModels = mutation({
 export const updateRuntime = mutation({
   args: {
     id: v.id("agents"),
+    name: v.optional(v.union(v.string(), v.null())),
     projectId: v.optional(v.union(v.number(), v.null())),
     isDedicated: v.optional(v.boolean()),
     capacityWeight: v.optional(v.number()),
@@ -154,6 +155,7 @@ export const updateRuntime = mutation({
     const updates: Record<string, unknown> = {
       updatedAt: Date.now(),
     };
+    if (args.name !== undefined) updates.name = args.name ?? undefined;
     if (args.projectId !== undefined) updates.projectId = args.projectId ?? undefined;
     if (args.isDedicated !== undefined) updates.isDedicated = args.isDedicated;
     if (args.capacityWeight !== undefined) updates.capacityWeight = args.capacityWeight;

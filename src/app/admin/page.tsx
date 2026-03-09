@@ -2,13 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { FolderOpen, Sparkles, Users, Bot, Globe, ShieldCheck } from 'lucide-react';
+import { FolderOpen, Users, Bot, Globe, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { hasRole } from '@/lib/permissions';
 
 interface Stats {
   projects: number;
-  skills: number;
   users: number;
 }
 
@@ -26,7 +25,6 @@ export default function AdminDashboard() {
   const cards = [
     { label: 'Projects', value: stats?.projects ?? '—', icon: FolderOpen, href: '/admin/projects' },
     { label: 'Crawl & GSC', value: 'Setup', icon: Globe, href: '/admin/crawl-gsc' },
-    { label: 'Skills', value: stats?.skills ?? '—', icon: Sparkles, href: '/admin/skills' },
     { label: 'Users', value: stats?.users ?? '—', icon: Users, href: '/admin/users' },
   ];
   if (user && hasRole(user.role, 'super_admin')) {

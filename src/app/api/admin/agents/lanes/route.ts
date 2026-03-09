@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { userCanAccessProject, userCanAccessSkill } from '@/lib/access';
+import { userCanAccessProject } from '@/lib/access';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import {
   listProjectAgentLaneProfiles,
   seedProjectAgentLaneProfiles,
   upsertProjectAgentLaneProfile,
 } from '@/lib/agents/project-agent-profiles';
-import { AGENT_FILE_KEYS, type AgentRole } from '@/types/agent-profile';
+import {
+  AGENT_FILE_KEYS,
+  AGENT_KNOWLEDGE_PART_TYPES,
+  type AgentRole,
+} from '@/types/agent-profile';
 import { AGENT_WRITER_LANES, type AgentLaneKey } from '@/types/agent-runtime';
 
 function parseProjectId(value: unknown): number | null {
@@ -33,14 +37,38 @@ function sanitizeFileBundle(input: unknown): Record<string, string> | undefined 
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function sanitizeSkillIds(input: unknown): number[] | undefined {
+function sanitizeKnowledgeParts(input: unknown) {
   if (!Array.isArray(input)) return undefined;
-  const unique = new Set<number>();
-  for (const value of input) {
-    const n = Number(value);
-    if (Number.isFinite(n) && n > 0) unique.add(Math.trunc(n));
+  const out: Array<{
+    id: string;
+    partType: (typeof AGENT_KNOWLEDGE_PART_TYPES)[number];
+    label: string;
+    content: string;
+    sortOrder: number;
+  }> = [];
+  for (const item of input) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    const rawPartType = String(row.partType || '').trim();
+    const partType = AGENT_KNOWLEDGE_PART_TYPES.includes(
+      rawPartType as (typeof AGENT_KNOWLEDGE_PART_TYPES)[number]
+    )
+      ? (rawPartType as (typeof AGENT_KNOWLEDGE_PART_TYPES)[number])
+      : 'custom';
+    const content = typeof row.content === 'string' ? row.content.trim() : '';
+    if (!content) continue;
+    const label =
+      typeof row.label === 'string' && row.label.trim()
+        ? row.label.trim()
+        : partType.replace(/_/g, ' ');
+    const id =
+      typeof row.id === 'string' && row.id.trim() ? row.id.trim() : `${partType}:${out.length}`;
+    const sortOrder = Number.isFinite(Number(row.sortOrder))
+      ? Math.max(0, Math.trunc(Number(row.sortOrder)))
+      : out.length;
+    out.push({ id, partType, label, content, sortOrder });
   }
-  return Array.from(unique);
+  return out;
 }
 
 function sanitizeModelOverrides(input: unknown) {
@@ -124,15 +152,6 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const skillIds = sanitizeSkillIds(body.skillIds);
-    if (skillIds && skillIds.length > 0) {
-      for (const skillId of skillIds) {
-        if (!(await userCanAccessSkill(auth.user, skillId))) {
-          return NextResponse.json({ error: `Forbidden skillId ${skillId}` }, { status: 403 });
-        }
-      }
-    }
-
     const profile = await upsertProjectAgentLaneProfile({
       projectId,
       role: body.role,
@@ -145,7 +164,8 @@ export async function PUT(req: NextRequest) {
       mission: typeof body.mission === 'string' ? body.mission : undefined,
       isEnabled: typeof body.isEnabled === 'boolean' ? body.isEnabled : undefined,
       fileBundle: sanitizeFileBundle(body.fileBundle),
-      skillIds,
+      knowledgeParts: sanitizeKnowledgeParts(body.knowledgeParts),
+      skillIds: [],
       modelOverrides: sanitizeModelOverrides(body.modelOverrides),
       heartbeatMeta:
         body.heartbeatMeta && typeof body.heartbeatMeta === 'object'
@@ -164,7 +184,7 @@ export async function PUT(req: NextRequest) {
         role: body.role,
         laneKey: body.laneKey,
         isEnabled: profile.isEnabled,
-        mappedSkillIds: profile.skillIds,
+        knowledgeParts: profile.knowledgeParts.length,
       },
     });
 

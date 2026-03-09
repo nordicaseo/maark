@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { api } from '../../../convex/_generated/api';
 import { db, ensureDb } from '@/db';
 import { dbNow } from '@/db/utils';
@@ -6,10 +6,15 @@ import {
   agentSharedProfiles,
   projectAgentLaneProfiles,
   projectAgentProfiles,
-  skills,
 } from '@/db/schema';
 import { getConvexClient } from '@/lib/convex/server';
+import {
+  resolveProfileIdentityForCreate,
+  resolveProfileIdentityForUpdate,
+} from '@/lib/agents/profile-identity-merge';
 import type {
+  AgentKnowledgePart,
+  AgentKnowledgePartType,
   AgentRole,
   HeartbeatRunResult,
   ProjectAgentFileBundle,
@@ -23,6 +28,7 @@ import type {
 } from '@/types/agent-profile';
 import {
   AGENT_FILE_KEYS,
+  AGENT_KNOWLEDGE_PART_TYPES,
   FIXED_AGENT_ROLES,
   SHARED_AGENT_PROFILE_KEYS,
 } from '@/types/agent-profile';
@@ -68,6 +74,13 @@ const WRITER_LANE_PROFILE_DEFAULTS: Record<
     shortDescription: 'Landing lane writer',
     emoji: '🎯',
   },
+};
+
+const WRITER_LANE_NAME_SUFFIX: Record<AgentLaneKey, string> = {
+  blog: 'Blog',
+  collection: 'Collection',
+  product: 'Product',
+  landing: 'Landing',
 };
 
 const ROLE_DEFAULTS: Record<
@@ -209,6 +222,29 @@ function normalizeSkillIds(value: unknown): number[] {
   return Array.from(unique);
 }
 
+function normalizeKnowledgeParts(value: unknown): AgentKnowledgePart[] {
+  const parsed = parseJson<unknown[]>(value, []);
+  if (!Array.isArray(parsed)) return [];
+  const parts: AgentKnowledgePart[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    const partTypeRaw = String(row.partType || '').trim();
+    const partType = AGENT_KNOWLEDGE_PART_TYPES.includes(partTypeRaw as AgentKnowledgePartType)
+      ? (partTypeRaw as AgentKnowledgePartType)
+      : 'custom';
+    const label = String(row.label || '').trim() || partType.replace(/_/g, ' ');
+    const content = String(row.content || '').trim();
+    if (!content) continue;
+    const sortOrder = Number.isFinite(Number(row.sortOrder))
+      ? Math.max(0, Math.trunc(Number(row.sortOrder)))
+      : parts.length;
+    const id = String(row.id || `${partType}:${sortOrder}`).trim();
+    parts.push({ id, partType, label, content, sortOrder });
+  }
+  return parts.sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
 function normalizeModelOverrides(value: unknown): ProjectAgentModelOverrides {
   const parsed = parseJson<Record<string, unknown>>(value, {});
   if (!parsed || typeof parsed !== 'object') return {};
@@ -254,8 +290,8 @@ function buildDefaultFileBundle(
   const identity = `# IDENTITY\nName: ${displayName}\nRole: ${role}\nEmoji: ${emoji}\nMission: ${mission}`;
   const soul = `# SOUL\nYou are ${displayName}. Prioritize quality, clarity, and project scope discipline for ${role} responsibilities.`;
   const heartbeat = `# HEARTBEAT\nRun a manual heartbeat when requested.\n1) Review open/blocked tasks.\n2) Summarize risks.\n3) Suggest next actions.`;
-  const agents = `# AGENTS\nFollow Topic Workflow v1 handoffs.\nRespect stage ownership, approvals, and project skills.\nLog important decisions in MEMORY.`;
-  const tools = `# TOOLS\nUse Maark project context, workflow events, and mapped skills before producing output.`;
+  const agents = `# AGENTS\nFollow Topic Workflow v1 handoffs.\nRespect stage ownership and approvals.\nLog important decisions in MEMORY.`;
+  const tools = `# TOOLS\nUse Maark project context, workflow events, and project agent knowledge before producing output.`;
   const memory = '# MEMORY\n- Initialized profile.';
   const working = '# WORKING\nNo active assignment.';
   const bootstrap =
@@ -335,6 +371,7 @@ function mapProfileRow(row: Record<string, unknown>): ProjectAgentProfile {
         ? row.isEnabled
         : Number(row.isEnabled ?? 1) === 1,
     fileBundle: normalizeFileBundle(role, displayName, emoji, mission, row.fileBundle),
+    knowledgeParts: normalizeKnowledgeParts(row.knowledgeParts),
     skillIds: normalizeSkillIds(row.skillIds),
     modelOverrides: normalizeModelOverrides(row.modelOverrides),
     heartbeatMeta: normalizeHeartbeatMeta(row.heartbeatMeta),
@@ -355,6 +392,21 @@ function laneProfileDefaults(role: AgentRole, laneKey: AgentLaneKey) {
     shortDescription: laneDefaults.shortDescription,
     mission: `${roleDefaults.mission} ${laneDefaults.missionSuffix}`.trim(),
   };
+}
+
+function isDefaultWriterLaneDisplayName(laneKey: AgentLaneKey, displayName: string): boolean {
+  return (
+    displayName.trim().toLowerCase() ===
+    WRITER_LANE_PROFILE_DEFAULTS[laneKey].displayName.trim().toLowerCase()
+  );
+}
+
+function deriveWriterLaneDisplayName(writerDisplayName: string, laneKey: AgentLaneKey): string {
+  const base = writerDisplayName.trim() || ROLE_DEFAULTS.writer.displayName;
+  const suffix = WRITER_LANE_NAME_SUFFIX[laneKey];
+  const suffixNeedle = ` ${suffix}`.toLowerCase();
+  if (base.toLowerCase().endsWith(suffixNeedle)) return base;
+  return `${base} ${suffix}`;
 }
 
 function mapLaneProfileRow(row: Record<string, unknown>): ProjectAgentLaneProfile {
@@ -395,6 +447,7 @@ function mapLaneProfileRow(row: Record<string, unknown>): ProjectAgentLaneProfil
         ? row.isEnabled
         : Number(row.isEnabled ?? 1) === 1,
     fileBundle: normalizeFileBundle(role, displayName, emoji, mission, row.fileBundle),
+    knowledgeParts: normalizeKnowledgeParts(row.knowledgeParts),
     skillIds: normalizeSkillIds(row.skillIds),
     modelOverrides: normalizeModelOverrides(row.modelOverrides),
     heartbeatMeta: normalizeHeartbeatMeta(row.heartbeatMeta),
@@ -426,6 +479,7 @@ async function getProjectProfileRow(projectId: number, role: AgentRole) {
       mission: projectAgentProfiles.mission,
       isEnabled: projectAgentProfiles.isEnabled,
       fileBundle: projectAgentProfiles.fileBundle,
+      knowledgeParts: projectAgentProfiles.knowledgeParts,
       skillIds: projectAgentProfiles.skillIds,
       modelOverrides: projectAgentProfiles.modelOverrides,
       heartbeatMeta: projectAgentProfiles.heartbeatMeta,
@@ -459,6 +513,7 @@ async function getProjectLaneProfileRow(projectId: number, role: AgentRole, lane
       mission: projectAgentLaneProfiles.mission,
       isEnabled: projectAgentLaneProfiles.isEnabled,
       fileBundle: projectAgentLaneProfiles.fileBundle,
+      knowledgeParts: projectAgentLaneProfiles.knowledgeParts,
       skillIds: projectAgentLaneProfiles.skillIds,
       modelOverrides: projectAgentLaneProfiles.modelOverrides,
       heartbeatMeta: projectAgentLaneProfiles.heartbeatMeta,
@@ -516,6 +571,7 @@ export async function seedProjectAgentProfiles(
         defaults.emoji,
         defaults.mission
       ),
+      knowledgeParts: [],
       skillIds: [],
       modelOverrides: {},
       heartbeatMeta: {},
@@ -576,6 +632,7 @@ export async function seedProjectAgentLaneProfiles(
       mission: defaults.mission,
       isEnabled: true,
       fileBundle: buildDefaultFileBundle(role, defaults.displayName, defaults.emoji, defaults.mission),
+      knowledgeParts: [],
       skillIds: [],
       modelOverrides: {},
       heartbeatMeta: {},
@@ -607,6 +664,7 @@ export async function listProjectAgentProfiles(
       mission: projectAgentProfiles.mission,
       isEnabled: projectAgentProfiles.isEnabled,
       fileBundle: projectAgentProfiles.fileBundle,
+      knowledgeParts: projectAgentProfiles.knowledgeParts,
       skillIds: projectAgentProfiles.skillIds,
       modelOverrides: projectAgentProfiles.modelOverrides,
       heartbeatMeta: projectAgentProfiles.heartbeatMeta,
@@ -639,6 +697,7 @@ export async function listProjectAgentLaneProfiles(
       mission: projectAgentLaneProfiles.mission,
       isEnabled: projectAgentLaneProfiles.isEnabled,
       fileBundle: projectAgentLaneProfiles.fileBundle,
+      knowledgeParts: projectAgentLaneProfiles.knowledgeParts,
       skillIds: projectAgentLaneProfiles.skillIds,
       modelOverrides: projectAgentLaneProfiles.modelOverrides,
       heartbeatMeta: projectAgentLaneProfiles.heartbeatMeta,
@@ -658,6 +717,56 @@ export async function listProjectAgentLaneProfiles(
   return rows
     .map(mapLaneProfileRow)
     .sort((a, b) => AGENT_WRITER_LANES.indexOf(a.laneKey) - AGENT_WRITER_LANES.indexOf(b.laneKey));
+}
+
+export async function synchronizeWriterLaneProfileNames(args: {
+  projectId: number;
+  userId?: string | null;
+  force?: boolean;
+}): Promise<{
+  renamed: number;
+  names: Record<AgentLaneKey, string>;
+}> {
+  await ensureDb();
+  await seedProjectAgentProfiles(args.projectId, args.userId ?? null);
+  await seedProjectAgentLaneProfiles(args.projectId, args.userId ?? null);
+
+  const writerProfile = await getProjectAgentProfile(args.projectId, 'writer');
+  const writerName = writerProfile?.displayName?.trim() || ROLE_DEFAULTS.writer.displayName;
+  const laneProfiles = await listProjectAgentLaneProfiles(args.projectId, 'writer');
+  let renamed = 0;
+
+  for (const laneProfile of laneProfiles) {
+    const existingName = laneProfile.displayName.trim();
+    const shouldRename =
+      args.force === true || isDefaultWriterLaneDisplayName(laneProfile.laneKey, existingName);
+    if (!shouldRename) continue;
+
+    const desiredName = deriveWriterLaneDisplayName(writerName, laneProfile.laneKey).trim();
+    if (!desiredName || desiredName === existingName) continue;
+
+    await upsertProjectAgentLaneProfile({
+      projectId: args.projectId,
+      role: 'writer',
+      laneKey: laneProfile.laneKey,
+      displayName: desiredName,
+      userId: args.userId ?? null,
+    });
+    renamed += 1;
+  }
+
+  const refreshed = await listProjectAgentLaneProfiles(args.projectId, 'writer');
+  const byLane = new Map<AgentLaneKey, string>(
+    refreshed.map((profile) => [profile.laneKey, profile.displayName.trim()] as const)
+  );
+  const names = Object.fromEntries(
+    AGENT_WRITER_LANES.map((laneKey) => [
+      laneKey,
+      byLane.get(laneKey) || deriveWriterLaneDisplayName(writerName, laneKey),
+    ])
+  ) as Record<AgentLaneKey, string>;
+
+  return { renamed, names };
 }
 
 export async function getProjectAgentProfile(
@@ -686,13 +795,21 @@ export async function upsertProjectAgentProfile(
 
   const existingRow = await getProjectProfileRow(input.projectId, input.role);
   const defaults = roleDisplay(input.role);
-  const displayName = (input.displayName || '').trim() || defaults.displayName;
-  const emoji = (input.emoji || '').trim() || defaults.emoji;
   const avatarUrlInput =
     typeof input.avatarUrl === 'string' ? input.avatarUrl.trim() : undefined;
   const shortDescriptionInput =
     typeof input.shortDescription === 'string' ? input.shortDescription.trim() : undefined;
-  const mission = (input.mission || '').trim() || defaults.mission;
+  const createIdentity = resolveProfileIdentityForCreate({
+    input: {
+      displayName: input.displayName,
+      emoji: input.emoji,
+      mission: input.mission,
+    },
+    defaults,
+  });
+  const displayName = createIdentity.displayName;
+  const emoji = createIdentity.emoji;
+  const mission = createIdentity.mission;
   const createAvatarUrl = avatarUrlInput !== undefined ? avatarUrlInput || null : null;
   const createShortDescription =
     shortDescriptionInput !== undefined
@@ -716,6 +833,7 @@ export async function upsertProjectAgentProfile(
         mission,
         input.fileBundle || {}
       ),
+      knowledgeParts: input.knowledgeParts || [],
       skillIds: input.skillIds || [],
       modelOverrides: input.modelOverrides || {},
       heartbeatMeta: input.heartbeatMeta || {},
@@ -733,6 +851,19 @@ export async function upsertProjectAgentProfile(
   }
 
   const existing = mapProfileRow(existingRow);
+  const mergedIdentity = resolveProfileIdentityForUpdate({
+    input: {
+      displayName: input.displayName,
+      emoji: input.emoji,
+      mission: input.mission,
+    },
+    existing: {
+      displayName: existing.displayName,
+      emoji: existing.emoji,
+      mission: existing.mission,
+    },
+    defaults,
+  });
   const avatarUrl =
     avatarUrlInput !== undefined
       ? avatarUrlInput || null
@@ -745,6 +876,8 @@ export async function upsertProjectAgentProfile(
     ...existing.fileBundle,
     ...(input.fileBundle || {}),
   };
+  const mergedKnowledgeParts =
+    input.knowledgeParts !== undefined ? normalizeKnowledgeParts(input.knowledgeParts) : existing.knowledgeParts;
   const mergedSkillIds =
     input.skillIds !== undefined ? Array.from(new Set(input.skillIds)) : existing.skillIds;
   const mergedModelOverrides = input.modelOverrides ?? existing.modelOverrides;
@@ -755,16 +888,17 @@ export async function upsertProjectAgentProfile(
   await db
     .update(projectAgentProfiles)
     .set({
-      displayName,
-      emoji,
+      displayName: mergedIdentity.displayName,
+      emoji: mergedIdentity.emoji,
       avatarUrl,
       shortDescription,
-      mission,
+      mission: mergedIdentity.mission,
       isEnabled:
         input.isEnabled !== undefined
           ? input.isEnabled
           : existing.isEnabled,
       fileBundle: mergedFileBundle,
+      knowledgeParts: mergedKnowledgeParts,
       skillIds: mergedSkillIds,
       modelOverrides: mergedModelOverrides,
       heartbeatMeta: mergedHeartbeatMeta,
@@ -787,13 +921,21 @@ export async function upsertProjectAgentLaneProfile(
 
   const existingRow = await getProjectLaneProfileRow(input.projectId, input.role, input.laneKey);
   const defaults = laneProfileDefaults(input.role, input.laneKey);
-  const displayName = (input.displayName || '').trim() || defaults.displayName;
-  const emoji = (input.emoji || '').trim() || defaults.emoji;
   const avatarUrlInput =
     typeof input.avatarUrl === 'string' ? input.avatarUrl.trim() : undefined;
   const shortDescriptionInput =
     typeof input.shortDescription === 'string' ? input.shortDescription.trim() : undefined;
-  const mission = (input.mission || '').trim() || defaults.mission;
+  const createIdentity = resolveProfileIdentityForCreate({
+    input: {
+      displayName: input.displayName,
+      emoji: input.emoji,
+      mission: input.mission,
+    },
+    defaults,
+  });
+  const displayName = createIdentity.displayName;
+  const emoji = createIdentity.emoji;
+  const mission = createIdentity.mission;
   const createAvatarUrl = avatarUrlInput !== undefined ? avatarUrlInput || null : null;
   const createShortDescription =
     shortDescriptionInput !== undefined
@@ -818,6 +960,7 @@ export async function upsertProjectAgentLaneProfile(
         mission,
         input.fileBundle || {}
       ),
+      knowledgeParts: input.knowledgeParts || [],
       skillIds: input.skillIds || [],
       modelOverrides: input.modelOverrides || {},
       heartbeatMeta: input.heartbeatMeta || {},
@@ -835,6 +978,19 @@ export async function upsertProjectAgentLaneProfile(
   }
 
   const existing = mapLaneProfileRow(existingRow);
+  const mergedIdentity = resolveProfileIdentityForUpdate({
+    input: {
+      displayName: input.displayName,
+      emoji: input.emoji,
+      mission: input.mission,
+    },
+    existing: {
+      displayName: existing.displayName,
+      emoji: existing.emoji,
+      mission: existing.mission,
+    },
+    defaults,
+  });
   const avatarUrl =
     avatarUrlInput !== undefined
       ? avatarUrlInput || null
@@ -847,6 +1003,8 @@ export async function upsertProjectAgentLaneProfile(
     ...existing.fileBundle,
     ...(input.fileBundle || {}),
   };
+  const mergedKnowledgeParts =
+    input.knowledgeParts !== undefined ? normalizeKnowledgeParts(input.knowledgeParts) : existing.knowledgeParts;
   const mergedSkillIds =
     input.skillIds !== undefined ? Array.from(new Set(input.skillIds)) : existing.skillIds;
   const mergedModelOverrides = input.modelOverrides ?? existing.modelOverrides;
@@ -857,16 +1015,17 @@ export async function upsertProjectAgentLaneProfile(
   await db
     .update(projectAgentLaneProfiles)
     .set({
-      displayName,
-      emoji,
+      displayName: mergedIdentity.displayName,
+      emoji: mergedIdentity.emoji,
       avatarUrl,
       shortDescription,
-      mission,
+      mission: mergedIdentity.mission,
       isEnabled:
         input.isEnabled !== undefined
           ? input.isEnabled
           : existing.isEnabled,
       fileBundle: mergedFileBundle,
+      knowledgeParts: mergedKnowledgeParts,
       skillIds: mergedSkillIds,
       modelOverrides: mergedModelOverrides,
       heartbeatMeta: mergedHeartbeatMeta,
@@ -936,38 +1095,11 @@ export async function setSharedUserProfile(
 }
 
 export async function resolveRoleSkillIds(
-  projectId: number,
-  role: AgentRole,
-  laneKey?: AgentLaneKey
+  _projectId: number,
+  _role: AgentRole,
+  _laneKey?: AgentLaneKey
 ): Promise<number[]> {
-  const laneProfile =
-    role === 'writer' && laneKey
-      ? await getProjectAgentLaneProfile(projectId, role, laneKey)
-      : null;
-  const profile = laneProfile ?? (await getProjectAgentProfile(projectId, role));
-  if (!profile || profile.skillIds.length === 0) return [];
-
-  const wanted = profile.skillIds.filter((id) => Number.isFinite(id) && id > 0);
-  if (wanted.length === 0) return [];
-
-  const rows = (await db
-    .select({
-      id: skills.id,
-    })
-    .from(skills)
-    .where(
-      and(
-        inArray(skills.id, wanted),
-        or(
-          eq(skills.projectId, projectId),
-          eq(skills.isGlobal, 1),
-          isNull(skills.projectId)
-        )
-      )
-    )) as Array<{ id: number }>;
-
-  const allowed = new Set(rows.map((row) => row.id));
-  return wanted.filter((id) => allowed.has(id));
+  return [];
 }
 
 export async function buildRolePromptContext(
@@ -1008,6 +1140,7 @@ export async function buildRolePromptContext(
       mission: defaults.mission,
       isEnabled: true,
       fileBundle: buildDefaultFileBundle(role, defaults.displayName, defaults.emoji, defaults.mission),
+      knowledgeParts: [],
       skillIds: [],
       modelOverrides: {},
       heartbeatMeta: {},
@@ -1024,11 +1157,24 @@ export async function buildRolePromptContext(
     const content = String(profile.fileBundle[key] || '').trim();
     if (content) sections.push(content);
   }
+  if (profile.knowledgeParts.length > 0) {
+    const knowledgeSections = profile.knowledgeParts
+      .slice()
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((part) => {
+        const label = part.label || part.partType.replace(/_/g, ' ');
+        return `## ${label}\n${part.content.trim()}`;
+      })
+      .join('\n\n');
+    if (knowledgeSections.trim()) {
+      sections.push(`# KNOWLEDGE\n${knowledgeSections}`);
+    }
+  }
   if (sharedUserProfile.trim()) {
     sections.push(`# USER\n${sharedUserProfile.trim()}`);
   }
   const promptContext = trimTo(sections.join('\n\n---\n\n'), PROMPT_CONTEXT_MAX_CHARS);
-  const roleSkillIds = await resolveRoleSkillIds(projectId, role, laneKey);
+  const roleSkillIds: number[] = [];
 
   return {
     role,

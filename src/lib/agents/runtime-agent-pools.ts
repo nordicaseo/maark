@@ -1,6 +1,10 @@
 import { api } from '../../../convex/_generated/api';
 import type { Id } from '../../../convex/_generated/dataModel';
 import { getConvexClient } from '@/lib/convex/server';
+import {
+  listProjectAgentProfiles,
+  synchronizeWriterLaneProfileNames,
+} from '@/lib/agents/project-agent-profiles';
 import { FIXED_AGENT_ROLES, type AgentRole } from '@/types/agent-profile';
 import type {
   AgentLaneKey,
@@ -34,6 +38,7 @@ type ConvexAgent = {
 type ConvexTask = {
   _id: Id<'tasks'>;
   status: string;
+  assignedAgentId?: Id<'agents'>;
   workflowCurrentStageKey?: string;
   workflowStageStatus?: string;
   workflowLaneKey?: string;
@@ -253,9 +258,31 @@ function writerLaneAutoSlotKey(projectId: number, laneKey: AgentLaneKey, ordinal
   return `p${projectId}:writer:${laneKey}:auto:${ordinal}`;
 }
 
-function buildAgentName(role: AgentRole, ordinal: number): string {
-  const base = ROLE_SEED_DEFAULTS[role].name;
-  return ordinal <= 1 ? base : `${base} ${ordinal}`;
+function parseWriterSlotKey(slotKey: string): { projectId: number; laneKey: AgentLaneKey; ordinal: number } | null {
+  const match = /^p(\d+):writer:(blog|collection|product|landing):(\d+)$/.exec(String(slotKey || '').trim());
+  if (!match) return null;
+  return {
+    projectId: Number.parseInt(match[1], 10),
+    laneKey: match[2] as AgentLaneKey,
+    ordinal: Number.parseInt(match[3], 10),
+  };
+}
+
+function isRoutableAssignment(assignmentHealth: unknown): boolean {
+  if (!assignmentHealth || typeof assignmentHealth !== 'object') return true;
+  return (assignmentHealth as Record<string, unknown>).routable !== false;
+}
+
+function isCanonicalPrimaryWriterSlot(projectId: number, laneKey: AgentLaneKey, slotKey: string): boolean {
+  return slotKey === writerLaneSlotKey(projectId, laneKey, 1);
+}
+
+function runtimeStatusRank(status: string | null | undefined): number {
+  const normalized = normalizeStatus(status);
+  if (normalized === 'WORKING') return 4;
+  if (normalized === 'ONLINE') return 3;
+  if (normalized === 'IDLE') return 2;
+  return 1;
 }
 
 export async function syncProjectDedicatedAgentPool(args: {
@@ -263,9 +290,13 @@ export async function syncProjectDedicatedAgentPool(args: {
   template: AgentStaffingTemplate;
   roleCounts?: AgentRoleCounts;
   laneCapacity?: Partial<ProjectLaneCapacitySettings>;
+  userId?: string | null;
 }): Promise<{
   created: number;
   updated: number;
+  tasksRequeued: number;
+  writersDeleted: number;
+  writersRenamed: number;
   totalDedicated: number;
   targetByRole: Record<AgentRole, number>;
   targetWriterByLane: Record<AgentLaneKey, number>;
@@ -276,12 +307,26 @@ export async function syncProjectDedicatedAgentPool(args: {
   }
 
   const targetByRole = buildRoleCounts(args.template, args.roleCounts);
-  const laneCapacity = parseLaneCapacity(args.laneCapacity);
   const targetWriterByLane = Object.fromEntries(
-    AGENT_WRITER_LANES.map((laneKey) => [laneKey, laneCapacity.minWritersPerLane])
+    AGENT_WRITER_LANES.map((laneKey) => [laneKey, 1])
   ) as Record<AgentLaneKey, number>;
-  const allAgents = (await convex.query(api.agents.list, { limit: 2000 })) as ConvexAgent[];
-  const projectAgents = allAgents.filter((agent) => Number(agent.projectId) === args.projectId);
+  const [roleProfiles, laneNames] = await Promise.all([
+    listProjectAgentProfiles(args.projectId),
+    synchronizeWriterLaneProfileNames({
+      projectId: args.projectId,
+      userId: args.userId ?? null,
+    }),
+  ]);
+  const roleDisplayNameByRole = new Map(
+    roleProfiles
+      .map((profile) => [profile.role, profile.displayName.trim()] as const)
+      .filter((entry) => entry[1].length > 0)
+  );
+
+  const projectAgents = (await convex.query(api.agents.list, {
+    projectId: args.projectId,
+    limit: 2000,
+  })) as ConvexAgent[];
   const bySlot = new Map<string, ConvexAgent>();
   for (const agent of projectAgents) {
     if (agent.slotKey) bySlot.set(agent.slotKey, agent);
@@ -289,17 +334,22 @@ export async function syncProjectDedicatedAgentPool(args: {
 
   let created = 0;
   let updated = 0;
+  let tasksRequeued = 0;
+  let writersDeleted = 0;
+  let runtimeWriterRenamed = 0;
 
   for (const role of FIXED_AGENT_ROLES) {
     if (role === 'writer') continue;
+    const profileName = roleDisplayNameByRole.get(role) || ROLE_SEED_DEFAULTS[role].name;
     const count = targetByRole[role];
     for (let idx = 1; idx <= count; idx += 1) {
       const slotKey = roleSlotKey(args.projectId, role, idx);
+      const desiredName = idx <= 1 ? profileName : `${profileName} ${idx}`;
       const existing = bySlot.get(slotKey);
       if (!existing) {
         const seed = ROLE_SEED_DEFAULTS[role];
         await convex.mutation(api.agents.register, {
-          name: buildAgentName(role, idx),
+          name: desiredName,
           role,
           specialization: seed.specialization,
           skills: seed.skills,
@@ -313,6 +363,15 @@ export async function syncProjectDedicatedAgentPool(args: {
           },
         });
         created += 1;
+        bySlot.set(slotKey, {
+          _id: `created:${slotKey}` as Id<'agents'>,
+          name: desiredName,
+          role,
+          status: 'ONLINE',
+          projectId: args.projectId,
+          isDedicated: true,
+          slotKey,
+        });
         continue;
       }
 
@@ -325,6 +384,7 @@ export async function syncProjectDedicatedAgentPool(args: {
       const hasHealthDiff =
         existingHealth.routable !== true || existingHealth.strictIsolation !== true;
       const needsUpdate =
+        existing.name !== desiredName ||
         existing.projectId !== args.projectId ||
         existing.isDedicated !== true ||
         existing.laneKey !== undefined ||
@@ -333,6 +393,7 @@ export async function syncProjectDedicatedAgentPool(args: {
       if (needsUpdate || hasHealthDiff) {
         await convex.mutation(api.agents.updateRuntime, {
           id: existing._id,
+          name: desiredName,
           projectId: args.projectId,
           isDedicated: true,
           capacityWeight: 1,
@@ -348,12 +409,13 @@ export async function syncProjectDedicatedAgentPool(args: {
 
   for (const laneKey of AGENT_WRITER_LANES) {
     const targetCount = targetWriterByLane[laneKey];
+    const desiredLaneName = laneNames.names[laneKey] || WRITER_LANE_NAMES[laneKey];
     for (let idx = 1; idx <= targetCount; idx += 1) {
       const slotKey = writerLaneSlotKey(args.projectId, laneKey, idx);
       const existing = bySlot.get(slotKey);
       if (!existing) {
         await convex.mutation(api.agents.register, {
-          name: idx <= 1 ? WRITER_LANE_NAMES[laneKey] : `${WRITER_LANE_NAMES[laneKey]} ${idx}`,
+          name: idx <= 1 ? desiredLaneName : `${desiredLaneName} ${idx}`,
           role: 'writer',
           specialization: `Lane writer (${laneKey})`,
           skills: ROLE_SEED_DEFAULTS.writer.skills,
@@ -370,6 +432,17 @@ export async function syncProjectDedicatedAgentPool(args: {
           },
         });
         created += 1;
+        runtimeWriterRenamed += 1;
+        bySlot.set(slotKey, {
+          _id: `created:${slotKey}` as Id<'agents'>,
+          name: desiredLaneName,
+          role: 'writer',
+          status: 'ONLINE',
+          projectId: args.projectId,
+          isDedicated: true,
+          slotKey,
+          laneKey,
+        });
         continue;
       }
 
@@ -381,6 +454,7 @@ export async function syncProjectDedicatedAgentPool(args: {
         temporary: existingHealth.temporary === true,
       };
       const needsUpdate =
+        existing.name !== desiredLaneName ||
         existing.projectId !== args.projectId ||
         existing.isDedicated !== true ||
         existing.laneKey !== laneKey ||
@@ -392,6 +466,7 @@ export async function syncProjectDedicatedAgentPool(args: {
       if (needsUpdate || hasHealthDiff) {
         await convex.mutation(api.agents.updateRuntime, {
           id: existing._id,
+          name: desiredLaneName,
           projectId: args.projectId,
           isDedicated: true,
           capacityWeight: 1,
@@ -401,32 +476,103 @@ export async function syncProjectDedicatedAgentPool(args: {
           assignmentHealth,
         });
         updated += 1;
+        if (existing.name !== desiredLaneName) runtimeWriterRenamed += 1;
       }
     }
   }
 
-  const staleGenericWriters = projectAgents.filter(
-    (agent) =>
-      agent.role.toLowerCase() === 'writer' &&
-      !agent.laneKey &&
-      ((agent.assignmentHealth || {}) as Record<string, unknown>).routable !== false
+  const refreshedProjectAgents = (await convex.query(api.agents.list, {
+    projectId: args.projectId,
+    limit: 2000,
+  })) as ConvexAgent[];
+  const projectWriters = refreshedProjectAgents.filter(
+    (agent) => agent.role.toLowerCase() === 'writer'
   );
-  for (const writer of staleGenericWriters) {
-    await convex.mutation(api.agents.updateRuntime, {
-      id: writer._id,
-      assignmentHealth: {
-        ...((writer.assignmentHealth || {}) as Record<string, unknown>),
-        routable: false,
-        writerLaneRequired: true,
-      },
-    });
-    updated += 1;
+  const keepWriterIds = new Set<string>();
+  for (const laneKey of AGENT_WRITER_LANES) {
+    const canonicalSlot = writerLaneSlotKey(args.projectId, laneKey, 1);
+    const candidates = projectWriters
+      .filter((writer) => String(writer.slotKey || '').trim() === canonicalSlot)
+      .filter((writer) => isAgentLaneKey(writer.laneKey) && writer.laneKey === laneKey)
+      .filter((writer) => writer.isDedicated !== false)
+      .filter((writer) => isRoutableAssignment(writer.assignmentHealth))
+      .sort((a, b) => {
+        const statusDiff = runtimeStatusRank(b.status) - runtimeStatusRank(a.status);
+        if (statusDiff !== 0) return statusDiff;
+        return Number(b.updatedAt || 0) - Number(a.updatedAt || 0);
+      });
+    const keeper = candidates[0];
+    if (keeper) {
+      keepWriterIds.add(String(keeper._id));
+    }
   }
+
+  const writersToDelete = projectWriters.filter((writer) => {
+    const id = String(writer._id);
+    if (keepWriterIds.has(id)) return false;
+    const slotKey = String(writer.slotKey || '').trim();
+    const laneKey = isAgentLaneKey(writer.laneKey) ? writer.laneKey : null;
+    if (!laneKey) return true;
+    if (slotKey.includes(':auto:')) return true;
+    const parsed = parseWriterSlotKey(slotKey);
+    if (!parsed) return true;
+    if (parsed.projectId !== args.projectId) return true;
+    if (parsed.laneKey !== laneKey) return true;
+    if (parsed.ordinal !== 1) return true;
+    if (!isCanonicalPrimaryWriterSlot(args.projectId, laneKey, slotKey)) return true;
+    return true;
+  });
+
+  if (writersToDelete.length > 0) {
+    const now = Date.now();
+    const writerIdSet = new Set(writersToDelete.map((writer) => String(writer._id)));
+    const writerTaskIdSet = new Set(
+      writersToDelete
+        .map((writer) => (writer.currentTaskId ? String(writer.currentTaskId) : ''))
+        .filter(Boolean)
+    );
+    const tasks = (await convex.query(api.tasks.list, {
+      projectId: args.projectId,
+      limit: 2000,
+    })) as ConvexTask[];
+
+    for (const task of tasks) {
+      const assignedWriterId = task.assignedAgentId ? String(task.assignedAgentId) : null;
+      const shouldRequeue =
+        (assignedWriterId !== null && writerIdSet.has(assignedWriterId)) ||
+        writerTaskIdSet.has(String(task._id));
+      if (!shouldRequeue) continue;
+      await convex.mutation(api.tasks.update, {
+        id: task._id,
+        expectedProjectId: args.projectId,
+        assignedAgentId: undefined,
+        status: 'PENDING',
+        workflowStageStatus: 'queued',
+        workflowRunNotBeforeAt: now,
+        workflowLastEventAt: now,
+        workflowLastEventText: 'Writer reassigned after strict runtime reconciliation.',
+      });
+      tasksRequeued += 1;
+    }
+
+    for (const writer of writersToDelete) {
+      await convex.mutation(api.agents.remove, { id: writer._id });
+      writersDeleted += 1;
+    }
+  }
+
+  const finalAgents = (await convex.query(api.agents.list, {
+    projectId: args.projectId,
+    limit: 2000,
+  })) as ConvexAgent[];
 
   return {
     created,
     updated,
-    totalDedicated: projectAgents.filter((agent) => agent.isDedicated !== false).length + created,
+    tasksRequeued,
+    writersDeleted,
+    writersRenamed: laneNames.renamed + runtimeWriterRenamed,
+    totalDedicated: finalAgents.filter((agent) => agent.isDedicated !== false).length,
     targetByRole,
     targetWriterByLane,
   };
@@ -466,7 +612,25 @@ export async function getProjectAgentPoolHealth(projectId: number): Promise<Proj
     throw new Error('Mission Control is not configured (Convex URL missing)');
   }
 
-  const allAgents = (await convex.query(api.agents.list, { projectId, limit: 800 })) as ConvexAgent[];
+  const allAgentsRaw = (await convex.query(api.agents.list, {
+    projectId,
+    limit: 800,
+  })) as ConvexAgent[];
+  const allAgents = allAgentsRaw.filter((agent) => {
+    if (agent.isDedicated === false) return false;
+    if (!isRoutableAssignment(agent.assignmentHealth)) return false;
+    if (agent.role.toLowerCase() !== 'writer') return true;
+
+    const laneKey = isAgentLaneKey(agent.laneKey) ? agent.laneKey : null;
+    if (!laneKey) return false;
+    const slotKey = String(agent.slotKey || '').trim();
+    if (!slotKey || slotKey.includes(':auto:')) return false;
+    const parsed = parseWriterSlotKey(slotKey);
+    if (!parsed) return false;
+    if (parsed.projectId !== projectId) return false;
+    if (parsed.laneKey !== laneKey) return false;
+    return parsed.ordinal === 1;
+  });
   const tasks = (await convex.query(api.tasks.list, { projectId, limit: 1200 })) as ConvexTask[];
   const taskMap = new Map<string, ConvexTask>(tasks.map((task) => [String(task._id), task]));
   const writers = allAgents.filter((agent) => agent.role.toLowerCase() === 'writer');

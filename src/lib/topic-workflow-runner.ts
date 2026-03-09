@@ -1,12 +1,12 @@
 import { randomBytes } from 'crypto';
 import { marked } from 'marked';
-import { and, asc, eq, isNull, or } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { AppUser } from '@/lib/auth';
 import { db, ensureDb } from '@/db';
 import { dbNow } from '@/db/utils';
-import { documents, skills, skillParts } from '@/db/schema';
+import { documents } from '@/db/schema';
 import {
   getWorkflowTaskForUser,
   type TopicStageKey,
@@ -22,7 +22,6 @@ import {
 import {
   appendMemoryEntry,
   buildRolePromptContext,
-  resolveRoleSkillIds,
   resolveProjectRoleModelOverride,
   setWorkingState,
 } from '@/lib/agents/project-agent-profiles';
@@ -76,23 +75,13 @@ interface StageRunResult {
   };
 }
 
-interface SkillContext {
-  names: string[];
-  promptText: string;
-  applied: Array<{
-    id: number;
-    name: string;
-    origin: 'role_profile' | 'task' | 'project' | 'global';
-  }>;
-}
-
 interface StageProfileContext {
   role: AgentRole;
   laneKey?: AgentLaneKey;
   promptText: string;
+  stageGuidance?: string;
   profileUpdatedAt?: string;
   profileName?: string;
-  roleSkillIds: number[];
   projectRoleModelOverride?: ModelOverride;
 }
 
@@ -436,18 +425,13 @@ async function countFinalReviewAutoRevisionAttempts(
 
 function composeStageUserPrompt(
   basePrompt: string,
-  rolePromptText: string,
-  skillPromptText: string
+  rolePromptText: string
 ): string {
   const sections = [basePrompt.trim()];
   const role = rolePromptText.trim();
-  const skills = skillPromptText.trim();
 
   if (role) {
     sections.push(`Role profile context:\n${role}`);
-  }
-  if (skills) {
-    sections.push(`Project skills and rules:\n${skills}`);
   }
 
   return sections.join('\n\n');
@@ -479,156 +463,6 @@ function resolveTaskLaneKey(task: Doc<'tasks'>): AgentLaneKey {
   const laneKey = laneFromTag ? laneFromTag.split(':')[1] : '';
   if (isAgentLaneKey(laneKey)) return laneKey;
   return 'blog';
-}
-
-
-async function buildSkillContext(
-  task: Doc<'tasks'>,
-  roleSkillIds: number[] = []
-): Promise<SkillContext> {
-  const selectedSkills = new Map<
-    number,
-    {
-      id: number;
-      name: string;
-      content: string;
-      origin: 'role_profile' | 'task' | 'project' | 'global';
-    }
-  >();
-
-  if (roleSkillIds.length > 0) {
-    const roleSkills = (await db
-      .select({
-        id: skills.id,
-        name: skills.name,
-        content: skills.content,
-      })
-      .from(skills)
-      .where(or(...roleSkillIds.map((id) => eq(skills.id, id))))) as Array<{
-      id: number;
-      name: string;
-      content: string;
-    }>;
-
-    const roleSkillById = new Map<number, { id: number; name: string; content: string }>(
-      roleSkills.map((skill) => [skill.id, skill])
-    );
-    for (const skillId of roleSkillIds) {
-      const roleSkill = roleSkillById.get(skillId);
-      if (!roleSkill) continue;
-      selectedSkills.set(roleSkill.id, {
-        ...roleSkill,
-        origin: 'role_profile',
-      });
-    }
-  }
-
-  if (task.skillId) {
-    const [explicitSkill] = await db
-      .select({
-        id: skills.id,
-        name: skills.name,
-        content: skills.content,
-      })
-      .from(skills)
-      .where(eq(skills.id, task.skillId))
-      .limit(1);
-
-    if (explicitSkill) {
-      selectedSkills.set(explicitSkill.id, {
-        ...explicitSkill,
-        origin: 'task',
-      });
-    }
-  }
-
-  if (task.projectId) {
-    const projectSkills = await db
-      .select({
-        id: skills.id,
-        name: skills.name,
-        content: skills.content,
-      })
-      .from(skills)
-      .where(eq(skills.projectId, task.projectId))
-      .orderBy(asc(skills.id))
-      .limit(10);
-
-    for (const projectSkill of projectSkills) {
-      if (selectedSkills.has(projectSkill.id)) continue;
-      selectedSkills.set(projectSkill.id, {
-        ...projectSkill,
-        origin: 'project',
-      });
-    }
-  }
-
-  const globalSkills = await db
-    .select({
-      id: skills.id,
-      name: skills.name,
-      content: skills.content,
-    })
-    .from(skills)
-    .where(
-      and(
-        eq(skills.isGlobal, 1),
-        or(isNull(skills.projectId), eq(skills.projectId, task.projectId ?? -1))
-      )
-    )
-    .orderBy(asc(skills.id))
-    .limit(10);
-
-  for (const globalSkill of globalSkills) {
-    if (selectedSkills.has(globalSkill.id)) continue;
-    selectedSkills.set(globalSkill.id, {
-      ...globalSkill,
-      origin: 'global',
-    });
-  }
-
-  const orderedSkills = Array.from(selectedSkills.values());
-  if (orderedSkills.length === 0) {
-    return { names: [], promptText: '', applied: [] };
-  }
-
-  const sections: string[] = [];
-  const names: string[] = [];
-  const applied: SkillContext['applied'] = [];
-
-  for (const skill of orderedSkills) {
-    names.push(skill.name);
-    applied.push({
-      id: skill.id,
-      name: skill.name,
-      origin: skill.origin,
-    });
-
-    const parts: Array<{ content: string | null; sortOrder: number | null }> = await db
-      .select({
-        content: skillParts.content,
-        sortOrder: skillParts.sortOrder,
-      })
-      .from(skillParts)
-      .where(eq(skillParts.skillId, skill.id));
-
-    const orderedParts = parts
-      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-      .map((part) => String(part.content ?? '').trim())
-      .filter(Boolean);
-
-    const mergedContent =
-      orderedParts.length > 0
-        ? orderedParts.join('\n\n')
-        : String(skill.content || '').trim();
-
-    if (!mergedContent) continue;
-
-    sections.push(`Skill (${skill.origin}): ${skill.name}\n${mergedContent}`);
-  }
-
-  const promptText = trimTo(sections.join('\n\n---\n\n'), 7000);
-  return { names, promptText, applied };
 }
 
 async function getDocumentById(documentId: number) {
@@ -742,6 +576,71 @@ function stageActionKey(stage: TopicStageKey): AIAction {
   }
 }
 
+function readWorkflowPlanProfile(task: Doc<'tasks'>): {
+  stageSequence: TopicStageKey[];
+  stageEnabled: Partial<Record<TopicStageKey, boolean>>;
+  stageActions: Partial<Record<TopicStageKey, AIAction>>;
+  stageGuidance: Partial<Record<TopicStageKey, string>>;
+} {
+  const plan =
+    task.workflowStagePlan && typeof task.workflowStagePlan === 'object'
+      ? (task.workflowStagePlan as Record<string, unknown>)
+      : null;
+  const profile =
+    plan?.workflowProfile && typeof plan.workflowProfile === 'object'
+      ? (plan.workflowProfile as Record<string, unknown>)
+      : null;
+
+  const stageSequence = Array.isArray(profile?.stageSequence)
+    ? profile.stageSequence
+        .map((item) => String(item || '').trim())
+        .filter((item): item is TopicStageKey => Boolean(item) && item !== 'outline_review' && item !== 'prewrite_context')
+    : [];
+  const enabledRaw =
+    profile?.stageEnabled && typeof profile.stageEnabled === 'object'
+      ? (profile.stageEnabled as Record<string, unknown>)
+      : {};
+  const actionsRaw =
+    profile?.stageActions && typeof profile.stageActions === 'object'
+      ? (profile.stageActions as Record<string, unknown>)
+      : {};
+  const guidanceRaw =
+    profile?.stageGuidance && typeof profile.stageGuidance === 'object'
+      ? (profile.stageGuidance as Record<string, unknown>)
+      : {};
+
+  const stageEnabled: Partial<Record<TopicStageKey, boolean>> = {};
+  const stageActions: Partial<Record<TopicStageKey, AIAction>> = {};
+  const stageGuidance: Partial<Record<TopicStageKey, string>> = {};
+
+  for (const [stage, value] of Object.entries(enabledRaw)) {
+    stageEnabled[stage as TopicStageKey] =
+      value === true || String(value).toLowerCase() === 'true';
+  }
+  for (const [stage, value] of Object.entries(actionsRaw)) {
+    if (typeof value !== 'string' || !value.trim()) continue;
+    stageActions[stage as TopicStageKey] = value.trim() as AIAction;
+  }
+  for (const [stage, value] of Object.entries(guidanceRaw)) {
+    if (typeof value !== 'string' || !value.trim()) continue;
+    stageGuidance[stage as TopicStageKey] = value.trim();
+  }
+
+  return {
+    stageSequence,
+    stageEnabled,
+    stageActions,
+    stageGuidance,
+  };
+}
+
+function resolveStageAction(task: Doc<'tasks'>, stage: TopicStageKey): AIAction {
+  const profile = readWorkflowPlanProfile(task);
+  const action = profile.stageActions[stage];
+  if (action) return action;
+  return stageActionKey(stage);
+}
+
 function isPlannedStageEnabled(task: Doc<'tasks'>, stage: TopicStageKey): boolean {
   if (!ROUTED_STAGE_ORDER.includes(stage as (typeof ROUTED_STAGE_ORDER)[number])) {
     return true;
@@ -758,8 +657,16 @@ function isPlannedStageEnabled(task: Doc<'tasks'>, stage: TopicStageKey): boolea
     owners?.[stage] && typeof owners[stage] === 'object'
       ? (owners[stage] as Record<string, unknown>)
       : null;
-  if (!owner || owner.enabled === undefined) return true;
-  return owner.enabled === true || String(owner.enabled).toLowerCase() === 'true';
+  const ownerEnabled =
+    !owner || owner.enabled === undefined
+      ? true
+      : owner.enabled === true || String(owner.enabled).toLowerCase() === 'true';
+  if (!ownerEnabled) return false;
+
+  const profile = readWorkflowPlanProfile(task);
+  const enabledFromProfile = profile.stageEnabled[stage];
+  if (enabledFromProfile === undefined) return ownerEnabled;
+  return enabledFromProfile;
 }
 
 function nextCanonicalStage(stage: TopicStageKey): TopicStageKey | null {
@@ -780,15 +687,48 @@ function resolveAutoAdvance(
   skipOptionalOutlineReview?: boolean;
   skippedStages?: TopicStageKey[];
 } | null {
+  const profile = readWorkflowPlanProfile(task);
+  if (profile.stageSequence.length > 0) {
+    const idx = profile.stageSequence.indexOf(stage);
+    if (idx >= 0) {
+      const skippedStages: TopicStageKey[] = [];
+      for (let pointer = idx + 1; pointer < profile.stageSequence.length; pointer += 1) {
+        const candidate = profile.stageSequence[pointer];
+        if (isPlannedStageEnabled(task, candidate)) {
+          return {
+            toStage: candidate,
+            skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
+          };
+        }
+        skippedStages.push(candidate);
+      }
+      return {
+        toStage: 'complete',
+        skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
+      };
+    }
+  }
+
   let next = nextCanonicalStage(stage);
-  if (!next) return null;
+  if (!next) {
+    return stage !== 'complete'
+      ? {
+          toStage: 'complete',
+        }
+      : null;
+  }
   const skippedStages: TopicStageKey[] = [];
 
   while (next && !isPlannedStageEnabled(task, next)) {
     skippedStages.push(next);
     next = nextCanonicalStage(next);
   }
-  if (!next) return null;
+  if (!next) {
+    return {
+      toStage: 'complete',
+      skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
+    };
+  }
 
   return {
     toStage: next,
@@ -797,11 +737,12 @@ function resolveAutoAdvance(
 }
 
 async function resolveProviderForStage(
+  task: Doc<'tasks'>,
   stage: TopicStageKey,
   stageProfileContext: StageProfileContext,
   agentOverride?: ModelOverride
 ) {
-  const stageAction = stageActionKey(stage);
+  const stageAction = resolveStageAction(task, stage);
   const legacyAction = legacyActionKeyForStage(stage);
 
   try {
@@ -855,6 +796,15 @@ function normalizeAgentStatus(status: string | null | undefined): 'ONLINE' | 'ID
   return 'OFFLINE';
 }
 
+function agentOutsideTaskProject(
+  task: Pick<Doc<'tasks'>, 'projectId'>,
+  agent: Pick<Doc<'agents'>, 'projectId'> | null | undefined
+): boolean {
+  if (!agent) return false;
+  if (!task.projectId) return false;
+  return Number(agent.projectId ?? 0) !== Number(task.projectId);
+}
+
 async function getWriterAvailabilityDiagnostics(
   convex: NonNullable<ReturnType<typeof getConvexClient>>,
   projectId?: number | null,
@@ -887,11 +837,11 @@ async function getWriterAvailabilityDiagnostics(
 async function runResearchStage(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
-  skillContext: SkillContext,
   stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
   const modelOverride = await resolveAgentStageModelOverride(task, 'research');
   const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForStage(
+    task,
     'research',
     stageProfileContext,
     modelOverride
@@ -930,8 +880,7 @@ Produce a concise research brief for content production.`;
 
   const fullUserPrompt = composeStageUserPrompt(
     user,
-    stageProfileContext.promptText,
-    skillContext.promptText
+    stageProfileContext.promptText
   );
 
   const raw = await collectStreamText(
@@ -1198,11 +1147,11 @@ async function runSeoIntelStage(
 async function runOutlineStage(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
-  skillContext: SkillContext,
   stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
   const modelOverride = await resolveAgentStageModelOverride(task, 'outline_build');
   const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForStage(
+    task,
     'outline_build',
     stageProfileContext,
     modelOverride
@@ -1269,8 +1218,7 @@ Template policy:
 
   const fullUserPrompt = composeStageUserPrompt(
     user,
-    stageProfileContext.promptText,
-    skillContext.promptText
+    stageProfileContext.promptText
   );
 
   const outlineRaw = await collectStreamText(
@@ -1345,11 +1293,11 @@ Template policy:
 async function runPrewriteStage(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
-  skillContext: SkillContext,
   stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
   const modelOverride = await resolveAgentStageModelOverride(task, 'prewrite_context');
   const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForStage(
+    task,
     'prewrite_context',
     stageProfileContext,
     modelOverride
@@ -1384,8 +1332,7 @@ Produce prewrite readiness and open questions.`;
 
   const fullUserPrompt = composeStageUserPrompt(
     user,
-    stageProfileContext.promptText,
-    skillContext.promptText
+    stageProfileContext.promptText
   );
 
   const raw = await collectStreamText(
@@ -1467,11 +1414,11 @@ Produce prewrite readiness and open questions.`;
 async function runWritingStage(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
-  skillContext: SkillContext,
   stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
   const modelOverride = await resolveAgentStageModelOverride(task, 'writing');
   const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForStage(
+    task,
     'writing',
     stageProfileContext,
     modelOverride
@@ -1570,8 +1517,7 @@ Write the final article now.`;
 
   const fullUserPrompt = composeStageUserPrompt(
     user,
-    stageProfileContext.promptText,
-    skillContext.promptText
+    stageProfileContext.promptText
   );
 
   const raw = await collectStreamText(
@@ -1862,11 +1808,11 @@ Write the final article now.`;
 async function runEditingStage(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
-  skillContext: SkillContext,
   stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
   const modelOverride = await resolveAgentStageModelOverride(task, 'editing');
   const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForStage(
+    task,
     'editing',
     stageProfileContext,
     modelOverride
@@ -1908,8 +1854,7 @@ Revise this draft now and return the complete edited HTML.`;
 
   const fullUserPrompt = composeStageUserPrompt(
     user,
-    stageProfileContext.promptText,
-    skillContext.promptText
+    stageProfileContext.promptText
   );
 
   const raw = await collectStreamText(
@@ -1994,11 +1939,11 @@ Revise this draft now and return the complete edited HTML.`;
 async function runFinalReviewStage(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
-  skillContext: SkillContext,
   stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
   const modelOverride = await resolveAgentStageModelOverride(task, 'final_review');
   const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForStage(
+    task,
     'final_review',
     stageProfileContext,
     modelOverride
@@ -2065,8 +2010,7 @@ Return your final review decision now.`;
 
   const fullUserPrompt = composeStageUserPrompt(
     user,
-    stageProfileContext.promptText,
-    skillContext.promptText
+    stageProfileContext.promptText
   );
 
   const raw = await collectStreamText(
@@ -2155,11 +2099,10 @@ async function runStage(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
   stage: TopicStageKey,
-  skillContext: SkillContext,
   stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
   if (stage === 'research') {
-    return runResearchStage(task, document, skillContext, stageProfileContext);
+    return runResearchStage(task, document, stageProfileContext);
   }
 
   if (stage === 'seo_intel_review') {
@@ -2167,23 +2110,23 @@ async function runStage(
   }
 
   if (stage === 'outline_build') {
-    return runOutlineStage(task, document, skillContext, stageProfileContext);
+    return runOutlineStage(task, document, stageProfileContext);
   }
 
   if (stage === 'prewrite_context') {
-    return runPrewriteStage(task, document, skillContext, stageProfileContext);
+    return runPrewriteStage(task, document, stageProfileContext);
   }
 
   if (stage === 'writing') {
-    return runWritingStage(task, document, skillContext, stageProfileContext);
+    return runWritingStage(task, document, stageProfileContext);
   }
 
   if (stage === 'editing') {
-    return runEditingStage(task, document, skillContext, stageProfileContext);
+    return runEditingStage(task, document, stageProfileContext);
   }
 
   if (stage === 'final_review') {
-    return runFinalReviewStage(task, document, skillContext, stageProfileContext);
+    return runFinalReviewStage(task, document, stageProfileContext);
   }
 
   throw new Error(`Stage ${stage} is not runnable.`);
@@ -2200,7 +2143,6 @@ async function resolveStageProfileContext(
       role,
       laneKey,
       promptText: '',
-      roleSkillIds: [],
       profileName: role,
     };
   }
@@ -2211,15 +2153,14 @@ async function resolveStageProfileContext(
       role,
       role === 'writer' ? laneKey : undefined
     );
-    const laneSkillIds = await resolveRoleSkillIds(task.projectId, 'writer', laneKey);
-    const roleSkillIds =
-      role === 'writer'
-        ? context.roleSkillIds
-        : Array.from(new Set([...laneSkillIds, ...context.roleSkillIds]));
+    const workflowProfile = readWorkflowPlanProfile(task);
+    const stageGuidance = workflowProfile.stageGuidance[stage];
     const laneContextBlock = `Lane context: ${laneKey} (apply lane specialization for this task).`;
-    const promptText = context.promptContext
-      ? `${context.promptContext}\n\n${laneContextBlock}`
-      : laneContextBlock;
+    const promptParts = [context.promptContext, laneContextBlock];
+    if (stageGuidance && stageGuidance.trim().length > 0) {
+      promptParts.push(`Workflow stage guidance:\n${stageGuidance.trim()}`);
+    }
+    const promptText = promptParts.filter(Boolean).join('\n\n');
     const stageAction = stageActionKey(stage);
     const legacyAction = legacyActionKeyForStage(stage);
     const actionKeys = Array.from(
@@ -2241,7 +2182,7 @@ async function resolveStageProfileContext(
       role,
       laneKey,
       promptText,
-      roleSkillIds,
+      stageGuidance,
       profileName: context.profile.displayName,
       profileUpdatedAt: context.profile.updatedAt,
       projectRoleModelOverride,
@@ -2252,7 +2193,7 @@ async function resolveStageProfileContext(
       role,
       laneKey,
       promptText: '',
-      roleSkillIds: [],
+      stageGuidance: undefined,
       profileName: role,
     };
   }
@@ -2600,11 +2541,17 @@ export async function runTopicWorkflow(
     let assignedAgent = await convex.query(api.agents.get, {
       id: assignedAgentIdForStage as Id<'agents'>,
     });
+    const projectMismatch = agentOutsideTaskProject(currentTask, assignedAgent);
     const laneMismatch =
       stage === 'writing'
         ? !stageProfileContext.laneKey || assignedAgent?.laneKey !== stageProfileContext.laneKey
         : false;
-    if (!assignedAgent || !isRoleAllowedForStage(stage, assignedAgent.role) || laneMismatch) {
+    if (
+      !assignedAgent ||
+      !isRoleAllowedForStage(stage, assignedAgent.role) ||
+      laneMismatch ||
+      projectMismatch
+    ) {
       const reEnsuredOwner = await convex.mutation(api.topicWorkflow.ensureStageOwner, {
         taskId: currentTask._id,
         stageKey: stage,
@@ -2620,6 +2567,7 @@ export async function runTopicWorkflow(
         });
       }
     }
+    const projectMismatchAfterHealing = agentOutsideTaskProject(currentTask, assignedAgent);
     const laneMismatchAfterHealing =
       stage === 'writing'
         ? !stageProfileContext.laneKey || assignedAgent?.laneKey !== stageProfileContext.laneKey
@@ -2627,13 +2575,18 @@ export async function runTopicWorkflow(
     if (
       !assignedAgent ||
       !isRoleAllowedForStage(stage, assignedAgent.role) ||
-      laneMismatchAfterHealing
+      laneMismatchAfterHealing ||
+      projectMismatchAfterHealing
     ) {
       const blockedSummary = laneMismatchAfterHealing
         ? `Stage ${stage} blocked: assigned writer lane ${
             assignedAgent?.laneKey || 'unknown'
           } does not match task lane ${stageProfileContext.laneKey || 'unknown'}.`
-        : `Stage ${stage} blocked: assigned role ${assignedAgent?.role || 'unknown'} is not allowed for this stage.`;
+        : projectMismatchAfterHealing
+          ? `Stage ${stage} blocked: assigned agent project ${
+              assignedAgent?.projectId ?? 'unknown'
+            } does not match task project ${currentTask.projectId ?? 'unknown'}.`
+          : `Stage ${stage} blocked: assigned role ${assignedAgent?.role || 'unknown'} is not allowed for this stage.`;
       await convex.mutation(api.tasks.update, {
         id: currentTask._id,
         expectedProjectId: currentTask.projectId ?? undefined,
@@ -2650,14 +2603,20 @@ export async function runTopicWorkflow(
         actorName: 'Workflow PM',
         payload: {
           status: 'blocked',
-          reason: laneMismatchAfterHealing ? 'owner_lane_mismatch' : 'owner_role_mismatch',
+          reason: laneMismatchAfterHealing
+            ? 'owner_lane_mismatch'
+            : projectMismatchAfterHealing
+              ? 'owner_project_mismatch'
+              : 'owner_role_mismatch',
           stage,
           ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
           assignedAgentId: assignedAgentIdForStage,
           assignedAgentName: assignedAgent?.name ?? null,
           assignedAgentRole: assignedAgent?.role ?? null,
           assignedAgentLaneKey: assignedAgent?.laneKey ?? null,
+          assignedAgentProjectId: assignedAgent?.projectId ?? null,
           requiredLaneKey: stageProfileContext.laneKey ?? null,
+          requiredProjectId: currentTask.projectId ?? null,
           assignmentHealingAttempted: true,
           roleProfile: {
             role: stageProfileContext.role,
@@ -2725,7 +2684,6 @@ export async function runTopicWorkflow(
       currentTask = refreshedForRun;
     }
     const freshDocument = await getDocumentById(ensured.document.id);
-    const skillContext = await buildSkillContext(currentTask, stageProfileContext.roleSkillIds);
     const agent = await setAgentWorking(convex, currentTask, assignedAgent);
 
     const startedSummary = agent
@@ -2746,14 +2704,11 @@ export async function runTopicWorkflow(
         assignedAgentName: agent?.name ?? null,
         assignedAgentRole: agent?.role ?? null,
         ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
-        skillNames: skillContext.names,
-        skills: skillContext.applied,
         roleProfile: {
           role: stageProfileContext.role,
           profileName: stageProfileContext.profileName ?? null,
           profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
           laneKey: stageProfileContext.laneKey ?? null,
-          mappedSkillIds: stageProfileContext.roleSkillIds,
         },
       },
     });
@@ -2765,159 +2720,163 @@ export async function runTopicWorkflow(
       stageProfileContext.laneKey
     );
 
-    let stageResult: StageRunResult;
+    let stageResult: StageRunResult | null = null;
     try {
-      stageResult = await runStage(
-        currentTask,
-        freshDocument,
-        stage,
-        skillContext,
-        stageProfileContext
-      );
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const incompleteDraftError =
-        error instanceof IncompleteDraftError ? error : null;
-      const failedSummary = `Stage ${stage} failed: ${errorMessage}`;
-      const blockedBySafety =
-        stage === 'writing' &&
-        /incomplete|truncat|abrupt|minimum|maximum|overflow|coverage|style guard|outlineSnapshot/i.test(
-          errorMessage
+      try {
+        stageResult = await runStage(
+          currentTask,
+          freshDocument,
+          stage,
+          stageProfileContext
         );
-      if (incompleteDraftError) {
-        const { completion } = incompleteDraftError;
-        await convex.mutation(api.topicWorkflow.recordStageArtifact, {
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const incompleteDraftError =
+          error instanceof IncompleteDraftError ? error : null;
+        const failedSummary = `Stage ${stage} failed: ${errorMessage}`;
+        const blockedBySafety =
+          stage === 'writing' &&
+          /incomplete|truncat|abrupt|minimum|maximum|overflow|coverage|style guard|outlineSnapshot/i.test(
+            errorMessage
+          );
+        if (incompleteDraftError) {
+          const { completion } = incompleteDraftError;
+          await convex.mutation(api.topicWorkflow.recordStageArtifact, {
+            taskId: currentTask._id,
+            stageKey: stage,
+            summary:
+              `Partial draft captured. Missing ${completion.missingHeadings.length} outline heading(s), ` +
+              `word gap ${completion.wordGap}, coverage ${(completion.headingCoverage * 100).toFixed(0)}%.`,
+            actorType: 'system',
+            actorId: input.user.id,
+            actorName: 'Workflow PM',
+            artifact: {
+              title: 'Partial Draft (Incomplete)',
+              body: trimTo(incompleteDraftError.partialPlainText, 1800),
+              data: {
+                type: 'partial_draft',
+                html: incompleteDraftError.partialHtml,
+                reasons: completion.reasons,
+                wordCount: completion.wordCount,
+                minWords: completion.minWords,
+                wordGap: completion.wordGap,
+                headingCoverage: completion.headingCoverage,
+                missingHeadings: completion.missingHeadings,
+                abruptEnding: completion.abruptEnding,
+                continuationAttempts: incompleteDraftError.continuationAttempts,
+                endingCompletionAttempted: incompleteDraftError.endingCompletionAttempted,
+              },
+            },
+            payload: {
+              status: 'blocked',
+              reason: 'writing_incomplete',
+              stage,
+              outlineGap: completion.outlineGap,
+              roleProfile: {
+                role: stageProfileContext.role,
+                profileName: stageProfileContext.profileName ?? null,
+                profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
+                laneKey: stageProfileContext.laneKey ?? null,
+              },
+            },
+          });
+        }
+        if (blockedBySafety) {
+          await convex.mutation(api.tasks.update, {
+            id: currentTask._id,
+            expectedProjectId: currentTask.projectId ?? undefined,
+            workflowStageStatus: 'blocked',
+            workflowLastEventAt: Date.now(),
+            workflowLastEventText: failedSummary,
+          });
+        }
+        await convex.mutation(api.topicWorkflow.recordStageProgress, {
           taskId: currentTask._id,
           stageKey: stage,
-          summary:
-            `Partial draft captured. Missing ${completion.missingHeadings.length} outline heading(s), ` +
-            `word gap ${completion.wordGap}, coverage ${(completion.headingCoverage * 100).toFixed(0)}%.`,
+          summary: failedSummary,
           actorType: 'system',
           actorId: input.user.id,
           actorName: 'Workflow PM',
-          artifact: {
-            title: 'Partial Draft (Incomplete)',
-            body: trimTo(incompleteDraftError.partialPlainText, 1800),
-            data: {
-              type: 'partial_draft',
-              html: incompleteDraftError.partialHtml,
-              reasons: completion.reasons,
-              wordCount: completion.wordCount,
-              minWords: completion.minWords,
-              wordGap: completion.wordGap,
-              headingCoverage: completion.headingCoverage,
-              missingHeadings: completion.missingHeadings,
-              abruptEnding: completion.abruptEnding,
-              continuationAttempts: incompleteDraftError.continuationAttempts,
-              endingCompletionAttempted: incompleteDraftError.endingCompletionAttempted,
-            },
-          },
           payload: {
-            status: 'blocked',
-            reason: 'writing_incomplete',
+            status: blockedBySafety ? 'blocked' : 'failed',
             stage,
-            outlineGap: completion.outlineGap,
+            ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
+            assignedAgentId: currentTask.assignedAgentId ?? null,
+            assignedAgentRole: agent?.role ?? assignedAgent?.role ?? null,
+            error: errorMessage,
+            reason: incompleteDraftError ? 'writing_incomplete' : undefined,
+            outlineGap: incompleteDraftError?.completion.outlineGap,
             roleProfile: {
               role: stageProfileContext.role,
               profileName: stageProfileContext.profileName ?? null,
               profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
               laneKey: stageProfileContext.laneKey ?? null,
             },
-          },
-        });
-      }
-      if (blockedBySafety) {
-        await convex.mutation(api.tasks.update, {
-          id: currentTask._id,
-          expectedProjectId: currentTask.projectId ?? undefined,
-          workflowStageStatus: 'blocked',
-          workflowLastEventAt: Date.now(),
-          workflowLastEventText: failedSummary,
-        });
-      }
-      await convex.mutation(api.topicWorkflow.recordStageProgress, {
-        taskId: currentTask._id,
-        stageKey: stage,
-        summary: failedSummary,
-        actorType: 'system',
-        actorId: input.user.id,
-        actorName: 'Workflow PM',
-        payload: {
-          status: blockedBySafety ? 'blocked' : 'failed',
-          stage,
-          ownerChain: TOPIC_STAGE_OWNER_CHAINS[stage],
-          assignedAgentId: currentTask.assignedAgentId ?? null,
-          assignedAgentRole: agent?.role ?? assignedAgent?.role ?? null,
-          error: errorMessage,
-          reason: incompleteDraftError ? 'writing_incomplete' : undefined,
-          outlineGap: incompleteDraftError?.completion.outlineGap,
-          roleProfile: {
-            role: stageProfileContext.role,
-            profileName: stageProfileContext.profileName ?? null,
-            profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
-            laneKey: stageProfileContext.laneKey ?? null,
-          },
-          diagnostics: incompleteDraftError
-            ? {
-                missingHeadings: incompleteDraftError.completion.missingHeadings,
-                headingCoverage: incompleteDraftError.completion.headingCoverage,
-                wordGap: incompleteDraftError.completion.wordGap,
-                abruptEnding: incompleteDraftError.completion.abruptEnding,
-                continuationAttempts: incompleteDraftError.continuationAttempts,
-                endingCompletionAttempted: incompleteDraftError.endingCompletionAttempted,
-              }
-            : undefined,
-        },
-      });
-      await recordRoleProfileActivity(
-        currentTask.projectId ?? null,
-        stageProfileContext.role,
-        failedSummary,
-        failedSummary,
-        stageProfileContext.laneKey
-      );
-      if (blockedBySafety) {
-        await logAlertEvent({
-          source: 'topic_workflow',
-          eventType: incompleteDraftError
-            ? 'writing_incomplete_blocked'
-            : 'workflow_stage_blocked',
-          severity: 'warning',
-          projectId: currentTask.projectId ?? null,
-          resourceId: String(currentTask._id),
-          message: failedSummary,
-          metadata: {
-            taskId: String(currentTask._id),
-            stage,
-            reason: incompleteDraftError ? 'writing_incomplete' : 'stage_safety_blocked',
-            outlineGap: incompleteDraftError?.completion.outlineGap,
             diagnostics: incompleteDraftError
               ? {
                   missingHeadings: incompleteDraftError.completion.missingHeadings,
-                  wordGap: incompleteDraftError.completion.wordGap,
                   headingCoverage: incompleteDraftError.completion.headingCoverage,
+                  wordGap: incompleteDraftError.completion.wordGap,
                   abruptEnding: incompleteDraftError.completion.abruptEnding,
+                  continuationAttempts: incompleteDraftError.continuationAttempts,
+                  endingCompletionAttempted: incompleteDraftError.endingCompletionAttempted,
                 }
               : undefined,
           },
         });
+        await recordRoleProfileActivity(
+          currentTask.projectId ?? null,
+          stageProfileContext.role,
+          failedSummary,
+          failedSummary,
+          stageProfileContext.laneKey
+        );
+        if (blockedBySafety) {
+          await logAlertEvent({
+            source: 'topic_workflow',
+            eventType: incompleteDraftError
+              ? 'writing_incomplete_blocked'
+              : 'workflow_stage_blocked',
+            severity: 'warning',
+            projectId: currentTask.projectId ?? null,
+            resourceId: String(currentTask._id),
+            message: failedSummary,
+            metadata: {
+              taskId: String(currentTask._id),
+              stage,
+              reason: incompleteDraftError ? 'writing_incomplete' : 'stage_safety_blocked',
+              outlineGap: incompleteDraftError?.completion.outlineGap,
+              diagnostics: incompleteDraftError
+                ? {
+                    missingHeadings: incompleteDraftError.completion.missingHeadings,
+                    wordGap: incompleteDraftError.completion.wordGap,
+                    headingCoverage: incompleteDraftError.completion.headingCoverage,
+                    abruptEnding: incompleteDraftError.completion.abruptEnding,
+                  }
+                : undefined,
+            },
+          });
+        }
+        if (blockedBySafety) {
+          runs.push({ stage, summary: failedSummary });
+          stoppedReason = failedSummary;
+          break;
+        }
+        throw error;
       }
-      await setAgentOnline(convex, currentTask);
-      if (blockedBySafety) {
-        runs.push({ stage, summary: failedSummary });
-        stoppedReason = failedSummary;
-        break;
+    } finally {
+      try {
+        await setAgentOnline(convex, currentTask);
+      } catch (statusError) {
+        console.error('Failed to reset agent status to ONLINE after stage run:', statusError);
       }
-      throw error;
     }
 
-    await setAgentOnline(convex, currentTask);
+    if (!stageResult) {
+      continue;
+    }
 
-    const skillsSuffix =
-      skillContext.names.length > 0
-        ? ` Skills applied: ${skillContext.names.join(', ')}.`
-        : '';
-    const stageSummary = `${stageResult.summary}${skillsSuffix}`;
+    const stageSummary = stageResult.summary;
 
     await convex.mutation(api.topicWorkflow.recordStageArtifact, {
       taskId: currentTask._id,
@@ -2940,14 +2899,11 @@ export async function runTopicWorkflow(
         assignedAgentId: currentTask.assignedAgentId ?? null,
         assignedAgentName: agent?.name ?? null,
         model: stageResult.model,
-        skillNames: skillContext.names,
-        skills: skillContext.applied,
         roleProfile: {
           role: stageProfileContext.role,
           profileName: stageProfileContext.profileName ?? null,
           profileUpdatedAt: stageProfileContext.profileUpdatedAt ?? null,
           laneKey: stageProfileContext.laneKey ?? null,
-          mappedSkillIds: stageProfileContext.roleSkillIds,
         },
       },
     });

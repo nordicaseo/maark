@@ -3,6 +3,7 @@ import { getProviderForAction } from '@/lib/ai';
 import { requireRole } from '@/lib/auth';
 import { validateScopedAiContext } from '@/lib/access';
 import { logAuditEvent } from '@/lib/observability';
+import { buildRolePromptContext } from '@/lib/agents/project-agent-profiles';
 
 const CONTENT_TYPE_PROMPTS: Record<string, string> = {
   blog_post: 'Write in a conversational, informative blog style. Use personal anecdotes where appropriate. Vary sentence length naturally.',
@@ -27,7 +28,6 @@ export async function POST(req: NextRequest) {
       targetKeyword,
       existingContent,
       tone,
-      skillContent,
       documentId: rawDocumentId,
       projectId: rawProjectId,
     } =
@@ -58,19 +58,21 @@ export async function POST(req: NextRequest) {
       ? `The target keyword is "${targetKeyword}". Naturally incorporate it and related terms.`
       : '';
 
-    // If a skill is provided, use it as the primary system prompt
-    const systemPrompt = skillContent
-      ? `${skillContent}\n\n${toneStr} ${keywordStr}
+    let rolePromptContext = '';
+    if (scoped.resolvedProjectId) {
+      try {
+        const writerContext = await buildRolePromptContext(scoped.resolvedProjectId, 'writer');
+        rolePromptContext = writerContext.promptContext;
+      } catch (error) {
+        console.error('Non-fatal writer role prompt load failure:', error);
+      }
+    }
 
-Additional writing guidelines:
-- Write naturally, varying sentence length and structure
-- Avoid AI cliches: "delve", "landscape", "furthermore", "moreover", "comprehensive", "it's worth noting"
-- Use contractions naturally (don't, can't, won't)
-- Avoid excessive adverbs (significantly, effectively, ultimately)
-- When presenting comparative data, specifications, pricing, features, or pros/cons, use markdown tables with a header row and | delimiters.
-- Where an image would enhance the content, include a markdown placeholder: ![descriptive alt text](PLACEHOLDER_IMAGE)
-- Output clean prose or markdown. No meta-commentary about the writing task.`
-      : `You are a skilled content writer. ${typePrompt} ${toneStr} ${keywordStr}
+    const roleContextBlock = rolePromptContext.trim()
+      ? `\n\nRole profile context:\n${rolePromptContext.trim()}`
+      : '';
+
+    const systemPrompt = `You are a skilled content writer. ${typePrompt} ${toneStr} ${keywordStr}${roleContextBlock}
 
 Important writing guidelines:
 - Write naturally, varying sentence length and structure
@@ -103,7 +105,6 @@ Important writing guidelines:
       projectId: scoped.resolvedProjectId,
       metadata: {
         contentType: contentType || null,
-        hasSkillContent: Boolean(skillContent),
         instructionLength: typeof instruction === 'string' ? instruction.length : 0,
       },
     });

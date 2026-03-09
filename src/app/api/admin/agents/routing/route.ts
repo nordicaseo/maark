@@ -13,10 +13,16 @@ import {
   upsertProjectWorkflowStageRoute,
   validateConfiguredWritingSlot,
 } from '@/lib/workflow/stage-routing';
+import { resolveWorkflowProfilePolicy } from '@/lib/workflow/workflow-profiles';
 import {
   parseProjectRuntimeSettings,
   syncProjectDedicatedAgentPool,
 } from '@/lib/agents/runtime-agent-pools';
+import {
+  listProjectAgentLaneProfiles,
+  listProjectAgentProfiles,
+  synchronizeWriterLaneProfileNames,
+} from '@/lib/agents/project-agent-profiles';
 import { getConvexClient } from '@/lib/convex/server';
 import { db, ensureDb } from '@/db';
 import { projects } from '@/db/schema';
@@ -72,6 +78,41 @@ function sanitizeStageEnabled(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function isRoutableRuntimeAgent(assignmentHealth: unknown): boolean {
+  if (!assignmentHealth || typeof assignmentHealth !== 'object') return true;
+  return (assignmentHealth as Record<string, unknown>).routable !== false;
+}
+
+function parseSlotOrdinal(slotKey: string): number | null {
+  const parts = slotKey.split(':');
+  for (let idx = parts.length - 1; idx >= 0; idx -= 1) {
+    const raw = parts[idx];
+    const parsed = Number.parseInt(raw || '', 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+function parsePrimaryWriterSlotKey(
+  projectId: number,
+  slotKey: string
+): { laneKey: AgentLaneKey; ordinal: number } | null {
+  const match = new RegExp(
+    `^p${projectId}:writer:(blog|collection|product|landing):(\\d+)$`
+  ).exec(slotKey.trim());
+  if (!match) return null;
+  const laneKey = match[1] as AgentLaneKey;
+  const ordinal = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(ordinal)) return null;
+  return { laneKey, ordinal };
+}
+
+function withOrdinalSuffix(name: string, ordinal: number | null): string {
+  if (!ordinal || ordinal <= 1) return name;
+  const suffix = ` ${ordinal}`;
+  return name.endsWith(suffix) ? name : `${name}${suffix}`;
+}
+
 export async function GET(req: NextRequest) {
   await ensureDb();
   const auth = await requireRole('super_admin');
@@ -87,11 +128,29 @@ export async function GET(req: NextRequest) {
 
   try {
     const seeded = await seedProjectWorkflowStageRoutes(projectId, auth.user.id);
+    await synchronizeWriterLaneProfileNames({
+      projectId,
+      userId: auth.user.id,
+    });
     const contentFormat = req.nextUrl.searchParams.get('contentFormat');
     const routes = seeded.routes;
     const filtered = isContentFormat(contentFormat)
       ? routes.filter((route) => route.contentFormat === contentFormat)
       : routes;
+    const [projectRoleProfiles, projectLaneProfiles] = await Promise.all([
+      listProjectAgentProfiles(projectId),
+      listProjectAgentLaneProfiles(projectId, 'writer'),
+    ]);
+    const roleDisplayNameByRole = new Map(
+      projectRoleProfiles
+        .map((profile) => [profile.role.toLowerCase(), profile.displayName.trim()] as const)
+        .filter((entry) => entry[1].length > 0)
+    );
+    const writerLaneDisplayNameByLane = new Map(
+      projectLaneProfiles
+        .map((profile) => [profile.laneKey.toLowerCase(), profile.displayName.trim()] as const)
+        .filter((entry) => entry[1].length > 0)
+    );
     const convex = getConvexClient();
     const runtimeAgents = convex
       ? (
@@ -106,23 +165,80 @@ export async function GET(req: NextRequest) {
             slotKey?: string;
             laneKey?: string;
             currentTaskId?: string;
+            isDedicated?: boolean;
+            assignmentHealth?: Record<string, unknown>;
           }>
         )
-          .filter((agent) => String(agent.slotKey || '').trim().length > 0)
+          .filter((agent) => {
+            const slotKey = String(agent.slotKey || '').trim();
+            if (!slotKey) return false;
+            if (agent.isDedicated === false) return false;
+            if (!isRoutableRuntimeAgent(agent.assignmentHealth)) return false;
+            if (slotKey.includes(':auto:')) return false;
+            if (!slotKey.startsWith(`p${projectId}:`)) return false;
+            const role = String(agent.role || '').toLowerCase();
+            if (role === 'writer') {
+              const laneKey = String(agent.laneKey || '').toLowerCase();
+              if (!isLaneKey(laneKey)) return false;
+              const parsed = parsePrimaryWriterSlotKey(projectId, slotKey);
+              if (!parsed || parsed.ordinal !== 1) return false;
+              return parsed.laneKey === laneKey;
+            }
+            return true;
+          })
           .map((agent) => ({
-            id: String(agent._id),
-            name: agent.name,
-            role: agent.role,
-            status: agent.status,
+            role: String(agent.role || '').toLowerCase(),
+            laneKey: String(agent.laneKey || '').toLowerCase(),
             slotKey: String(agent.slotKey || ''),
-            laneKey: String(agent.laneKey || ''),
+            _rawName: agent.name,
+            id: String(agent._id),
+            status: agent.status,
             currentTaskId: agent.currentTaskId ? String(agent.currentTaskId) : null,
           }))
+          .map((agent) => {
+            const ordinal = parseSlotOrdinal(agent.slotKey);
+            const laneDisplayName =
+              agent.role === 'writer'
+                ? writerLaneDisplayNameByLane.get(agent.laneKey) || null
+                : null;
+            const roleDisplayName = roleDisplayNameByRole.get(agent.role) || null;
+            const runtimeName = String(agent._rawName || '').trim();
+            const fallbackName = laneDisplayName || roleDisplayName || agent.slotKey;
+            const resolvedName = runtimeName || withOrdinalSuffix(fallbackName, ordinal);
+            return {
+              id: agent.id,
+              name: resolvedName,
+              role: agent.role,
+              status: agent.status,
+              slotKey: agent.slotKey,
+              laneKey: agent.laneKey,
+              currentTaskId: agent.currentTaskId,
+            };
+          })
+          .sort((a, b) => {
+            const roleSort = a.role.localeCompare(b.role);
+            if (roleSort !== 0) return roleSort;
+            const nameSort = a.name.localeCompare(b.name);
+            if (nameSort !== 0) return nameSort;
+            return a.slotKey.localeCompare(b.slotKey);
+          })
       : [];
+    const workflowProfiles = Object.fromEntries(
+      await Promise.all(
+        filtered.map(async (route) => [
+          route.contentFormat,
+          await resolveWorkflowProfilePolicy({
+            projectId,
+            contentFormat: route.contentFormat,
+          }),
+        ])
+      )
+    );
     return NextResponse.json({
       projectId,
       seededFormats: seeded.seededFormats,
       routes: filtered,
+      workflowProfiles,
       runtimeAgents,
       routeHealth: await getProjectWorkflowRouteHealth(projectId),
     });
@@ -157,11 +273,22 @@ export async function PUT(req: NextRequest) {
     }
 
     const contentFormat = body.contentFormat as ContentFormat;
+    const workflowProfile = await resolveWorkflowProfilePolicy({
+      projectId,
+      contentFormat,
+    });
     const existingRoute = await getProjectWorkflowStageRoute(projectId, contentFormat);
+    const nextStageEnabled = {
+      ...(existingRoute?.stageEnabled || {}),
+      ...(sanitizeStageEnabled(body.stageEnabled) || {}),
+    } as Partial<Record<RoutableWorkflowStage, boolean>>;
+    const writingEnabledFromRoute = nextStageEnabled.writing !== false;
+    const writingEnabledFromProfile = workflowProfile.stageEnabled.writing !== false;
+    const writingStageRequired = writingEnabledFromRoute && writingEnabledFromProfile;
     const nextLaneKey = isLaneKey(body.laneKey)
       ? body.laneKey
       : (existingRoute?.laneKey ?? 'blog');
-    if (isBlogFormat(contentFormat) && nextLaneKey !== 'blog') {
+    if (isBlogFormat(contentFormat) && writingStageRequired && nextLaneKey !== 'blog') {
       return NextResponse.json(
         {
           error: 'Blog formats require a blog writer lane.',
@@ -179,29 +306,61 @@ export async function PUT(req: NextRequest) {
       ...(existingRoute?.stageSlots || {}),
       ...(sanitizeStageSlots(body.stageSlots) || {}),
     } as Partial<Record<RoutableWorkflowStage, string>>;
-    const writingSlotKey = String(nextStageSlots.writing || '').trim();
-    const writingValidation = await validateConfiguredWritingSlot({
-      projectId,
-      laneKey: isBlogFormat(contentFormat) ? 'blog' : nextLaneKey,
-      slotKey: writingSlotKey,
-    });
-    if (!writingValidation.ok) {
-      return NextResponse.json(
-        {
-          error: writingValidation.message,
-          code: writingValidation.code,
-          details: {
-            slotKey: writingValidation.slotKey,
-            laneKey: writingValidation.laneKey,
-            agentId: writingValidation.agentId ?? null,
-            agentName: writingValidation.agentName ?? null,
-            writerStatus: writingValidation.writerStatus ?? null,
-            dedicated: writingValidation.dedicated ?? null,
-            routable: writingValidation.routable ?? null,
+    if (writingStageRequired) {
+      const writingSlotKey = String(nextStageSlots.writing || '').trim();
+      const validationLane = isBlogFormat(contentFormat) ? 'blog' : nextLaneKey;
+      let writingValidation = await validateConfiguredWritingSlot({
+        projectId,
+        laneKey: validationLane,
+        slotKey: writingSlotKey,
+      });
+
+      if (!writingValidation.ok) {
+        const [project] = await db
+          .select({ settings: projects.settings })
+          .from(projects)
+          .where(eq(projects.id, projectId))
+          .limit(1);
+        if (project) {
+          const runtime = parseProjectRuntimeSettings(project.settings);
+          await syncProjectDedicatedAgentPool({
+            projectId,
+            template: runtime.staffingTemplate,
+            roleCounts: runtime.roleCounts,
+            laneCapacity: runtime.laneCapacity,
+            userId: auth.user.id,
+          });
+          await repairProjectWriterRoutes({
+            projectId,
+            userId: auth.user.id,
+            canonicalizeInvalidBlog: true,
+          });
+          writingValidation = await validateConfiguredWritingSlot({
+            projectId,
+            laneKey: validationLane,
+            slotKey: writingSlotKey,
+          });
+        }
+      }
+
+      if (!writingValidation.ok) {
+        return NextResponse.json(
+          {
+            error: writingValidation.message,
+            code: writingValidation.code,
+            details: {
+              slotKey: writingValidation.slotKey,
+              laneKey: writingValidation.laneKey,
+              agentId: writingValidation.agentId ?? null,
+              agentName: writingValidation.agentName ?? null,
+              writerStatus: writingValidation.writerStatus ?? null,
+              dedicated: writingValidation.dedicated ?? null,
+              routable: writingValidation.routable ?? null,
+            },
           },
-        },
-        { status: 400 }
-      );
+          { status: 400 }
+        );
+      }
     }
 
     const route = await upsertProjectWorkflowStageRoute({
@@ -312,6 +471,7 @@ export async function POST(req: NextRequest) {
       template: runtime.staffingTemplate,
       roleCounts: runtime.roleCounts,
       laneCapacity: runtime.laneCapacity,
+      userId: auth.user.id,
     });
     const repair = await repairProjectWriterRoutes({
       projectId,
@@ -339,6 +499,11 @@ export async function POST(req: NextRequest) {
         repair,
         backfillActiveTasks,
         stagePlanBackfill,
+        routesCanonicalized: repair.routesPatched,
+        stagePlansBackfilled: stagePlanBackfill?.updated ?? 0,
+        tasksRequeued: synced.tasksRequeued,
+        writersDeleted: synced.writersDeleted,
+        writersRenamed: synced.writersRenamed,
       },
     });
 
@@ -349,6 +514,11 @@ export async function POST(req: NextRequest) {
       synced,
       repair,
       stagePlanBackfill,
+      routesCanonicalized: repair.routesPatched,
+      stagePlansBackfilled: stagePlanBackfill?.updated ?? 0,
+      tasksRequeued: synced.tasksRequeued,
+      writersDeleted: synced.writersDeleted,
+      writersRenamed: synced.writersRenamed,
       routes,
       routeHealth,
     });

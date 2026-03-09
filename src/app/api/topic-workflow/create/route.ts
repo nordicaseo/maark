@@ -6,10 +6,9 @@ import {
   userCanAccessKeyword,
   userCanAccessPage,
   userCanAccessProject,
-  userCanAccessSkill,
 } from '@/lib/access';
 import { db, ensureDb } from '@/db';
-import { documents, keywords, pages, skills } from '@/db/schema';
+import { documents, keywords, pages } from '@/db/schema';
 import {
   createTopicWorkflow,
   type TopicWorkflowEntryPoint,
@@ -58,7 +57,6 @@ export async function POST(req: NextRequest) {
     }
 
     const documentId = parseOptionalNumber(body.documentId);
-    const skillId = parseOptionalNumber(body.skillId);
     const keywordId = parseOptionalNumber(body.keywordId);
     const pageId = parseOptionalNumber(body.pageId);
     const siteId = parseOptionalNumber(body.siteId);
@@ -78,23 +76,6 @@ export async function POST(req: NextRequest) {
       }
       if (doc.projectId !== projectId) {
         return NextResponse.json({ error: 'Document does not belong to active project' }, { status: 400 });
-      }
-    }
-
-    if (skillId) {
-      if (!(await userCanAccessSkill(auth.user, skillId))) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
-      const [skill] = await db
-        .select({ id: skills.id, projectId: skills.projectId, isGlobal: skills.isGlobal })
-        .from(skills)
-        .where(eq(skills.id, skillId))
-        .limit(1);
-      if (!skill) {
-        return NextResponse.json({ error: 'Skill not found' }, { status: 404 });
-      }
-      if (skill.projectId !== null && skill.projectId !== projectId && skill.isGlobal !== 1) {
-        return NextResponse.json({ error: 'Skill does not belong to active project' }, { status: 400 });
       }
     }
 
@@ -138,7 +119,6 @@ export async function POST(req: NextRequest) {
       topic,
       entryPoint,
       documentId,
-      skillId,
       contentType: typeof body.contentType === 'string' ? body.contentType : undefined,
       contentFormat: typeof body.contentFormat === 'string' ? body.contentFormat : undefined,
       pageType: typeof body.pageType === 'string' ? body.pageType : undefined,

@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, ensureDb } from '@/db';
-import { documents, skills, skillParts } from '@/db/schema';
+import { documents } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { randomBytes } from 'crypto';
 import { dbNow } from '@/db/utils';
 import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import { requireRole } from '@/lib/auth';
-import { userCanAccessDocument, userCanAccessProject, userCanAccessSkill } from '@/lib/access';
+import { userCanAccessDocument, userCanAccessProject } from '@/lib/access';
 import { resolveProviderForAction, type ModelOverride } from '@/lib/ai/model-resolution';
 import { getConvexClient } from '@/lib/convex/server';
 import { api } from '../../../../../convex/_generated/api';
@@ -39,12 +39,11 @@ import type { Id } from '../../../../../convex/_generated/dataModel';
  * Flow:
  *  1. Receive taskId + Convex task metadata (passed from client)
  *  2. Load or create Drizzle document
- *  3. Load Skill (if skillId provided)
- *  4. Generate content via AI
- *  5. Save content to document
- *  6. Run quality checks
- *  7. Generate preview token
- *  8. Return deliverable info for Convex task update
+ *  3. Generate content via AI
+ *  4. Save content to document
+ *  5. Run quality checks
+ *  6. Generate preview token
+ *  7. Return deliverable info for Convex task update
  *
  * Body: {
  *   taskId: string (Convex ID),
@@ -52,7 +51,6 @@ import type { Id } from '../../../../../convex/_generated/dataModel';
  *   description?: string,
  *   documentId?: number,
  *   projectId?: number,
- *   skillId?: number,
  *   contentType?: string,
  *   targetKeyword?: string,
  * }
@@ -69,7 +67,6 @@ export async function POST(req: NextRequest) {
       description,
       documentId: existingDocId,
       projectId,
-      skillId,
       contentType = 'blog_post',
       targetKeyword,
       agentId,
@@ -100,14 +97,6 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
-    if (
-      skillId !== undefined &&
-      skillId !== null &&
-      !(await userCanAccessSkill(auth.user, Number(skillId)))
-    ) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
     let taskRecord: {
       projectId?: number | null;
       assignedAgentId?: Id<'agents'> | null;
@@ -140,33 +129,6 @@ export async function POST(req: NextRequest) {
       );
     }
     const taskProjectId = Number(taskRecord.projectId ?? projectId ?? 0) || null;
-
-    // ─── Auto-resolve skillId if not provided ─────────────────────
-    let resolvedSkillId = skillId;
-    if (!resolvedSkillId) {
-      if (taskProjectId) {
-        // Try first skill for this project
-        const [projectSkill] = await db
-          .select({ id: skills.id })
-          .from(skills)
-          .where(eq(skills.projectId, taskProjectId))
-          .limit(1);
-        if (projectSkill) {
-          resolvedSkillId = projectSkill.id;
-        }
-      }
-      if (!resolvedSkillId) {
-        // Fallback to first global skill
-        const [globalSkill] = await db
-          .select({ id: skills.id })
-          .from(skills)
-          .where(eq(skills.isGlobal, 1))
-          .limit(1);
-        if (globalSkill) {
-          resolvedSkillId = globalSkill.id;
-        }
-      }
-    }
 
     // ─── Step 1: Load or create document ────────────────────────────
     let docId = existingDocId;
@@ -282,35 +244,7 @@ export async function POST(req: NextRequest) {
       contentFormat: normalizedContentType,
     });
 
-    // ─── Step 2: Load Skill (if provided or auto-resolved) ──────────
-    let skillContent = '';
-    if (resolvedSkillId) {
-      const [skill] = await db
-        .select()
-        .from(skills)
-        .where(eq(skills.id, resolvedSkillId))
-        .limit(1);
-
-      if (skill) {
-        // Fetch skill parts and concatenate
-        const parts = await db
-          .select()
-          .from(skillParts)
-          .where(eq(skillParts.skillId, resolvedSkillId));
-
-        if (parts.length > 0) {
-          const orderedParts = (parts as Array<{ sortOrder?: number | null; content: string }>)
-            .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-          skillContent = orderedParts
-            .map((p) => p.content)
-            .join('\n\n');
-        } else if (skill.content) {
-          skillContent = skill.content;
-        }
-      }
-    }
-
-    // ─── Step 3: Build instruction and generate content ─────────────
+    // ─── Step 2: Build instruction and generate content ─────────────
     const linkedPageContext = await resolveTaskLinkedPageCleanContent({
       taskId: String(taskId),
       projectId: effectiveProjectId ?? null,
@@ -353,10 +287,7 @@ ${trimTo(linkedPageContext.text, 1500)}`
           agent?.projectId !== undefined && agent?.projectId !== null
             ? Number(agent.projectId)
             : null;
-        if (
-          agent &&
-          (effectiveProjectId === null || agentProjectId === null || agentProjectId === effectiveProjectId)
-        ) {
+        if (agent && effectiveProjectId !== null && agentProjectId === effectiveProjectId) {
           modelOverride = agent.modelOverrides?.workflow_writing || agent.modelOverrides?.writing;
         }
       } catch (error) {
@@ -374,7 +305,6 @@ ${trimTo(linkedPageContext.text, 1500)}`
     );
 
     const systemPrompt = buildSystemPrompt(
-      skillContent,
       normalizedContentType,
       targetKeyword,
       writerRolePromptContext,
@@ -668,7 +598,7 @@ ${trimTo(linkedPageContext.text, 1500)}`
       );
     }
 
-    // ─── Step 4: Save content to document ───────────────────────────
+    // ─── Step 3: Save content to document ───────────────────────────
     const wordCount = completion.wordCount;
 
     await db
@@ -682,7 +612,7 @@ ${trimTo(linkedPageContext.text, 1500)}`
       })
       .where(eq(documents.id, docId));
 
-    // ─── Step 5: Run quality checks ─────────────────────────────────
+    // ─── Step 4: Run quality checks ─────────────────────────────────
     let aiDetectionScore: number | null = null;
     let contentQualityScore: number | null = null;
 
@@ -721,7 +651,7 @@ ${trimTo(linkedPageContext.text, 1500)}`
       console.error('Quality check error (non-fatal):', err);
     }
 
-    // ─── Step 6: Generate preview token ─────────────────────────────
+    // ─── Step 5: Generate preview token ─────────────────────────────
     let previewToken = doc.previewToken;
     if (!previewToken) {
       previewToken = randomBytes(24).toString('hex');
@@ -731,7 +661,7 @@ ${trimTo(linkedPageContext.text, 1500)}`
         .where(eq(documents.id, docId));
     }
 
-    // ─── Step 7: Return result ──────────────────────────────────────
+    // ─── Step 6: Return result ──────────────────────────────────────
     await logAuditEvent({
       userId: auth.user.id,
       action: 'agent.execute',
@@ -740,7 +670,6 @@ ${trimTo(linkedPageContext.text, 1500)}`
       projectId: effectiveProjectId,
       metadata: {
         taskId: String(taskId),
-        skillId: resolvedSkillId ?? null,
         agentId: agentId ?? null,
         model,
         projectRoleProfile: writerRoleProfileName,
@@ -843,7 +772,6 @@ function buildInstruction(
 }
 
 function buildSystemPrompt(
-  skillContent: string,
   contentType: string,
   targetKeyword: string | undefined,
   rolePromptContext?: string,
@@ -869,22 +797,6 @@ function buildSystemPrompt(
         ? `- Use colons only in structural contexts (headings/labels). Narrative colons max ${Math.max(0, stylePolicy?.maxNarrativeColons || 0)}.`
         : '- Colon usage is allowed.',
   ].join('\n');
-
-  if (skillContent) {
-    return `${skillContent}\n\n${keywordStr}
-
-${roleContext}
-
-Additional writing guidelines:
-- Write naturally, varying sentence length and structure
-- Avoid AI cliches: "delve", "landscape", "furthermore", "moreover", "comprehensive", "it's worth noting"
-- Use contractions naturally (don't, can't, won't)
-- Avoid excessive adverbs (significantly, effectively, ultimately)
-- When presenting comparative data, specs, pricing, or pros/cons, use HTML tables
-- Prefer natural transitions without formulaic punctuation.
-${styleRules}
-- Output clean HTML. No meta-commentary about the writing task.`;
-  }
 
   return `You are a skilled content writer specializing in ${contentType.replace(/_/g, ' ')} content. ${keywordStr}${roleContext}
 

@@ -98,7 +98,7 @@ describe('API project scoping and authorization', () => {
     expect(res.status).toBe(403);
   });
 
-  it('returns 403 when creating skill outside accessible project', async () => {
+  it('returns 410 when calling retired skills API', async () => {
     const { POST } = await import('@/app/api/skills/route');
     mockRequireRole.mockResolvedValue({
       user: {
@@ -124,6 +124,6 @@ describe('API project scoping and authorization', () => {
     });
 
     const res = await POST(req);
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(410);
   });
 });

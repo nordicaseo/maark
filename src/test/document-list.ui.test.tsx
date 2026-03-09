@@ -29,14 +29,11 @@ const baseDoc: ContentItemCard = {
   authorId: 'u1',
   authorName: 'User',
   title: 'Very long SEO title that should still wrap cleanly without clipping in the sidebar card',
-  content: null,
-  plainText: 'text',
   status: 'in_progress',
   contentType: 'blog_post',
   targetKeyword: 'long title keyword',
   wordCount: 1580,
   aiDetectionScore: 2.1,
-  aiRiskLevel: 'Low',
   semanticScore: 71,
   contentQualityScore: 82,
   task: {
@@ -61,7 +58,7 @@ const baseDoc: ContentItemCard = {
   updatedAt: new Date().toISOString(),
 };
 
-function makeDoc(id: number): Document {
+function makeDoc(id: number): ContentItemCard {
   return {
     ...baseDoc,
     id,

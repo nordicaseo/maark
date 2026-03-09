@@ -1,151 +1,32 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { db, ensureDb } from '@/db/index';
-import { skillParts, skills } from '@/db/schema';
-import { eq, asc } from 'drizzle-orm';
-import { dbNow } from '@/db/utils';
-import { getAuthUser, requireRole } from '@/lib/auth';
-import { userCanAccessSkill } from '@/lib/access';
+import { NextResponse } from 'next/server';
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  await ensureDb();
-  const user = await getAuthUser();
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  const { id } = await params;
-  const skillId = parseInt(id, 10);
-  if (Number.isNaN(skillId)) {
-    return NextResponse.json({ error: 'Invalid skill id' }, { status: 400 });
-  }
-  if (!(await userCanAccessSkill(user, skillId))) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
-  try {
-    const parts = await db
-      .select()
-      .from(skillParts)
-      .where(eq(skillParts.skillId, skillId))
-      .orderBy(asc(skillParts.sortOrder));
-
-    return NextResponse.json(parts);
-  } catch (error) {
-    console.error('Error fetching skill parts:', error);
-    return NextResponse.json([], { status: 200 });
-  }
+function retiredResponse() {
+  return NextResponse.json(
+    {
+      error:
+        'Standalone Skills has been retired. Use Agent Knowledge in Super Admin > Agents.',
+      code: 'SKILLS_RETIRED',
+    },
+    { status: 410 }
+  );
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  await ensureDb();
-  const auth = await requireRole('editor');
-  if (auth.error) return auth.error;
-  const { id } = await params;
-  const skillId = parseInt(id, 10);
-  if (Number.isNaN(skillId)) {
-    return NextResponse.json({ error: 'Invalid skill id' }, { status: 400 });
-  }
-  if (!(await userCanAccessSkill(auth.user, skillId, { write: true }))) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
-  try {
-    const body = await req.json();
-    const now = dbNow();
-
-    const [part] = await db
-      .insert(skillParts)
-      .values({
-        skillId,
-        partType: body.partType || 'custom',
-        label: body.label || 'Untitled',
-        content: body.content || '',
-        sortOrder: body.sortOrder ?? 0,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
-
-    // Recompose skill content from parts
-    await recomposeSkillContent(skillId);
-
-    return NextResponse.json(part);
-  } catch (error) {
-    console.error('Error creating skill part:', error);
-    return NextResponse.json({ error: 'Failed to create part' }, { status: 500 });
-  }
+export async function GET(_req: Request) {
+  return retiredResponse();
 }
 
-// PUT: Bulk update all parts (for reordering + batch save)
-export async function PUT(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  await ensureDb();
-  const auth = await requireRole('editor');
-  if (auth.error) return auth.error;
-  const { id } = await params;
-  const skillId = parseInt(id, 10);
-  if (Number.isNaN(skillId)) {
-    return NextResponse.json({ error: 'Invalid skill id' }, { status: 400 });
-  }
-  if (!(await userCanAccessSkill(auth.user, skillId, { write: true }))) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
-  try {
-    const { parts } = await req.json() as { parts: Array<{ id: number; label?: string; content?: string; sortOrder?: number; partType?: string }> };
-    const now = dbNow();
-
-    for (const part of parts) {
-      const updateData: Record<string, unknown> = { updatedAt: now };
-      if (part.label !== undefined) updateData.label = part.label;
-      if (part.content !== undefined) updateData.content = part.content;
-      if (part.sortOrder !== undefined) updateData.sortOrder = part.sortOrder;
-      if (part.partType !== undefined) updateData.partType = part.partType;
-
-      await db
-        .update(skillParts)
-        .set(updateData)
-        .where(eq(skillParts.id, part.id));
-    }
-
-    // Recompose skill content from parts
-    await recomposeSkillContent(skillId);
-
-    const updated = await db
-      .select()
-      .from(skillParts)
-      .where(eq(skillParts.skillId, skillId))
-      .orderBy(asc(skillParts.sortOrder));
-
-    return NextResponse.json(updated);
-  } catch (error) {
-    console.error('Error bulk updating skill parts:', error);
-    return NextResponse.json({ error: 'Failed to update parts' }, { status: 500 });
-  }
+export async function POST(_req: Request) {
+  return retiredResponse();
 }
 
-async function recomposeSkillContent(skillId: number) {
-  const parts = await db
-    .select()
-    .from(skillParts)
-    .where(eq(skillParts.skillId, skillId))
-    .orderBy(asc(skillParts.sortOrder));
+export async function PUT(_req: Request) {
+  return retiredResponse();
+}
 
-  if (parts.length > 0) {
-    const composed = parts
-      .map((p: { label: string; content: string }) => `## ${p.label}\n\n${p.content}`)
-      .join('\n\n');
+export async function PATCH(_req: Request) {
+  return retiredResponse();
+}
 
-    await db
-      .update(skills)
-      .set({ content: composed, updatedAt: dbNow() })
-      .where(eq(skills.id, skillId));
-  }
+export async function DELETE(_req: Request) {
+  return retiredResponse();
 }

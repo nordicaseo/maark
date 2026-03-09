@@ -10,7 +10,6 @@ import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { TeamMembersProvider } from '@/components/mission-control/team-members-provider';
-import { SkillsProvider } from '@/components/mission-control/skills-provider';
 import { ArrowLeft, Loader2, Bot, AlertTriangle, Activity, Search, Globe } from 'lucide-react';
 import Link from 'next/link';
 import { useActiveProject } from '@/hooks/use-active-project';
@@ -414,7 +413,6 @@ export default function MissionControlPage() {
 
   return (
     <TeamMembersProvider projectId={projectId}>
-      <SkillsProvider projectId={projectId}>
       <div className="mc-wrapper">
         {/* Header */}
         <header
@@ -596,7 +594,6 @@ export default function MissionControlPage() {
           onClose={() => setSelectedTaskId(null)}
         />
       </div>
-      </SkillsProvider>
     </TeamMembersProvider>
   );
 }

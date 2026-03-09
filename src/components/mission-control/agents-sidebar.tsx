@@ -1,15 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from 'convex/react';
-import { Bot, ChevronDown, Users } from 'lucide-react';
+import { Bot, ChevronDown, Loader2, Users } from 'lucide-react';
 import Image from 'next/image';
-import { api } from '../../../convex/_generated/api';
-import type { Doc } from '../../../convex/_generated/dataModel';
 import { useActiveProject } from '@/hooks/use-active-project';
 import { useTeamMembers } from './team-members-provider';
-
-type Agent = Doc<'agents'>;
 
 interface AgentProfileSummary {
   role: string;
@@ -21,6 +16,17 @@ interface AgentProfileSummary {
   mission: string | null;
   tools: string[];
   updatedAt: string;
+}
+
+interface RuntimeAgentSummary {
+  id: string;
+  name: string;
+  role: string;
+  status: string;
+  slotKey: string;
+  laneKey: string | null;
+  currentTaskId: string | null;
+  specialization: string | null;
 }
 
 const ROLE_BADGES: Record<string, string> = {
@@ -51,26 +57,32 @@ const STATUS_ORDER: Array<'WORKING' | 'ONLINE' | 'IDLE' | 'OFFLINE'> = [
 
 export function AgentsSidebar() {
   const { activeProjectId } = useActiveProject();
-  const agents = useQuery(
-    api.agents.list,
-    activeProjectId ? { projectId: activeProjectId, limit: 300 } : { limit: 300 }
-  );
   const { members } = useTeamMembers();
+  const [loading, setLoading] = useState(true);
+  const [runtimeAgents, setRuntimeAgents] = useState<RuntimeAgentSummary[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [profileMap, setProfileMap] = useState<Record<string, AgentProfileSummary>>({});
   const [expandedHumanId, setExpandedHumanId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
     const loadProfiles = async () => {
       if (!activeProjectId) {
-        if (!cancelled) setProfileMap({});
+        if (!cancelled) {
+          setRuntimeAgents([]);
+          setProfileMap({});
+          setLoading(false);
+        }
         return;
       }
       try {
+        if (!cancelled) setLoading(true);
         const res = await fetch(`/api/mission-control/agents?projectId=${activeProjectId}`);
         if (!res.ok) return;
         const data = (await res.json()) as {
+          runtimeAgents?: RuntimeAgentSummary[];
           profiles?: AgentProfileSummary[];
           laneProfiles?: AgentProfileSummary[];
         };
@@ -85,28 +97,35 @@ export function AgentsSidebar() {
           byRole[`${profile.role.toLowerCase()}:${laneKey}`] = profile;
         }
         setProfileMap(byRole);
+        setRuntimeAgents(data.runtimeAgents || []);
       } catch {
-        if (!cancelled) setProfileMap({});
+        if (!cancelled) {
+          setRuntimeAgents([]);
+          setProfileMap({});
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     };
+
     void loadProfiles();
+    if (activeProjectId) {
+      intervalId = setInterval(() => {
+        void loadProfiles();
+      }, 20_000);
+    }
+
     return () => {
       cancelled = true;
+      if (intervalId) clearInterval(intervalId);
     };
   }, [activeProjectId]);
 
-  if (!agents) {
-    return (
-      <div className="p-4">
-        <p className="mc-header-mono">Loading agents...</p>
-      </div>
-    );
-  }
-
   const sections = STATUS_ORDER.map((status) => ({
     label: status.charAt(0) + status.slice(1).toLowerCase(),
-    agents: agents.filter((agent) => agent.status === status),
+    agents: runtimeAgents.filter((agent) => agent.status === status),
   })).filter((section) => section.agents.length > 0);
+
   const humanMembers = members
     .slice()
     .sort((a, b) => {
@@ -116,14 +135,25 @@ export function AgentsSidebar() {
       return (b.activeSeconds || 0) - (a.activeSeconds || 0);
     });
 
+  if (loading && runtimeAgents.length === 0) {
+    return (
+      <div className="p-4">
+        <p className="mc-header-mono flex items-center gap-2">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Loading agents...
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 space-y-4">
       <div className="flex items-center gap-2">
         <Bot className="h-4 w-4" style={{ color: 'var(--mc-text-secondary)' }} />
-        <span className="mc-header-mono">Agents ({agents.length})</span>
+        <span className="mc-header-mono">Agents ({runtimeAgents.length})</span>
       </div>
 
-      {agents.length === 0 && (
+      {runtimeAgents.length === 0 && (
         <p className="text-xs" style={{ color: 'var(--mc-text-muted)' }}>
           No agents registered yet
         </p>
@@ -141,13 +171,11 @@ export function AgentsSidebar() {
                   : profileMap[agent.role.toLowerCase()];
               return (
                 <AgentCard
-                  key={agent._id}
+                  key={agent.id}
                   agent={agent}
                   profile={profile}
-                  expanded={expandedId === String(agent._id)}
-                  onToggle={() =>
-                    setExpandedId((prev) => (prev === String(agent._id) ? null : String(agent._id)))
-                  }
+                  expanded={expandedId === agent.id}
+                  onToggle={() => setExpandedId((prev) => (prev === agent.id ? null : agent.id))}
                 />
               );
             })}
@@ -201,7 +229,13 @@ function timeAgoFromIso(iso: string | null | undefined): string {
   return `${Math.floor(diffMs / 86_400_000)}d ago`;
 }
 
-function AgentAvatar({ agent, profile }: { agent: Agent; profile?: AgentProfileSummary }) {
+function AgentAvatar({
+  agent,
+  profile,
+}: {
+  agent: RuntimeAgentSummary;
+  profile?: AgentProfileSummary;
+}) {
   if (profile?.avatarUrl) {
     return (
       <Image
@@ -319,15 +353,16 @@ function AgentCard({
   expanded,
   onToggle,
 }: {
-  agent: Agent;
+  agent: RuntimeAgentSummary;
   profile?: AgentProfileSummary;
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const skills = useMemo(() => agent.skills?.slice(0, 8) || [], [agent.skills]);
   const tools = useMemo(() => profile?.tools?.slice(0, 6) || [], [profile?.tools]);
-  const cardTitle = profile?.displayName || agent.name;
-  const runtimeIdentity = `${agent.name}${agent.laneKey ? ` · lane ${agent.laneKey}` : ''}`;
+  const cardTitle = agent.name || profile?.displayName || agent.role;
+  const runtimeIdentity = [agent.slotKey, agent.laneKey ? `lane ${agent.laneKey}` : null]
+    .filter(Boolean)
+    .join(' · ');
   const subtitle = profile?.shortDescription || agent.specialization || `${agent.role} agent`;
 
   return (
@@ -370,18 +405,6 @@ function AgentCard({
             <p className="text-[11px] leading-4" style={{ color: 'var(--mc-text-secondary)' }}>
               {profile.mission}
             </p>
-          )}
-          {skills.length > 0 && (
-            <div>
-              <p className="mc-header-mono mb-1">Skills</p>
-              <div className="flex flex-wrap gap-1">
-                {skills.map((skill) => (
-                  <span key={skill} className="mc-tag">
-                    {skill}
-                  </span>
-                ))}
-              </div>
-            </div>
           )}
           {tools.length > 0 && (
             <div>

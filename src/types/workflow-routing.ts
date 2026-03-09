@@ -1,5 +1,7 @@
 import type { AgentLaneKey } from '@/types/agent-runtime';
 import type { ContentFormat } from '@/types/document';
+import type { AIAction } from '@/types/ai';
+import type { WorkflowProfileStage } from '@/types/workflow-profile';
 
 export const ROUTABLE_WORKFLOW_STAGES = [
   'research',
@@ -33,5 +35,15 @@ export interface WorkflowStagePlanSnapshot {
   contentFormat: ContentFormat;
   laneKey: AgentLaneKey;
   owners: Record<RoutableWorkflowStage, WorkflowStagePlanOwner>;
+  workflowProfile: {
+    key: string;
+    name: string;
+    source: 'project' | 'global' | 'fallback';
+    stageSequence: WorkflowProfileStage[];
+    stageEnabled: Record<WorkflowProfileStage, boolean>;
+    stageActions: Record<WorkflowProfileStage, AIAction>;
+    stageGuidance: Partial<Record<WorkflowProfileStage, string>>;
+  };
+  enabledStageSequence: WorkflowProfileStage[];
   createdAt: number;
 }

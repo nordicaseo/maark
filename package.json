@@ -12,11 +12,13 @@
     "convex:codegen": "npx convex codegen",
     "convex:deploy": "npx convex deploy",
     "convex:verify-public": "node scripts/verify-convex-public-functions.mjs",
-    "ci:release-guard": "npm run lint && npm run test && npm run build",
+    "guard:project": "node scripts/verify-project-guardrails.mjs",
+    "guard:vercel-production": "node scripts/verify-vercel-domain-aliases.mjs",
+    "ci:release-guard": "npm run guard:project && npm run lint && npm run test && npm run build",
     "ci:convex-guard": "npm run convex:codegen && npm run convex:verify-public",
-    "vercel:verify-alias": "node scripts/verify-vercel-domain-aliases.mjs",
-    "release:guard": "npm run convex:deploy && npm run convex:verify-public && npm run vercel:verify-alias",
-    "ship:vercel": "npm run convex:codegen && npm run build && npm run convex:deploy && npm run convex:verify-public && vercel --prod && npm run vercel:verify-alias"
+    "vercel:verify-alias": "npm run guard:vercel-production",
+    "release:guard": "npm run guard:project && npm run convex:deploy && npm run convex:verify-public && npm run guard:vercel-production",
+    "ship:vercel": "npm run guard:project && npm run convex:codegen && npm run build && npm run convex:deploy && npm run convex:verify-public && vercel --prod && npm run guard:vercel-production"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

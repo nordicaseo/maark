@@ -154,6 +154,7 @@ export const projectAgentProfiles = pgTable('project_agent_profiles', {
   mission: text('mission'),
   isEnabled: boolean('is_enabled').notNull().default(true),
   fileBundle: jsonb('file_bundle'),
+  knowledgeParts: jsonb('knowledge_parts'),
   skillIds: jsonb('skill_ids'),
   modelOverrides: jsonb('model_overrides'),
   heartbeatMeta: jsonb('heartbeat_meta'),
@@ -177,6 +178,7 @@ export const projectAgentLaneProfiles = pgTable('project_agent_lane_profiles', {
   mission: text('mission'),
   isEnabled: boolean('is_enabled').notNull().default(true),
   fileBundle: jsonb('file_bundle'),
+  knowledgeParts: jsonb('knowledge_parts'),
   skillIds: jsonb('skill_ids'),
   modelOverrides: jsonb('model_overrides'),
   heartbeatMeta: jsonb('heartbeat_meta'),
@@ -299,6 +301,39 @@ export const contentTemplateAssignments = pgTable('content_template_assignments'
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => [
   uniqueIndex('content_template_assignments_scope_key_format_unique').on(
+    table.scopeKey,
+    table.contentFormat
+  ),
+]);
+
+export const workflowProfiles = pgTable('workflow_profiles', {
+  id: serial('id').primaryKey(),
+  key: varchar('key', { length: 120 }).notNull().unique(),
+  name: varchar('name', { length: 200 }).notNull(),
+  description: text('description'),
+  stageSequence: jsonb('stage_sequence'),
+  stageEnabled: jsonb('stage_enabled'),
+  stageActions: jsonb('stage_actions'),
+  stageGuidance: jsonb('stage_guidance'),
+  isSystem: boolean('is_system').notNull().default(true),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const workflowProfileAssignments = pgTable('workflow_profile_assignments', {
+  id: serial('id').primaryKey(),
+  scope: varchar('scope', { length: 24 }).notNull().default('global'),
+  scopeKey: varchar('scope_key', { length: 64 }).notNull().default('global'),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+  contentFormat: varchar('content_format', { length: 80 }).notNull(),
+  profileKey: varchar('profile_key', { length: 120 })
+    .notNull()
+    .references(() => workflowProfiles.key, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('workflow_profile_assignments_scope_key_format_unique').on(
     table.scopeKey,
     table.contentFormat
   ),

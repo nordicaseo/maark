@@ -6,6 +6,7 @@ import { dbNow } from '@/db/utils';
 import { projectWorkflowStageRoutes, projects } from '@/db/schema';
 import { getConvexClient } from '@/lib/convex/server';
 import { resolveLaneFromContentType } from '@/lib/content-workflow-taxonomy';
+import { resolveWorkflowProfilePolicy } from '@/lib/workflow/workflow-profiles';
 import {
   parseProjectRuntimeSettings,
   syncProjectDedicatedAgentPool,
@@ -19,6 +20,7 @@ import type {
   WorkflowStageRoute,
 } from '@/types/workflow-routing';
 import { ROUTABLE_WORKFLOW_STAGES } from '@/types/workflow-routing';
+import type { WorkflowProfileStage } from '@/types/workflow-profile';
 
 const SUPPORTED_CONTENT_FORMATS: ContentFormat[] = [
   'blog_post',
@@ -837,6 +839,7 @@ export async function repairProjectWriterRoutes(args: {
     template: runtime.staffingTemplate,
     roleCounts: runtime.roleCounts,
     laneCapacity: runtime.laneCapacity,
+    userId: args.userId ?? null,
   });
 
   const routes = await listProjectWorkflowStageRoutes(args.projectId);
@@ -985,11 +988,15 @@ export async function resolveWorkflowStagePlanSnapshot(args: {
     }));
 
   const laneKey = normalizeLaneKey(args.laneKey ?? route.laneKey);
+  const workflowProfile = await resolveWorkflowProfilePolicy({
+    projectId: args.projectId,
+    contentFormat: args.contentFormat,
+  });
   assertStrictBlogWriterRoute({
     projectId: args.projectId,
     contentFormat: args.contentFormat,
     laneKey,
-    writingSlot: route.stageSlots.writing || '',
+    writingSlot: workflowProfile.stageEnabled.writing ? route.stageSlots.writing || '' : `p${args.projectId}:writer:${laneKey}:1`,
   });
   const normalizedSlots = {
     ...route.stageSlots,
@@ -1028,11 +1035,17 @@ export async function resolveWorkflowStagePlanSnapshot(args: {
     })
   ) as WorkflowStagePlanSnapshot['owners'];
 
+  const enabledStageSequence = workflowProfile.stageSequence.filter(
+    (stage) => workflowProfile.stageEnabled[stage] !== false
+  ) as WorkflowProfileStage[];
+
   return {
     projectId: args.projectId,
     contentFormat: args.contentFormat,
     laneKey,
     owners,
+    workflowProfile,
+    enabledStageSequence,
     createdAt: Date.now(),
   };
 }

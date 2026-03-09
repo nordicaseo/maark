@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: 'Maark - AI Content Writing Platform',
-  description: 'AI-powered content writing platform with skills, projects, and multi-provider AI',
+  description: 'AI-powered content writing platform with project-scoped agents and workflow automation',
 };
 
 export default function RootLayout({

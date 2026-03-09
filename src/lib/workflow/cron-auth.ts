@@ -8,9 +8,19 @@ export function extractBearerToken(
   return token.length > 0 ? token : null;
 }
 
+function expectedWorkflowCronSecrets(): string[] {
+  return Array.from(
+    new Set(
+      [process.env.WORKFLOW_CRON_SECRET, process.env.CRON_SECRET]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+    )
+  );
+}
+
 export function isWorkflowCronAuthorized(headers: Headers): boolean {
-  const expected = String(process.env.WORKFLOW_CRON_SECRET || '').trim();
-  if (!expected) return false;
+  const expectedSecrets = expectedWorkflowCronSecrets();
+  if (expectedSecrets.length === 0) return false;
   const token = extractBearerToken(headers.get('authorization'));
-  return token === expected;
+  return token !== null && expectedSecrets.includes(token);
 }

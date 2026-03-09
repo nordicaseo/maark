@@ -358,6 +358,7 @@ export async function POST(req: NextRequest) {
         template: normalizedStaffingTemplate,
         roleCounts: resolvedRoleCounts,
         laneCapacity: normalizedLaneCapacity,
+        userId: auth.user.id,
       });
       await setBootstrapStage('creating_mission_control', 'done', 'Dedicated Mission Control team ready.');
 

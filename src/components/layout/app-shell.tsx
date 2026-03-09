@@ -106,7 +106,7 @@ export function AppShell({ documentId }: AppShellProps) {
 
   // Live AI generation: streams tokens directly into the editor
   const handleLiveGenerate = useCallback(
-    async (instruction: string, tone: string, skillContent?: string) => {
+    async (instruction: string, tone: string) => {
       const editor = editorRef.current;
       if (!editor || !document) return;
 
@@ -128,7 +128,6 @@ export function AppShell({ documentId }: AppShellProps) {
             targetKeyword: document.targetKeyword,
             existingContent: plainText.slice(0, 2000),
             tone,
-            skillContent,
             documentId: document.id,
             projectId: document.projectId,
           }),

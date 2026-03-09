@@ -24,6 +24,11 @@ import {
   type RoutableWorkflowStage,
 } from '@/types/workflow-routing';
 import type { AgentLaneKey } from '@/types/agent-runtime';
+import type {
+  ResolvedWorkflowProfilePolicy,
+  WorkflowProfileAssignment,
+  WorkflowProfileConfig,
+} from '@/types/workflow-profile';
 
 interface Project {
   id: number;
@@ -104,6 +109,13 @@ export default function SuperAdminTemplatesPage() {
   const [assignments, setAssignments] = useState<TemplateAssignment[]>([]);
   const [routingRoutes, setRoutingRoutes] = useState<WorkflowRouteConfig[]>([]);
   const [routingAgents, setRoutingAgents] = useState<RoutingRuntimeAgent[]>([]);
+  const [routingWorkflowProfiles, setRoutingWorkflowProfiles] = useState<
+    Partial<Record<ContentFormat, ResolvedWorkflowProfilePolicy>>
+  >({});
+  const [workflowProfiles, setWorkflowProfiles] = useState<WorkflowProfileConfig[]>([]);
+  const [workflowProfileAssignments, setWorkflowProfileAssignments] = useState<
+    WorkflowProfileAssignment[]
+  >([]);
   const [routingSavingFormat, setRoutingSavingFormat] = useState<ContentFormat | null>(null);
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string>('');
   const [draft, setDraft] = useState<ContentTemplateConfig>(() => emptyTemplate());
@@ -133,16 +145,23 @@ export default function SuperAdminTemplatesPage() {
             ? `/api/super-admin/templates/assignments?projectId=${selectedProjectId}`
             : '/api/super-admin/templates/assignments'
         ),
+        fetch(
+          selectedProjectId
+            ? `/api/super-admin/workflow-profiles?projectId=${selectedProjectId}`
+            : '/api/super-admin/workflow-profiles'
+        ),
       ];
       if (selectedProjectId) {
         requests.push(fetch(`/api/admin/agents/routing?projectId=${selectedProjectId}`));
       }
-      const [projectsRes, templatesRes, assignmentsRes, routingRes] = await Promise.all(requests);
+      const [projectsRes, templatesRes, assignmentsRes, workflowProfilesRes, routingRes] =
+        await Promise.all(requests);
 
       if (
         !projectsRes.ok ||
         !templatesRes.ok ||
         !assignmentsRes.ok ||
+        !workflowProfilesRes.ok ||
         (selectedProjectId && (!routingRes || !routingRes.ok))
       ) {
         throw new Error('Failed to load templates data');
@@ -153,10 +172,15 @@ export default function SuperAdminTemplatesPage() {
         templates: ContentTemplateConfig[];
       };
       const assignmentData = (await assignmentsRes.json()) as TemplateAssignment[];
+      const workflowProfilesData = (await workflowProfilesRes.json()) as {
+        profiles?: WorkflowProfileConfig[];
+        assignments?: WorkflowProfileAssignment[];
+      };
       const routingData = routingRes
         ? ((await routingRes.json()) as {
             routes?: WorkflowRouteConfig[];
             runtimeAgents?: RoutingRuntimeAgent[];
+            workflowProfiles?: Partial<Record<ContentFormat, ResolvedWorkflowProfilePolicy>>;
           })
         : null;
 
@@ -165,6 +189,9 @@ export default function SuperAdminTemplatesPage() {
       setAssignments(assignmentData || []);
       setRoutingRoutes(routingData?.routes || []);
       setRoutingAgents(routingData?.runtimeAgents || []);
+      setRoutingWorkflowProfiles(routingData?.workflowProfiles || {});
+      setWorkflowProfiles(workflowProfilesData.profiles || []);
+      setWorkflowProfileAssignments(workflowProfilesData.assignments || []);
 
       if (!selectedTemplateKey && templatesData.templates?.length) {
         setSelectedTemplateKey(templatesData.templates[0].key);
@@ -238,6 +265,38 @@ export default function SuperAdminTemplatesPage() {
     [refreshData, selectedProjectId]
   );
 
+  const upsertWorkflowProfileAssignment = useCallback(
+    async (contentFormat: ContentFormat, profileKey: string, scope: 'global' | 'project') => {
+      setSaving(true);
+      setError(null);
+      setNotice(null);
+      try {
+        const response = await fetch('/api/super-admin/workflow-profiles/assignments', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contentFormat,
+            profileKey,
+            projectId: scope === 'project' ? selectedProjectId : null,
+          }),
+        });
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(payload.error || 'Failed to save workflow profile assignment');
+        }
+        setNotice(
+          `Workflow profile saved: ${CONTENT_FORMAT_LABELS[contentFormat]} -> ${profileKey} (${scope}).`
+        );
+        await refreshData();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to save workflow profile assignment');
+      } finally {
+        setSaving(false);
+      }
+    },
+    [refreshData, selectedProjectId]
+  );
+
   const assignmentMap = useMemo(() => {
     const map = new Map<string, TemplateAssignment>();
     for (const assignment of assignments) {
@@ -246,6 +305,15 @@ export default function SuperAdminTemplatesPage() {
     }
     return map;
   }, [assignments]);
+
+  const workflowProfileAssignmentMap = useMemo(() => {
+    const map = new Map<string, WorkflowProfileAssignment>();
+    for (const assignment of workflowProfileAssignments) {
+      const key = `${assignment.scope}:${assignment.projectId ?? 'global'}:${assignment.contentFormat}`;
+      map.set(key, assignment);
+    }
+    return map;
+  }, [workflowProfileAssignments]);
 
   const routeByFormat = useMemo(() => {
     const map = new Map<ContentFormat, WorkflowRouteConfig>();
@@ -348,7 +416,11 @@ export default function SuperAdminTemplatesPage() {
           if (stage === 'writing' && laneKey && agent.laneKey !== laneKey) return false;
           return agent.slotKey.trim().length > 0;
         })
-        .sort((a, b) => a.name.localeCompare(b.name));
+        .sort((a, b) => {
+          const nameSort = a.name.localeCompare(b.name);
+          if (nameSort !== 0) return nameSort;
+          return a.slotKey.localeCompare(b.slotKey);
+        });
     },
     [routingAgents]
   );
@@ -625,8 +697,19 @@ export default function SuperAdminTemplatesPage() {
                 const projectAssignment = selectedProjectId
                   ? assignmentMap.get(`project:${selectedProjectId}:${contentFormat}`)
                   : null;
+                const globalWorkflowProfile = workflowProfileAssignmentMap.get(
+                  `global:global:${contentFormat}`
+                );
+                const projectWorkflowProfile = selectedProjectId
+                  ? workflowProfileAssignmentMap.get(
+                      `project:${selectedProjectId}:${contentFormat}`
+                    )
+                  : null;
                 return (
-                  <div key={contentFormat} className="grid md:grid-cols-[200px_minmax(0,1fr)_minmax(0,1fr)] gap-2 items-center text-sm border border-border rounded-md p-2">
+                  <div
+                    key={contentFormat}
+                    className="grid md:grid-cols-[160px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 items-center text-sm border border-border rounded-md p-2"
+                  >
                     <p className="font-medium">{label}</p>
                     <Select
                       value={globalAssignment?.templateKey || ''}
@@ -644,6 +727,23 @@ export default function SuperAdminTemplatesPage() {
                       </SelectContent>
                     </Select>
                     <Select
+                      value={globalWorkflowProfile?.profileKey || ''}
+                      onValueChange={(value) =>
+                        void upsertWorkflowProfileAssignment(contentFormat, value, 'global')
+                      }
+                    >
+                      <SelectTrigger className="h-8">
+                        <SelectValue placeholder="Global workflow profile" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {workflowProfiles.map((profile) => (
+                          <SelectItem key={`${contentFormat}-wg-${profile.key}`} value={profile.key}>
+                            {profile.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
                       value={projectAssignment?.templateKey || ''}
                       onValueChange={(value) => void upsertAssignment(contentFormat, value, 'project')}
                       disabled={!selectedProjectId}
@@ -655,6 +755,30 @@ export default function SuperAdminTemplatesPage() {
                         {templates.map((template) => (
                           <SelectItem key={`${contentFormat}-p-${template.key}`} value={template.key}>
                             {template.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={projectWorkflowProfile?.profileKey || ''}
+                      onValueChange={(value) =>
+                        void upsertWorkflowProfileAssignment(contentFormat, value, 'project')
+                      }
+                      disabled={!selectedProjectId}
+                    >
+                      <SelectTrigger className="h-8">
+                        <SelectValue
+                          placeholder={
+                            selectedProjectId
+                              ? 'Project workflow profile'
+                              : 'Select project for override'
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {workflowProfiles.map((profile) => (
+                          <SelectItem key={`${contentFormat}-wp-${profile.key}`} value={profile.key}>
+                            {profile.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -714,6 +838,7 @@ export default function SuperAdminTemplatesPage() {
               <div className="space-y-3">
                 {draft.contentFormats.map((contentFormat) => {
                   const route = routeByFormat.get(contentFormat);
+                  const workflowProfile = routingWorkflowProfiles[contentFormat];
                   const laneKey = (route?.laneKey ||
                     resolveLaneFromContentType(contentFormat)) as AgentLaneKey;
                   return (
@@ -728,9 +853,23 @@ export default function SuperAdminTemplatesPage() {
                           <span className="text-[11px] text-muted-foreground">Lane: {laneKey}</span>
                         )}
                       </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        Workflow profile:{' '}
+                        <span className="font-medium">
+                          {workflowProfile?.name || workflowProfile?.key || 'Unresolved'}
+                        </span>
+                        {workflowProfile?.stageSequence && workflowProfile.stageSequence.length > 0
+                          ? ` · Sequence: ${workflowProfile.stageSequence
+                              .filter((stage) => workflowProfile.stageEnabled[stage] !== false)
+                              .join(' -> ')}`
+                          : ''}
+                      </div>
                       <div className="space-y-2">
                         {ROUTABLE_WORKFLOW_STAGES.map((stage) => {
-                          const stageEnabled = route?.stageEnabled?.[stage] !== false;
+                          const profileStageEnabled =
+                            workflowProfile?.stageEnabled?.[stage] !== false;
+                          const stageEnabled =
+                            profileStageEnabled && route?.stageEnabled?.[stage] !== false;
                           const slotValue = route?.stageSlots?.[stage] || '__none';
                           const options = optionsForStage(stage, laneKey);
                           return (
@@ -742,6 +881,7 @@ export default function SuperAdminTemplatesPage() {
                               <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
                                 <Checkbox
                                   checked={stageEnabled}
+                                  disabled={!profileStageEnabled}
                                   onCheckedChange={(checked) =>
                                     void saveRouteStageEnabled(
                                       contentFormat,
@@ -751,10 +891,11 @@ export default function SuperAdminTemplatesPage() {
                                     )
                                   }
                                 />
-                                Enabled
+                                {profileStageEnabled ? 'Enabled' : 'Disabled by workflow profile'}
                               </label>
                               <Select
                                 value={slotValue}
+                                disabled={!profileStageEnabled}
                                 onValueChange={(value) =>
                                   void saveRouteStageSlot(
                                     contentFormat,
@@ -770,8 +911,8 @@ export default function SuperAdminTemplatesPage() {
                                 <SelectContent>
                                   <SelectItem value="__none">Unconfigured</SelectItem>
                                   {options.map((agent) => (
-                                    <SelectItem key={`${stage}-${agent.id}`} value={agent.slotKey}>
-                                      {agent.name} · {agent.status}
+                                  <SelectItem key={`${stage}-${agent.id}`} value={agent.slotKey}>
+                                      {agent.name} · {agent.slotKey} · {agent.status}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>

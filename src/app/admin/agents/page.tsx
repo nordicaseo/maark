@@ -26,7 +26,9 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   AGENT_FILE_KEYS,
+  AGENT_KNOWLEDGE_PART_TYPES,
   FIXED_AGENT_ROLES,
+  type AgentKnowledgePart,
   type AgentFileKey,
   type AgentRole,
   type ProjectAgentFileBundle,
@@ -44,13 +46,6 @@ import {
 interface Project {
   id: number;
   name: string;
-}
-
-interface Skill {
-  id: number;
-  projectId: number | null;
-  name: string;
-  isGlobal: number;
 }
 
 interface HeartbeatResponse {
@@ -105,7 +100,7 @@ interface ProfileDraft {
   mission: string;
   isEnabled: boolean;
   fileBundle: ProjectAgentFileBundle;
-  skillIds: number[];
+  knowledgeParts: AgentKnowledgePart[];
   modelOverrides: ProjectAgentModelOverrides;
 }
 
@@ -159,7 +154,7 @@ function mapProfileToDraft(profile: ProjectAgentProfile | null): ProfileDraft {
       mission: '',
       isEnabled: true,
       fileBundle: { ...EMPTY_FILE_BUNDLE },
-      skillIds: [],
+      knowledgeParts: [],
       modelOverrides: {},
     };
   }
@@ -171,15 +166,48 @@ function mapProfileToDraft(profile: ProjectAgentProfile | null): ProfileDraft {
     mission: profile.mission || '',
     isEnabled: profile.isEnabled,
     fileBundle: { ...EMPTY_FILE_BUNDLE, ...profile.fileBundle },
-    skillIds: profile.skillIds || [],
+    knowledgeParts: profile.knowledgeParts || [],
     modelOverrides: profile.modelOverrides || {},
   };
+}
+
+function knowledgePartValue(
+  parts: AgentKnowledgePart[],
+  partType: (typeof AGENT_KNOWLEDGE_PART_TYPES)[number]
+): string {
+  return parts.find((part) => part.partType === partType)?.content || '';
+}
+
+function upsertKnowledgePart(
+  parts: AgentKnowledgePart[],
+  partType: (typeof AGENT_KNOWLEDGE_PART_TYPES)[number],
+  content: string
+): AgentKnowledgePart[] {
+  const trimmed = content.trim();
+  const existing = parts.find((part) => part.partType === partType);
+  if (!trimmed) {
+    return parts.filter((part) => part.partType !== partType);
+  }
+  if (existing) {
+    return parts.map((part) =>
+      part.partType === partType ? { ...part, content: trimmed } : part
+    );
+  }
+  return [
+    ...parts,
+    {
+      id: `${partType}:${parts.length}`,
+      partType,
+      label: partType.replace(/_/g, ' '),
+      content: trimmed,
+      sortOrder: parts.length,
+    },
+  ];
 }
 
 export default function AdminAgentsPage() {
   const { activeProjectId, setActiveProjectId } = useActiveProject();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [skills, setSkills] = useState<Skill[]>([]);
   const [profiles, setProfiles] = useState<ProjectAgentProfile[]>([]);
   const [laneProfiles, setLaneProfiles] = useState<ProjectAgentLaneProfile[]>([]);
   const [seededRoles, setSeededRoles] = useState<AgentRole[]>([]);
@@ -193,6 +221,10 @@ export default function AdminAgentsPage() {
   const [runtimeHealth, setRuntimeHealth] = useState<RuntimePoolHealth | null>(null);
   const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [heartbeatRunning, setHeartbeatRunning] = useState(false);
+  const [generationRunning, setGenerationRunning] = useState(false);
+  const [generationDescription, setGenerationDescription] = useState('');
+  const [generationUrls, setGenerationUrls] = useState('');
+  const [generationFiles, setGenerationFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingLaneProfile, setSavingLaneProfile] = useState(false);
@@ -248,13 +280,6 @@ export default function AdminAgentsPage() {
     if (!res.ok) throw new Error('Failed to load shared USER profile');
     const data = (await res.json()) as { content?: string };
     setSharedUserContent(data.content || '');
-  }, []);
-
-  const fetchSkills = useCallback(async (projectId: number) => {
-    const res = await fetch(`/api/skills?projectId=${projectId}`);
-    if (!res.ok) throw new Error('Failed to load skills');
-    const data = (await res.json()) as Skill[];
-    setSkills(data);
   }, []);
 
   const fetchProfiles = useCallback(async (projectId: number) => {
@@ -341,7 +366,6 @@ export default function AdminAgentsPage() {
     Promise.all([
       fetchProfiles(activeProjectId),
       fetchLaneProfiles(activeProjectId),
-      fetchSkills(activeProjectId),
       fetchRuntimeHealth(activeProjectId),
       fetchProjectRuntimeSettings(activeProjectId),
     ])
@@ -353,19 +377,9 @@ export default function AdminAgentsPage() {
     activeProjectId,
     fetchProfiles,
     fetchLaneProfiles,
-    fetchSkills,
     fetchRuntimeHealth,
     fetchProjectRuntimeSettings,
   ]);
-
-  const toggleSkill = useCallback((skillId: number, checked: boolean) => {
-    setDraft((prev) => {
-      const set = new Set(prev.skillIds);
-      if (checked) set.add(skillId);
-      else set.delete(skillId);
-      return { ...prev, skillIds: Array.from(set) };
-    });
-  }, []);
 
   const saveSharedUser = useCallback(async () => {
     setSavingSharedUser(true);
@@ -417,7 +431,7 @@ export default function AdminAgentsPage() {
           mission: draft.mission,
           isEnabled: draft.isEnabled,
           fileBundle: draft.fileBundle,
-          skillIds: draft.skillIds,
+          knowledgeParts: draft.knowledgeParts,
           modelOverrides: parsedModelOverrides,
         }),
       });
@@ -465,7 +479,7 @@ export default function AdminAgentsPage() {
           mission: laneDraft.mission,
           isEnabled: laneDraft.isEnabled,
           fileBundle: laneDraft.fileBundle,
-          skillIds: laneDraft.skillIds,
+          knowledgeParts: laneDraft.knowledgeParts,
           modelOverrides: parsedModelOverrides,
         }),
       });
@@ -487,6 +501,82 @@ export default function AdminAgentsPage() {
     laneDraft,
     laneModelOverridesJson,
     selectedLane,
+  ]);
+
+  const runGeneration = useCallback(async () => {
+    if (!activeProjectId) return;
+    setGenerationRunning(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const role = selectedRole;
+      const laneKey = role === 'writer' ? selectedLane : undefined;
+      if (generationFiles.length > 0) {
+        const formData = new FormData();
+        formData.set('projectId', String(activeProjectId));
+        formData.set('role', role);
+        if (laneKey) formData.set('laneKey', laneKey);
+        if (generationDescription.trim()) {
+          formData.set('description', generationDescription.trim());
+        }
+        formData.set('apply', 'true');
+        for (const file of generationFiles) {
+          formData.append('files', file);
+        }
+        const response = await fetch('/api/admin/agents/generate/from-files', {
+          method: 'POST',
+          body: formData,
+        });
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(payload.error || 'Failed to generate agent profile from files');
+        }
+      } else {
+        const urls = generationUrls
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .slice(0, 5);
+        const response = await fetch('/api/admin/agents/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: activeProjectId,
+            role,
+            laneKey,
+            description: generationDescription.trim() || undefined,
+            urls,
+            apply: true,
+          }),
+        });
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(payload.error || 'Failed to generate agent profile');
+        }
+      }
+      await Promise.all([
+        fetchProfiles(activeProjectId),
+        fetchLaneProfiles(activeProjectId),
+      ]);
+      setNotice(
+        `Generated and applied agent knowledge for ${roleLabel(selectedRole)}${
+          selectedRole === 'writer' ? ` (${laneLabel(selectedLane)} lane)` : ''
+        }.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to generate agent profile');
+    } finally {
+      setGenerationRunning(false);
+    }
+  }, [
+    activeProjectId,
+    fetchLaneProfiles,
+    fetchProfiles,
+    generationDescription,
+    generationFiles,
+    generationUrls,
+    selectedLane,
+    selectedRole,
   ]);
 
   const syncLaneRuntime = useCallback(async () => {
@@ -593,7 +683,7 @@ export default function AdminAgentsPage() {
             <Bot className="h-6 w-6" /> Agents
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Configure project role profiles, file bundles, skills, model overrides, and heartbeat.
+            Configure project role profiles, knowledge, file bundles, model overrides, and heartbeat.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -898,6 +988,46 @@ export default function AdminAgentsPage() {
               />
             </div>
 
+            <div className="mt-3 space-y-2 rounded-md border border-border p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold">Auto Generate Identity + Knowledge</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={runGeneration}
+                  disabled={!activeProjectId || generationRunning}
+                >
+                  {generationRunning ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+                  ) : (
+                    <RefreshCcw className="h-3.5 w-3.5 mr-1" />
+                  )}
+                  Generate
+                </Button>
+              </div>
+              <Textarea
+                value={generationDescription}
+                onChange={(e) => setGenerationDescription(e.target.value)}
+                className="min-h-[72px] text-xs"
+                placeholder="Describe the project, audience, products/services, and writing goals..."
+              />
+              <Textarea
+                value={generationUrls}
+                onChange={(e) => setGenerationUrls(e.target.value)}
+                className="min-h-[64px] text-xs"
+                placeholder="Optional source URLs (one per line)"
+              />
+              <Input
+                type="file"
+                multiple
+                accept=".txt,.md,.markdown,.csv"
+                onChange={(e) => setGenerationFiles(Array.from(e.target.files || []))}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Uses Super Admin AI model action `skill_generation` for compatibility.
+              </p>
+            </div>
+
             <div className="mt-3 text-xs text-muted-foreground">
               Last heartbeat: {formatDate(selectedProfile?.heartbeatMeta?.lastRunAt)}
               {' · '}
@@ -907,32 +1037,33 @@ export default function AdminAgentsPage() {
 
           <div className="border border-border rounded-lg bg-card p-4">
             <h3 className="font-semibold text-sm mb-2 flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4" /> Role Skill Mapping
+              <ShieldCheck className="h-4 w-4" /> Agent Knowledge
             </h3>
             <p className="text-xs text-muted-foreground mb-3">
-              Role-mapped skills are injected first for this role before task/project/global skill fallback.
+              Project-scoped knowledge for this agent role. This is the active instruction layer for workflows.
             </p>
-            <div className="grid md:grid-cols-2 gap-2">
-              {skills.map((skill) => {
-                const checked = draft.skillIds.includes(skill.id);
-                return (
-                  <label
-                    key={skill.id}
-                    className="flex items-center gap-2 border border-border rounded-md px-2 py-2 text-sm"
-                  >
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={(value) => toggleSkill(skill.id, value === true)}
-                    />
-                    <span className="truncate">{skill.name}</span>
-                    {skill.isGlobal === 1 && (
-                      <Badge variant="outline" className="ml-auto text-[10px]">
-                        Global
-                      </Badge>
-                    )}
+            <div className="space-y-3">
+              {AGENT_KNOWLEDGE_PART_TYPES.map((partType) => (
+                <div key={`role-knowledge-${partType}`}>
+                  <label className="text-xs font-medium mb-1 block capitalize">
+                    {partType.replace(/_/g, ' ')}
                   </label>
-                );
-              })}
+                  <Textarea
+                    value={knowledgePartValue(draft.knowledgeParts, partType)}
+                    onChange={(e) =>
+                      setDraft((prev) => ({
+                        ...prev,
+                        knowledgeParts: upsertKnowledgePart(
+                          prev.knowledgeParts,
+                          partType,
+                          e.target.value
+                        ),
+                      }))
+                    }
+                    className="min-h-[84px] text-xs"
+                  />
+                </div>
+              ))}
             </div>
           </div>
 
@@ -986,7 +1117,7 @@ export default function AdminAgentsPage() {
                   Writer Lane Profile: {laneLabel(selectedLane)}
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Full file profile, skill mapping, and model overrides for the {laneLabel(selectedLane)} lane.
+                  Full file profile, lane knowledge, and model overrides for the {laneLabel(selectedLane)} lane.
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1154,33 +1285,29 @@ export default function AdminAgentsPage() {
             </div>
 
             <div>
-              <h4 className="font-semibold text-sm mb-2">Lane Skill Mapping</h4>
-              <div className="grid md:grid-cols-2 gap-2">
-                {skills.map((skill) => {
-                  const checked = laneDraft.skillIds.includes(skill.id);
-                  return (
-                    <label
-                      key={`lane-${skill.id}`}
-                      className="flex items-center gap-2 border border-border rounded-md px-2 py-2 text-sm"
-                    >
-                      <Checkbox
-                        checked={checked}
-                        onCheckedChange={(value) => {
-                          const set = new Set(laneDraft.skillIds);
-                          if (value === true) set.add(skill.id);
-                          else set.delete(skill.id);
-                          setLaneDraft((prev) => ({ ...prev, skillIds: Array.from(set) }));
-                        }}
-                      />
-                      <span className="truncate">{skill.name}</span>
-                      {skill.isGlobal === 1 && (
-                        <Badge variant="outline" className="ml-auto text-[10px]">
-                          Global
-                        </Badge>
-                      )}
+              <h4 className="font-semibold text-sm mb-2">Lane Knowledge</h4>
+              <div className="space-y-3">
+                {AGENT_KNOWLEDGE_PART_TYPES.map((partType) => (
+                  <div key={`lane-knowledge-${partType}`}>
+                    <label className="text-xs font-medium mb-1 block capitalize">
+                      {partType.replace(/_/g, ' ')}
                     </label>
-                  );
-                })}
+                    <Textarea
+                      value={knowledgePartValue(laneDraft.knowledgeParts, partType)}
+                      onChange={(e) =>
+                        setLaneDraft((prev) => ({
+                          ...prev,
+                          knowledgeParts: upsertKnowledgePart(
+                            prev.knowledgeParts,
+                            partType,
+                            e.target.value
+                          ),
+                        }))
+                      }
+                      className="min-h-[84px] text-xs"
+                    />
+                  </div>
+                ))}
               </div>
             </div>
 

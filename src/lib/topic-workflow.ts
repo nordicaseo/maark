@@ -28,7 +28,6 @@ export interface CreateTopicWorkflowInput {
   topic: string;
   entryPoint: TopicWorkflowEntryPoint;
   documentId?: number;
-  skillId?: number;
   contentType?: ContentFormat | string;
   contentFormat?: ContentFormat | string;
   pageType?: string;
@@ -96,7 +95,6 @@ export async function createTopicWorkflow(input: CreateTopicWorkflowInput) {
     laneKey,
     requestedByUserId: input.user.id,
     documentId: input.documentId,
-    skillId: input.skillId,
     contentType: contentFormat,
     contentFormat,
     pageType: input.pageType,

@@ -134,6 +134,7 @@ export const projectAgentProfiles = sqliteTable('project_agent_profiles', {
   mission: text('mission'),
   isEnabled: integer('is_enabled').notNull().default(1),
   fileBundle: text('file_bundle', { mode: 'json' }),
+  knowledgeParts: text('knowledge_parts', { mode: 'json' }),
   skillIds: text('skill_ids', { mode: 'json' }),
   modelOverrides: text('model_overrides', { mode: 'json' }),
   heartbeatMeta: text('heartbeat_meta', { mode: 'json' }),
@@ -157,6 +158,7 @@ export const projectAgentLaneProfiles = sqliteTable('project_agent_lane_profiles
   mission: text('mission'),
   isEnabled: integer('is_enabled').notNull().default(1),
   fileBundle: text('file_bundle', { mode: 'json' }),
+  knowledgeParts: text('knowledge_parts', { mode: 'json' }),
   skillIds: text('skill_ids', { mode: 'json' }),
   modelOverrides: text('model_overrides', { mode: 'json' }),
   heartbeatMeta: text('heartbeat_meta', { mode: 'json' }),
@@ -279,6 +281,37 @@ export const contentTemplateAssignments = sqliteTable('content_template_assignme
   updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
 }, (table) => [
   uniqueIndex('content_template_assignments_scope_key_format_unique').on(
+    table.scopeKey,
+    table.contentFormat
+  ),
+]);
+
+export const workflowProfiles = sqliteTable('workflow_profiles', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  key: text('key').notNull().unique(),
+  name: text('name').notNull(),
+  description: text('description'),
+  stageSequence: text('stage_sequence', { mode: 'json' }),
+  stageEnabled: text('stage_enabled', { mode: 'json' }),
+  stageActions: text('stage_actions', { mode: 'json' }),
+  stageGuidance: text('stage_guidance', { mode: 'json' }),
+  isSystem: integer('is_system').notNull().default(1),
+  isActive: integer('is_active').notNull().default(1),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const workflowProfileAssignments = sqliteTable('workflow_profile_assignments', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  scope: text('scope').notNull().default('global'),
+  scopeKey: text('scope_key').notNull().default('global'),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+  contentFormat: text('content_format').notNull(),
+  profileKey: text('profile_key').notNull().references(() => workflowProfiles.key, { onDelete: 'cascade' }),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('workflow_profile_assignments_scope_key_format_unique').on(
     table.scopeKey,
     table.contentFormat
   ),

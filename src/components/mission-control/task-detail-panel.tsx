@@ -119,7 +119,6 @@ interface WorkflowEvent {
     };
     meta?: {
       stageRole?: string;
-      skillNames?: string[];
       model?: {
         providerName?: string;
         model?: string;
@@ -159,6 +158,24 @@ function parseTextList(value: string): string[] {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function isRoutableAssignment(assignmentHealth: unknown): boolean {
+  if (!assignmentHealth || typeof assignmentHealth !== 'object') return true;
+  return (assignmentHealth as Record<string, unknown>).routable !== false;
+}
+
+function parsePrimaryWriterSlotKey(
+  projectId: number,
+  slotKey: string
+): { laneKey: string; ordinal: number } | null {
+  const match = new RegExp(
+    `^p${projectId}:writer:(blog|collection|product|landing):(\\d+)$`
+  ).exec(String(slotKey || '').trim());
+  if (!match) return null;
+  const ordinal = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(ordinal)) return null;
+  return { laneKey: match[1], ordinal };
 }
 
 const ROUTED_STAGE_PLAN_ORDER: TopicStageKey[] = [
@@ -222,7 +239,18 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
     api.tasks.get,
     taskId ? { id: taskId, projectId: projectId ?? undefined } : 'skip'
   );
-  const agents = useQuery(api.agents.list, { limit: 300 });
+  const agents = useQuery(
+    api.agents.list,
+    taskId
+      ? {
+          projectId:
+            typeof (task as { projectId?: number | null } | null)?.projectId === 'number'
+              ? Number((task as { projectId?: number | null }).projectId)
+              : projectId ?? undefined,
+          limit: 300,
+        }
+      : 'skip'
+  );
   const updateTask = useMutation(api.tasks.update);
   const updateAgentStatus = useMutation(api.agents.updateStatus);
 
@@ -428,9 +456,26 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
   const workflowStage = (task.workflowCurrentStageKey || 'research') as TopicStageKey;
   const workflowApprovals = task.workflowApprovals || {};
   const workflowNextStage = TOPIC_STAGE_NEXT[workflowStage];
-
-  const assignedAgent = agents?.find((a) => a._id === task.assignedAgentId);
-  const onlineAgents = agents?.filter((a) => a.status === 'ONLINE') ?? [];
+  const taskProjectId = typeof task.projectId === 'number' ? Number(task.projectId) : null;
+  const scopedAgents = (agents || []).filter((agent) => {
+    if (taskProjectId !== null && Number(agent.projectId ?? taskProjectId) !== taskProjectId) {
+      return false;
+    }
+    if (!isRoutableAssignment(agent.assignmentHealth)) return false;
+    const role = String(agent.role || '').toLowerCase();
+    if (role !== 'writer') return true;
+    if (taskProjectId === null) return false;
+    const laneKey = String(agent.laneKey || '').toLowerCase();
+    const slotKey = String(agent.slotKey || '').trim();
+    if (!laneKey || !slotKey || slotKey.includes(':auto:')) return false;
+    const parsed = parsePrimaryWriterSlotKey(taskProjectId, slotKey);
+    return Boolean(parsed && parsed.ordinal === 1 && parsed.laneKey === laneKey);
+  });
+  const assignedAgent = scopedAgents.find((a) => a._id === task.assignedAgentId);
+  const onlineAgents = scopedAgents.filter((a) => a.status === 'ONLINE');
+  const visibleTags = (task.tags || []).filter(
+    (tag) => !/^skill(?::|_|$)/i.test(String(tag || '').trim())
+  );
   const priority = PRIORITY_LABELS[task.priority] || PRIORITY_LABELS.MEDIUM;
   const workflowRuntimeState = resolveWorkflowRuntimeState({
     workflowTemplateKey: task.workflowTemplateKey,
@@ -689,7 +734,6 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
           description: task.description,
           documentId: task.documentId,
           projectId: task.projectId,
-          skillId: task.skillId,
           agentId,
           contentType: 'blog_post',
           targetKeyword: task.title, // Use title as keyword fallback
@@ -945,10 +989,10 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
               <span>{assignedAgent.status}</span>
             </div>
           )}
-          {task.tags && task.tags.length > 0 && (
+          {visibleTags.length > 0 && (
             <div className="flex items-center gap-2 text-xs flex-wrap" style={{ color: 'var(--mc-text-secondary)' }}>
               <Tag className="h-3.5 w-3.5 shrink-0" />
-              {task.tags.map((t) => (
+              {visibleTags.map((t) => (
                 <span key={t} className="mc-tag">{t}</span>
               ))}
             </div>
@@ -1228,9 +1272,6 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
                             {event.payload.meta.model?.model
                               ? `${event.payload.meta.stageRole ? ' · ' : ''}Model: ${event.payload.meta.model.providerName || 'ai'}/${event.payload.meta.model.model}`
                               : null}
-                            {event.payload.meta.skillNames && event.payload.meta.skillNames.length > 0
-                              ? `${event.payload.meta.stageRole || event.payload.meta.model?.model ? ' · ' : ''}Skills: ${event.payload.meta.skillNames.join(', ')}`
-                              : null}
                           </p>
                         )}
                         {(event.payload?.reason || event.payload?.reasonCode) && (
@@ -1305,15 +1346,11 @@ export function TaskDetailPanel({ taskId, onClose, projectId, readOnly = false }
                               </span>
                             </div>
                             {(event.payload?.meta?.stageRole ||
-                              event.payload?.meta?.model?.model ||
-                              (event.payload?.meta?.skillNames && event.payload.meta.skillNames.length > 0)) && (
+                              event.payload?.meta?.model?.model) && (
                               <p className="text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
                                 {event.payload?.meta?.stageRole ? `Role: ${event.payload.meta.stageRole}` : null}
                                 {event.payload?.meta?.model?.model
                                   ? `${event.payload?.meta?.stageRole ? ' · ' : ''}Model: ${event.payload.meta.model.providerName || 'ai'}/${event.payload.meta.model.model}`
-                                  : null}
-                                {event.payload?.meta?.skillNames && event.payload.meta.skillNames.length > 0
-                                  ? `${event.payload?.meta?.stageRole || event.payload?.meta?.model?.model ? ' · ' : ''}Skills: ${event.payload.meta.skillNames.join(', ')}`
                                   : null}
                               </p>
                             )}

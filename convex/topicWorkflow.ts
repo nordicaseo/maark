@@ -45,6 +45,23 @@ const ROUTABLE_CONFIGURED_STAGES: ReadonlySet<RoutableStageKey> = new Set([
   "final_review",
 ]);
 
+const TOPIC_STAGE_KEYS: TopicStageKey[] = [
+  "research",
+  "seo_intel_review",
+  "outline_build",
+  "outline_review",
+  "prewrite_context",
+  "writing",
+  "editing",
+  "final_review",
+  "human_review",
+  "complete",
+];
+
+function isTopicStageKey(value: unknown): value is TopicStageKey {
+  return typeof value === "string" && TOPIC_STAGE_KEYS.includes(value as TopicStageKey);
+}
+
 const stageValidator = v.union(
   v.literal("research"),
   v.literal("seo_intel_review"),
@@ -84,6 +101,61 @@ const stageTransitions: Record<TopicStageKey, TopicStageKey[]> = Object.fromEntr
     [...nextStages],
   ])
 ) as Record<TopicStageKey, TopicStageKey[]>;
+
+function parsePlannedStageSequence(task: Doc<"tasks">): TopicStageKey[] {
+  const plan =
+    task.workflowStagePlan && typeof task.workflowStagePlan === "object"
+      ? (task.workflowStagePlan as Record<string, unknown>)
+      : null;
+  const profile =
+    plan?.workflowProfile && typeof plan.workflowProfile === "object"
+      ? (plan.workflowProfile as Record<string, unknown>)
+      : null;
+  const sequenceRaw = Array.isArray(profile?.stageSequence)
+    ? profile.stageSequence
+    : [];
+  const enabledRaw =
+    profile?.stageEnabled && typeof profile.stageEnabled === "object"
+      ? (profile.stageEnabled as Record<string, unknown>)
+      : {};
+
+  const sequence: TopicStageKey[] = [];
+  for (const item of sequenceRaw) {
+    if (!isTopicStageKey(item)) continue;
+    if (item === "outline_review" || item === "prewrite_context") continue;
+    if (sequence.includes(item)) continue;
+    const enabledValue = enabledRaw[item];
+    const enabled =
+      enabledValue === undefined
+        ? true
+        : enabledValue === true || String(enabledValue).toLowerCase() === "true";
+    if (!enabled) continue;
+    sequence.push(item);
+  }
+  return sequence;
+}
+
+function resolvePlannedNextStage(
+  task: Doc<"tasks">,
+  currentStage: TopicStageKey
+): TopicStageKey | null {
+  const plannedSequence = parsePlannedStageSequence(task);
+  if (plannedSequence.length === 0) return null;
+  const index = plannedSequence.indexOf(currentStage);
+  if (index < 0) return null;
+  if (index >= plannedSequence.length - 1) return "complete";
+  return plannedSequence[index + 1] || "complete";
+}
+
+function isAllowedTransitionByPlan(
+  task: Doc<"tasks">,
+  currentStage: TopicStageKey,
+  toStage: TopicStageKey
+): boolean {
+  const plannedNext = resolvePlannedNextStage(task, currentStage);
+  if (!plannedNext) return false;
+  return plannedNext === toStage;
+}
 
 const stageOwnerChains: Record<TopicStageKey, string[]> = Object.fromEntries(
   Object.entries(WORKFLOW_STAGE_OWNER_CHAINS).map(([stage, owners]) => [
@@ -158,38 +230,6 @@ const WORKFLOW_ROLE_SEEDS: Array<{
   },
 ];
 
-const WRITER_LANE_SEEDS: Array<{
-  laneKey: AgentLaneKey;
-  name: string;
-  specialization: string;
-  skills: string[];
-}> = [
-  {
-    laneKey: "blog",
-    name: "Atlas Blog",
-    specialization: "Blog and editorial SEO writing",
-    skills: ["SEO blog writing", "editorial flow", "search intent coverage"],
-  },
-  {
-    laneKey: "collection",
-    name: "Atlas Collection",
-    specialization: "Collection and category page writing",
-    skills: ["collection copy", "category optimization", "taxonomy clarity"],
-  },
-  {
-    laneKey: "product",
-    name: "Atlas Product",
-    specialization: "Product and PDP writing",
-    skills: ["product copy", "feature-to-benefit writing", "conversion copy"],
-  },
-  {
-    laneKey: "landing",
-    name: "Atlas Landing",
-    specialization: "Landing, homepage, and FAQ writing",
-    skills: ["landing page copy", "CTA messaging", "FAQ structuring"],
-  },
-];
-
 type AgentStatus = "ONLINE" | "IDLE" | "WORKING" | "OFFLINE";
 
 function normalizeAgentStatus(status: string | null | undefined): AgentStatus {
@@ -261,12 +301,14 @@ function isAgentRoutableForProject(
   const health = (agent.assignmentHealth as Record<string, unknown> | undefined) || {};
   if (health.routable === false) return false;
 
+  // Topic workflow assignments are project-scoped: never cross projects.
+  if (projectId !== undefined && agent.projectId !== projectId) return false;
+
   if (!strictProjectAgentPoolsEnabled()) {
     return true;
   }
 
   if (projectId === undefined) return false;
-  if (agent.projectId !== projectId) return false;
   if (agent.isDedicated === false) return false;
   return true;
 }
@@ -396,49 +438,17 @@ async function seedMissingWorkflowRoles(
   for (const template of WORKFLOW_ROLE_SEEDS) {
     if (wanted && !wanted.has(template.role.toLowerCase())) continue;
     if (strictPools && template.role.toLowerCase() === "writer" && projectId !== undefined) {
-      let seededAnyWriter = false;
-      for (const writerSeed of WRITER_LANE_SEEDS) {
-        const hasLaneWriter = existing.some(
-          (agent) =>
-            agent.role.toLowerCase() === "writer" &&
-            agent.projectId === projectId &&
-            agent.laneKey === writerSeed.laneKey &&
-            isAgentRoutableForProject(agent, projectId)
-        );
-        if (hasLaneWriter) continue;
-        await ctx.db.insert("agents", {
-          name: writerSeed.name,
-          role: "writer",
-          specialization: writerSeed.specialization,
-          skills: writerSeed.skills,
-          status: "ONLINE",
-          projectId,
-          isDedicated: true,
-          capacityWeight: 1,
-          laneKey: writerSeed.laneKey,
-          laneProfileKey: `writer:${writerSeed.laneKey}`,
-          slotKey: `p${projectId}:writer:${writerSeed.laneKey}:1`,
-          assignmentHealth: { routable: true, strictIsolation: true },
-          tasksCompleted: 0,
-          createdAt: now,
-          updatedAt: now,
-        });
-        seededAnyWriter = true;
-      }
-      if (seededAnyWriter || !seededRoles.includes(template.role)) {
-        seededRoles.push(template.role);
-      }
+      // Strict pools rely on runtime reconciliation + configured-slot routing.
+      // Do not seed writers from workflow mutation paths.
       continue;
     }
 
-    const hasRoleAlready = strictPools
-      ? existing.some(
-          (agent) =>
-            agent.role.toLowerCase() === template.role.toLowerCase() &&
-            agent.projectId === projectId &&
-            isAgentRoutableForProject(agent, projectId)
-        )
-      : existing.some((agent) => agent.role.toLowerCase() === template.role.toLowerCase());
+    const hasRoleAlready = existing.some(
+      (agent) =>
+        agent.role.toLowerCase() === template.role.toLowerCase() &&
+        (projectId === undefined || agent.projectId === projectId) &&
+        isAgentRoutableForProject(agent, projectId)
+    );
     if (hasRoleAlready) continue;
 
     const slotKey =
@@ -449,7 +459,7 @@ async function seedMissingWorkflowRoles(
       specialization: template.specialization,
       skills: template.skills,
       status: "ONLINE",
-      projectId: strictPools ? projectId : undefined,
+      projectId: projectId,
       isDedicated: strictPools ? true : false,
       capacityWeight: 1,
       laneKey: undefined,
@@ -500,6 +510,14 @@ async function healWriterAvailability(
   );
 
   if (writers.length === 0) {
+    if (strictProjectAgentPoolsEnabled()) {
+      return {
+        healed: false,
+        assignableWriterId: null,
+        reasonCode: "writer_still_unavailable",
+        diagnostics: collectWriterDiagnostics(writers),
+      };
+    }
     await seedMissingWorkflowRoles(ctx, ["writer"], projectId);
     const refreshed = await ctx.db.query("agents").collect();
     writers = refreshed.filter(
@@ -1796,8 +1814,12 @@ export const advanceStage = mutation({
 
     const flags = flagsWithDefaults(task);
     const approvals = approvalsWithDefaults(task);
+    const plannedSequence = parsePlannedStageSequence(task);
+    const plannedHasFinalReview = plannedSequence.includes("final_review");
 
-    let allowed = stageTransitions[currentStage].includes(args.toStage);
+    let allowed =
+      stageTransitions[currentStage].includes(args.toStage) ||
+      isAllowedTransitionByPlan(task, currentStage, args.toStage);
 
     // Legacy optional outline review skip path:
     if (
@@ -1830,7 +1852,12 @@ export const advanceStage = mutation({
       throw new Error("Final SEO approval is required before human review.");
     }
 
-    if (args.toStage === "complete" && flags.seoReviewRequired && !approvals.seoFinal) {
+    if (
+      args.toStage === "complete" &&
+      flags.seoReviewRequired &&
+      plannedHasFinalReview &&
+      !approvals.seoFinal
+    ) {
       throw new Error("Final SEO approval is required before completion.");
     }
 
@@ -1923,12 +1950,14 @@ export const recordApproval = mutation({
       currentStage === "final_review" &&
       (!flags.seoReviewRequired || approvals.seoFinal)
     ) {
+      const plannedNext = resolvePlannedNextStage(task, "final_review");
+      const toStage: TopicStageKey = plannedNext || "human_review";
       await transitionStage(ctx, {
         task,
-        toStage: "human_review",
+        toStage,
         actorType: "system",
         actorName: "Workflow PM",
-        note: "Final SEO approval complete. Moving to human review.",
+        note: `Final SEO approval complete. Moving to ${toStage}.`,
         approvalsOverride: approvals,
       });
       stageAdvanced = true;

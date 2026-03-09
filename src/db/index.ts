@@ -217,6 +217,7 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
         mission TEXT,
         is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         file_bundle JSONB,
+        knowledge_parts JSONB,
         skill_ids JSONB,
         model_overrides JSONB,
         heartbeat_meta JSONB,
@@ -259,6 +260,7 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
         mission TEXT,
         is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         file_bundle JSONB,
+        knowledge_parts JSONB,
         skill_ids JSONB,
         model_overrides JSONB,
         heartbeat_meta JSONB,
@@ -304,10 +306,14 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       ADD COLUMN IF NOT EXISTS avatar_url TEXT;
     ALTER TABLE project_agent_profiles
       ADD COLUMN IF NOT EXISTS short_description TEXT;
+    ALTER TABLE project_agent_profiles
+      ADD COLUMN IF NOT EXISTS knowledge_parts JSONB;
     ALTER TABLE project_agent_lane_profiles
       ADD COLUMN IF NOT EXISTS avatar_url TEXT;
     ALTER TABLE project_agent_lane_profiles
       ADD COLUMN IF NOT EXISTS short_description TEXT;
+    ALTER TABLE project_agent_lane_profiles
+      ADD COLUMN IF NOT EXISTS knowledge_parts JSONB;
     ALTER TABLE project_workflow_stage_routes
       ADD COLUMN IF NOT EXISTS lane_key VARCHAR(40) NOT NULL DEFAULT 'blog';
     ALTER TABLE project_workflow_stage_routes
@@ -384,6 +390,34 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
     );
     CREATE UNIQUE INDEX IF NOT EXISTS content_template_assignments_scope_key_format_unique
       ON content_template_assignments(scope_key, content_format);
+
+    CREATE TABLE IF NOT EXISTS workflow_profiles (
+      id SERIAL PRIMARY KEY,
+      key VARCHAR(120) NOT NULL UNIQUE,
+      name VARCHAR(200) NOT NULL,
+      description TEXT,
+      stage_sequence JSONB,
+      stage_enabled JSONB,
+      stage_actions JSONB,
+      stage_guidance JSONB,
+      is_system BOOLEAN NOT NULL DEFAULT TRUE,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_profile_assignments (
+      id SERIAL PRIMARY KEY,
+      scope VARCHAR(24) NOT NULL DEFAULT 'global',
+      scope_key VARCHAR(64) NOT NULL DEFAULT 'global',
+      project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+      content_format VARCHAR(60) NOT NULL,
+      profile_key VARCHAR(120) NOT NULL REFERENCES workflow_profiles(key) ON DELETE CASCADE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS workflow_profile_assignments_scope_key_format_unique
+      ON workflow_profile_assignments(scope_key, content_format);
   `);
   await sql.query(`
     ALTER TABLE content_templates ADD COLUMN IF NOT EXISTS content_formats JSONB;
@@ -395,6 +429,14 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
     ALTER TABLE content_templates ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE content_template_assignments ADD COLUMN IF NOT EXISTS scope VARCHAR(24) NOT NULL DEFAULT 'global';
     ALTER TABLE content_template_assignments ADD COLUMN IF NOT EXISTS scope_key VARCHAR(64) NOT NULL DEFAULT 'global';
+    ALTER TABLE workflow_profiles ADD COLUMN IF NOT EXISTS stage_sequence JSONB;
+    ALTER TABLE workflow_profiles ADD COLUMN IF NOT EXISTS stage_enabled JSONB;
+    ALTER TABLE workflow_profiles ADD COLUMN IF NOT EXISTS stage_actions JSONB;
+    ALTER TABLE workflow_profiles ADD COLUMN IF NOT EXISTS stage_guidance JSONB;
+    ALTER TABLE workflow_profiles ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE workflow_profiles ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE workflow_profile_assignments ADD COLUMN IF NOT EXISTS scope VARCHAR(24) NOT NULL DEFAULT 'global';
+    ALTER TABLE workflow_profile_assignments ADD COLUMN IF NOT EXISTS scope_key VARCHAR(64) NOT NULL DEFAULT 'global';
   `);
   await sql.query(`
     INSERT INTO content_templates (
@@ -522,6 +564,43 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       ('global', 'global', NULL, 'product_description', 'product_landing'),
       ('global', 'global', NULL, 'comparison', 'comparison'),
       ('global', 'global', NULL, 'news_article', 'news')
+    ON CONFLICT (scope_key, content_format) DO NOTHING;
+  `);
+  await sql.query(`
+    INSERT INTO workflow_profiles (
+      key,
+      name,
+      description,
+      stage_sequence,
+      stage_enabled,
+      stage_actions,
+      stage_guidance,
+      is_system,
+      is_active
+    ) VALUES (
+      'topic_production_v1',
+      'Topic Production v1',
+      'Default SEO topic workflow sequence.',
+      '["research","seo_intel_review","outline_build","writing","editing","final_review"]'::jsonb,
+      '{"research":true,"seo_intel_review":true,"outline_build":true,"writing":true,"editing":true,"final_review":true}'::jsonb,
+      '{"research":"workflow_research","seo_intel_review":"workflow_serp","outline_build":"workflow_outline","writing":"workflow_writing","editing":"workflow_editing","final_review":"workflow_final_review"}'::jsonb,
+      '{}'::jsonb,
+      TRUE,
+      TRUE
+    )
+    ON CONFLICT (key) DO NOTHING;
+
+    INSERT INTO workflow_profile_assignments (scope, scope_key, project_id, content_format, profile_key)
+    VALUES
+      ('global', 'global', NULL, 'blog_post', 'topic_production_v1'),
+      ('global', 'global', NULL, 'blog_listicle', 'topic_production_v1'),
+      ('global', 'global', NULL, 'blog_buying_guide', 'topic_production_v1'),
+      ('global', 'global', NULL, 'blog_how_to', 'topic_production_v1'),
+      ('global', 'global', NULL, 'blog_review', 'topic_production_v1'),
+      ('global', 'global', NULL, 'product_category', 'topic_production_v1'),
+      ('global', 'global', NULL, 'product_description', 'topic_production_v1'),
+      ('global', 'global', NULL, 'comparison', 'topic_production_v1'),
+      ('global', 'global', NULL, 'news_article', 'topic_production_v1')
     ON CONFLICT (scope_key, content_format) DO NOTHING;
   `);
 
@@ -956,14 +1035,41 @@ function addColumnSafe(
   }
 }
 
+function requirePgSchemaModule() {
+  // Vitest can execute TypeScript sources directly, so provide a TS fallback.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require('./schema-pg');
+  } catch (error) {
+    if (process.env.NODE_ENV === 'test') {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      return require('./schema-pg.ts');
+    }
+    throw error;
+  }
+}
+
+function requireSqliteSchemaModule() {
+  // Vitest can execute TypeScript sources directly, so provide a TS fallback.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require('./schema-sqlite');
+  } catch (error) {
+    if (process.env.NODE_ENV === 'test') {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      return require('./schema-sqlite.ts');
+    }
+    throw error;
+  }
+}
+
 function createDb() {
   if (isVercel) {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { sql } = require('@vercel/postgres');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { drizzle } = require('drizzle-orm/vercel-postgres');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pgSchema = require('./schema-pg');
+    const pgSchema = requirePgSchemaModule();
 
     if (!_initPromise) {
       _initPromise = initPostgres(sql).catch((err: unknown) => {
@@ -979,8 +1085,7 @@ function createDb() {
   const Database = require('better-sqlite3');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { drizzle } = require('drizzle-orm/better-sqlite3');
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const sqliteSchema = require('./schema-sqlite');
+  const sqliteSchema = requireSqliteSchemaModule();
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const path = require('path');
 
@@ -1158,6 +1263,7 @@ function createDb() {
       mission TEXT,
       is_enabled INTEGER NOT NULL DEFAULT 1,
       file_bundle TEXT,
+      knowledge_parts TEXT,
       skill_ids TEXT,
       model_overrides TEXT,
       heartbeat_meta TEXT,
@@ -1190,6 +1296,7 @@ function createDb() {
       mission TEXT,
       is_enabled INTEGER NOT NULL DEFAULT 1,
       file_bundle TEXT,
+      knowledge_parts TEXT,
       skill_ids TEXT,
       model_overrides TEXT,
       heartbeat_meta TEXT,
@@ -1218,8 +1325,10 @@ function createDb() {
   `);
   addColumnSafe(sqlite, 'project_agent_profiles', 'avatar_url', 'TEXT');
   addColumnSafe(sqlite, 'project_agent_profiles', 'short_description', 'TEXT');
+  addColumnSafe(sqlite, 'project_agent_profiles', 'knowledge_parts', 'TEXT');
   addColumnSafe(sqlite, 'project_agent_lane_profiles', 'avatar_url', 'TEXT');
   addColumnSafe(sqlite, 'project_agent_lane_profiles', 'short_description', 'TEXT');
+  addColumnSafe(sqlite, 'project_agent_lane_profiles', 'knowledge_parts', 'TEXT');
   addColumnSafe(sqlite, 'project_workflow_stage_routes', 'lane_key', "TEXT NOT NULL DEFAULT 'blog'");
   addColumnSafe(sqlite, 'project_workflow_stage_routes', 'stage_slots', 'TEXT');
   addColumnSafe(sqlite, 'project_workflow_stage_routes', 'stage_enabled', 'TEXT');
@@ -1292,6 +1401,34 @@ function createDb() {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS content_template_assignments_scope_key_format_unique
       ON content_template_assignments(scope_key, content_format);
+
+    CREATE TABLE IF NOT EXISTS workflow_profiles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      description TEXT,
+      stage_sequence TEXT,
+      stage_enabled TEXT,
+      stage_actions TEXT,
+      stage_guidance TEXT,
+      is_system INTEGER NOT NULL DEFAULT 1,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_profile_assignments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope TEXT NOT NULL DEFAULT 'global',
+      scope_key TEXT NOT NULL DEFAULT 'global',
+      project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+      content_format TEXT NOT NULL,
+      profile_key TEXT NOT NULL REFERENCES workflow_profiles(key) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS workflow_profile_assignments_scope_key_format_unique
+      ON workflow_profile_assignments(scope_key, content_format);
   `);
   addColumnSafe(sqlite, 'content_templates', 'content_formats', 'TEXT');
   addColumnSafe(sqlite, 'content_templates', 'structure', 'TEXT');
@@ -1302,6 +1439,14 @@ function createDb() {
   addColumnSafe(sqlite, 'content_templates', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
   addColumnSafe(sqlite, 'content_template_assignments', 'scope', "TEXT NOT NULL DEFAULT 'global'");
   addColumnSafe(sqlite, 'content_template_assignments', 'scope_key', "TEXT NOT NULL DEFAULT 'global'");
+  addColumnSafe(sqlite, 'workflow_profiles', 'stage_sequence', 'TEXT');
+  addColumnSafe(sqlite, 'workflow_profiles', 'stage_enabled', 'TEXT');
+  addColumnSafe(sqlite, 'workflow_profiles', 'stage_actions', 'TEXT');
+  addColumnSafe(sqlite, 'workflow_profiles', 'stage_guidance', 'TEXT');
+  addColumnSafe(sqlite, 'workflow_profiles', 'is_system', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnSafe(sqlite, 'workflow_profiles', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnSafe(sqlite, 'workflow_profile_assignments', 'scope', "TEXT NOT NULL DEFAULT 'global'");
+  addColumnSafe(sqlite, 'workflow_profile_assignments', 'scope_key', "TEXT NOT NULL DEFAULT 'global'");
   sqlite.exec(`
     INSERT OR IGNORE INTO content_templates (
       key, name, description, content_formats, structure, word_range, outline_constraints, style_guard, is_system, is_active
@@ -1428,6 +1573,42 @@ function createDb() {
       ('global', 'global', NULL, 'product_description', 'product_landing'),
       ('global', 'global', NULL, 'comparison', 'comparison'),
       ('global', 'global', NULL, 'news_article', 'news');
+  `);
+  sqlite.exec(`
+    INSERT OR IGNORE INTO workflow_profiles (
+      key,
+      name,
+      description,
+      stage_sequence,
+      stage_enabled,
+      stage_actions,
+      stage_guidance,
+      is_system,
+      is_active
+    ) VALUES (
+      'topic_production_v1',
+      'Topic Production v1',
+      'Default SEO topic workflow sequence.',
+      '["research","seo_intel_review","outline_build","writing","editing","final_review"]',
+      '{"research":true,"seo_intel_review":true,"outline_build":true,"writing":true,"editing":true,"final_review":true}',
+      '{"research":"workflow_research","seo_intel_review":"workflow_serp","outline_build":"workflow_outline","writing":"workflow_writing","editing":"workflow_editing","final_review":"workflow_final_review"}',
+      '{}',
+      1,
+      1
+    );
+
+    INSERT OR IGNORE INTO workflow_profile_assignments (
+      scope, scope_key, project_id, content_format, profile_key
+    ) VALUES
+      ('global', 'global', NULL, 'blog_post', 'topic_production_v1'),
+      ('global', 'global', NULL, 'blog_listicle', 'topic_production_v1'),
+      ('global', 'global', NULL, 'blog_buying_guide', 'topic_production_v1'),
+      ('global', 'global', NULL, 'blog_how_to', 'topic_production_v1'),
+      ('global', 'global', NULL, 'blog_review', 'topic_production_v1'),
+      ('global', 'global', NULL, 'product_category', 'topic_production_v1'),
+      ('global', 'global', NULL, 'product_description', 'topic_production_v1'),
+      ('global', 'global', NULL, 'comparison', 'topic_production_v1'),
+      ('global', 'global', NULL, 'news_article', 'topic_production_v1');
   `);
 
   // ── Invitations ──

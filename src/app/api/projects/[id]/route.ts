@@ -206,6 +206,7 @@ export async function PATCH(
         template,
         roleCounts,
         laneCapacity,
+        userId: auth.user.id,
       });
       runtimeSync = {
         template,

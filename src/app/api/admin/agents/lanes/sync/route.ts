@@ -12,6 +12,10 @@ import {
   syncProjectDedicatedAgentPool,
 } from '@/lib/agents/runtime-agent-pools';
 import { seedProjectAgentLaneProfiles } from '@/lib/agents/project-agent-profiles';
+import {
+  backfillProjectTaskStagePlans,
+  repairProjectWriterRoutes,
+} from '@/lib/workflow/stage-routing';
 import type { AgentRoleCounts, ProjectLaneCapacitySettings } from '@/types/agent-runtime';
 import { DEFAULT_LANE_CAPACITY_SETTINGS } from '@/types/agent-runtime';
 
@@ -152,6 +156,17 @@ export async function POST(req: NextRequest) {
       template,
       roleCounts,
       laneCapacity,
+      userId: auth.user.id,
+    });
+    const repairedRoutes = await repairProjectWriterRoutes({
+      projectId,
+      userId: auth.user.id,
+      canonicalizeInvalidBlog: true,
+    });
+    const stagePlanBackfill = await backfillProjectTaskStagePlans({
+      projectId,
+      userId: auth.user.id,
+      force: true,
     });
     const health = await getProjectAgentPoolHealth(projectId);
 
@@ -168,6 +183,11 @@ export async function POST(req: NextRequest) {
         seededLaneProfiles: seeded.seededLaneProfiles,
         created: synced.created,
         updated: synced.updated,
+        routesCanonicalized: repairedRoutes.routesPatched,
+        stagePlansBackfilled: stagePlanBackfill.updated,
+        tasksRequeued: synced.tasksRequeued,
+        writersDeleted: synced.writersDeleted,
+        writersRenamed: synced.writersRenamed,
       },
     });
 
@@ -179,6 +199,13 @@ export async function POST(req: NextRequest) {
       laneCapacity,
       seededLaneProfiles: seeded.seededLaneProfiles,
       synced,
+      routesCanonicalized: repairedRoutes.routesPatched,
+      stagePlansBackfilled: stagePlanBackfill.updated,
+      stagePlanScanned: stagePlanBackfill.scanned,
+      stagePlanSkipped: stagePlanBackfill.skipped,
+      tasksRequeued: synced.tasksRequeued,
+      writersDeleted: synced.writersDeleted,
+      writersRenamed: synced.writersRenamed,
       health,
     });
   } catch (error) {

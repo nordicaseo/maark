@@ -1,77 +1,32 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { db, ensureDb } from '@/db/index';
-import { skillParts } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
-import { dbNow } from '@/db/utils';
-import { requireRole } from '@/lib/auth';
-import { userCanAccessSkill } from '@/lib/access';
+import { NextResponse } from 'next/server';
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string; partId: string }> }
-) {
-  await ensureDb();
-  const auth = await requireRole('editor');
-  if (auth.error) return auth.error;
-  const { id, partId } = await params;
-  const skillId = parseInt(id, 10);
-  const parsedPartId = parseInt(partId, 10);
-  if (Number.isNaN(skillId) || Number.isNaN(parsedPartId)) {
-    return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
-  }
-  if (!(await userCanAccessSkill(auth.user, skillId, { write: true }))) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
-  try {
-    const body = await req.json();
-    const updateData: Record<string, unknown> = { updatedAt: dbNow() };
-    if (body.label !== undefined) updateData.label = body.label;
-    if (body.content !== undefined) updateData.content = body.content;
-    if (body.sortOrder !== undefined) updateData.sortOrder = body.sortOrder;
-    if (body.partType !== undefined) updateData.partType = body.partType;
-
-    const [part] = await db
-      .update(skillParts)
-      .set(updateData)
-      .where(and(eq(skillParts.id, parsedPartId), eq(skillParts.skillId, skillId)))
-      .returning();
-
-    if (!part) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    }
-
-    return NextResponse.json(part);
-  } catch (error) {
-    console.error('Error updating skill part:', error);
-    return NextResponse.json({ error: 'Failed to update part' }, { status: 500 });
-  }
+function retiredResponse() {
+  return NextResponse.json(
+    {
+      error:
+        'Standalone Skills has been retired. Use Agent Knowledge in Super Admin > Agents.',
+      code: 'SKILLS_RETIRED',
+    },
+    { status: 410 }
+  );
 }
 
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string; partId: string }> }
-) {
-  await ensureDb();
-  const auth = await requireRole('editor');
-  if (auth.error) return auth.error;
-  const { id, partId } = await params;
-  const skillId = parseInt(id, 10);
-  const parsedPartId = parseInt(partId, 10);
-  if (Number.isNaN(skillId) || Number.isNaN(parsedPartId)) {
-    return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
-  }
-  if (!(await userCanAccessSkill(auth.user, skillId, { write: true }))) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+export async function GET(_req: Request) {
+  return retiredResponse();
+}
 
-  try {
-    await db
-      .delete(skillParts)
-      .where(and(eq(skillParts.id, parsedPartId), eq(skillParts.skillId, skillId)));
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('Error deleting skill part:', error);
-    return NextResponse.json({ error: 'Failed to delete part' }, { status: 500 });
-  }
+export async function POST(_req: Request) {
+  return retiredResponse();
+}
+
+export async function PUT(_req: Request) {
+  return retiredResponse();
+}
+
+export async function PATCH(_req: Request) {
+  return retiredResponse();
+}
+
+export async function DELETE(_req: Request) {
+  return retiredResponse();
 }

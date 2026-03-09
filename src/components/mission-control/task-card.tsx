@@ -10,13 +10,11 @@ import {
   Eye,
   Bot,
   Tag,
-  Sparkles,
   Trash2,
   GripVertical,
 } from 'lucide-react';
 import type { Doc } from '../../../convex/_generated/dataModel';
 import { useTeamMembers } from './team-members-provider';
-import { useSkills } from './skills-provider';
 import { withProjectScope } from '@/lib/project-context';
 import {
   TOPIC_STAGE_LABELS,
@@ -188,9 +186,7 @@ function TaskCardContent({
   setDragHandleRef: (element: HTMLElement | null) => void;
 }) {
   const { getMember } = useTeamMembers();
-  const { getSkillName } = useSkills();
   const assignee = task.assigneeId ? getMember(task.assigneeId) : undefined;
-  const skillName = task.skillId ? getSkillName(task.skillId) : undefined;
   const isTopicWorkflow = task.workflowTemplateKey === 'topic_production_v1';
   const workflowStage = task.workflowCurrentStageKey || 'research';
   const workflowStageLabel =
@@ -213,8 +209,11 @@ function TaskCardContent({
     !workflowQueued &&
     workflowStage !== 'research' &&
     workflowStage !== 'outline_build';
-  const visibleTags = task.tags ? task.tags.slice(0, 2) : [];
-  const hiddenTagCount = task.tags && task.tags.length > 2 ? task.tags.length - 2 : 0;
+  const filteredTags = (task.tags || []).filter(
+    (tag) => !/^skill(?::|_|$)/i.test(String(tag || '').trim())
+  );
+  const visibleTags = filteredTags.slice(0, 2);
+  const hiddenTagCount = filteredTags.length > 2 ? filteredTags.length - 2 : 0;
   const visibleDeliverables = task.deliverables ? task.deliverables.slice(0, 2) : [];
   const hiddenDeliverableCount =
     task.deliverables && task.deliverables.length > 2 ? task.deliverables.length - 2 : 0;
@@ -335,7 +334,7 @@ function TaskCardContent({
       )}
 
       {/* Context */}
-      {(visibleTags.length > 0 || showProjectBadge || skillName) && (
+      {(visibleTags.length > 0 || showProjectBadge) && (
         <div className="flex flex-wrap gap-1">
           {showProjectBadge && projectLabel && (
             <span className="mc-tag border" style={{ borderColor: 'var(--mc-border)' }}>
@@ -351,16 +350,10 @@ function TaskCardContent({
           {hiddenTagCount > 0 && (
             <span className="mc-tag">+{hiddenTagCount}</span>
           )}
-          {skillName && (
-            <span className="mc-tag">
-              <Sparkles className="h-2.5 w-2.5 mr-0.5" />
-              {skillName}
-            </span>
-          )}
         </div>
       )}
 
-      {(!task.tags || task.tags.length === 0) && !skillName && showProjectBadge && projectLabel && (
+      {filteredTags.length === 0 && showProjectBadge && projectLabel && (
         <div className="flex flex-wrap gap-1">
           <span className="mc-tag border" style={{ borderColor: 'var(--mc-border)' }}>
             {projectLabel}

@@ -32,7 +32,7 @@ interface AnalysisSidebarProps {
   onInsertAiText: (text: string) => void;
   onReplaceContent: (text: string) => void;
   isAiWriting?: boolean;
-  onLiveGenerate: (instruction: string, tone: string, skillContent?: string) => void;
+  onLiveGenerate: (instruction: string, tone: string) => void;
   onCancelGeneration: () => void;
   onUpdateDocument?: (updates: Partial<Document>) => void | Promise<void>;
   activeProjectId?: number | null;
@@ -53,7 +53,7 @@ interface SidebarContentProps {
   onOpenReport: () => void;
   expanded?: boolean;
   isAiWriting?: boolean;
-  onLiveGenerate: (instruction: string, tone: string, skillContent?: string) => void;
+  onLiveGenerate: (instruction: string, tone: string) => void;
   onCancelGeneration: () => void;
   onUpdateDocument?: (updates: Partial<Document>) => void | Promise<void>;
   activeProjectId?: number | null;

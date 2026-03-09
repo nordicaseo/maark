@@ -34,6 +34,11 @@ export async function POST(_req: NextRequest) {
     seededLaneProfiles: number;
     created: number;
     updated: number;
+    routesCanonicalized?: number;
+    stagePlansBackfilled?: number;
+    tasksRequeued?: number;
+    writersDeleted?: number;
+    writersRenamed?: number;
     laneBackfilled?: number;
     stagePlanBackfilled?: number;
     stagePlanScanned?: number;
@@ -54,6 +59,7 @@ export async function POST(_req: NextRequest) {
       template: runtime.staffingTemplate,
       roleCounts: runtime.roleCounts,
       laneCapacity: runtime.laneCapacity,
+      userId: auth.user.id,
     });
     const backfill = convex
       ? await convex.mutation(api.topicWorkflow.backfillWorkflowLanes, { projectId: row.id })
@@ -73,6 +79,11 @@ export async function POST(_req: NextRequest) {
       seededLaneProfiles: laneSeeded.seededLaneProfiles.length,
       created: synced.created,
       updated: synced.updated,
+      routesCanonicalized: repairedRoutes.routesPatched,
+      stagePlansBackfilled: stagePlanBackfill.updated,
+      tasksRequeued: synced.tasksRequeued,
+      writersDeleted: synced.writersDeleted,
+      writersRenamed: synced.writersRenamed,
       laneBackfilled: backfill?.updated ?? 0,
       stagePlanBackfilled: stagePlanBackfill.updated,
       stagePlanScanned: stagePlanBackfill.scanned,

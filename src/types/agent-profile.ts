@@ -27,6 +27,26 @@ export const AGENT_FILE_KEYS = [
 
 export type AgentFileKey = (typeof AGENT_FILE_KEYS)[number];
 
+export const AGENT_KNOWLEDGE_PART_TYPES = [
+  'brand_identity',
+  'brand_voice',
+  'technical',
+  'content_structure',
+  'seo',
+  'compliance',
+  'custom',
+] as const;
+
+export type AgentKnowledgePartType = (typeof AGENT_KNOWLEDGE_PART_TYPES)[number];
+
+export interface AgentKnowledgePart {
+  id: string;
+  partType: AgentKnowledgePartType;
+  label: string;
+  content: string;
+  sortOrder: number;
+}
+
 export const SHARED_AGENT_PROFILE_KEYS = {
   USER_MD: 'USER_MD',
 } as const;
@@ -63,6 +83,7 @@ export interface ProjectAgentProfile {
   mission: string | null;
   isEnabled: boolean;
   fileBundle: ProjectAgentFileBundle;
+  knowledgeParts: AgentKnowledgePart[];
   skillIds: number[];
   modelOverrides: ProjectAgentModelOverrides;
   heartbeatMeta: ProjectAgentHeartbeatMeta;
@@ -82,6 +103,7 @@ export interface UpsertProjectAgentProfileInput {
   mission?: string | null;
   isEnabled?: boolean;
   fileBundle?: Partial<ProjectAgentFileBundle>;
+  knowledgeParts?: AgentKnowledgePart[];
   skillIds?: number[];
   modelOverrides?: ProjectAgentModelOverrides;
   heartbeatMeta?: ProjectAgentHeartbeatMeta;
@@ -100,6 +122,7 @@ export interface ProjectAgentLaneProfile {
   mission: string | null;
   isEnabled: boolean;
   fileBundle: ProjectAgentFileBundle;
+  knowledgeParts: AgentKnowledgePart[];
   skillIds: number[];
   modelOverrides: ProjectAgentModelOverrides;
   heartbeatMeta: ProjectAgentHeartbeatMeta;
@@ -120,6 +143,7 @@ export interface UpsertProjectAgentLaneProfileInput {
   mission?: string | null;
   isEnabled?: boolean;
   fileBundle?: Partial<ProjectAgentFileBundle>;
+  knowledgeParts?: AgentKnowledgePart[];
   skillIds?: number[];
   modelOverrides?: ProjectAgentModelOverrides;
   heartbeatMeta?: ProjectAgentHeartbeatMeta;

@@ -275,7 +275,7 @@ export default function AdminProjectsPage() {
   }
 
   async function deleteProject(id: number) {
-    if (!confirm('Delete this project? All associated documents and skills will be affected.')) return;
+    if (!confirm('Delete this project? All associated documents and agent knowledge data will be affected.')) return;
     await fetch(`/api/projects/${id}`, { method: 'DELETE' });
     fetchProjects();
   }

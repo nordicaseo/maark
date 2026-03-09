@@ -195,7 +195,8 @@ export async function POST(req: NextRequest) {
             : null;
         if (
           agent &&
-          (taskProjectId === null || agentProjectId === null || agentProjectId === taskProjectId)
+          taskProjectId !== null &&
+          agentProjectId === taskProjectId
         ) {
           modelOverride = agent.modelOverrides?.comment_processing || agent.modelOverrides?.writing;
         }
