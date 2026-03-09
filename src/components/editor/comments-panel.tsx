@@ -12,6 +12,9 @@ import {
   Search,
   AlertTriangle,
   RotateCcw,
+  Bot,
+  User,
+  GitBranch,
 } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
 import { normalizeGeneratedHtml, validateRevisedHtmlOutput } from '@/lib/utils/html-normalize';
@@ -27,6 +30,17 @@ interface Comment {
   selectionTo: number | null;
   isResolved: number;
   createdAt: string;
+}
+
+interface WorkflowFeedbackEvent {
+  id: string;
+  stageKey: string;
+  eventType: string;
+  actorType: string;
+  actorName: string;
+  summary: string;
+  payload?: Record<string, unknown>;
+  createdAt: number;
 }
 
 interface CommentsPanelProps {
@@ -67,6 +81,8 @@ export function CommentsPanel({ documentId, editor, onContentReplaced, refreshKe
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [processNotice, setProcessNotice] = useState<ProcessNotice | null>(null);
   const [lastUseResearch, setLastUseResearch] = useState(false);
+  const [workflowFeedback, setWorkflowFeedback] = useState<WorkflowFeedbackEvent[]>([]);
+  const [showWorkflow, setShowWorkflow] = useState(true);
 
   useEffect(() => {
     setProcessNotice(null);
@@ -77,10 +93,17 @@ export function CommentsPanel({ documentId, editor, onContentReplaced, refreshKe
     if (!documentId) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/documents/${documentId}/comments`);
-      if (res.ok) {
-        const data = await res.json();
+      const [commentsRes, feedbackRes] = await Promise.all([
+        fetch(`/api/documents/${documentId}/comments`),
+        fetch(`/api/documents/${documentId}/workflow-feedback`),
+      ]);
+      if (commentsRes.ok) {
+        const data = await commentsRes.json();
         setComments(Array.isArray(data) ? data : []);
+      }
+      if (feedbackRes.ok) {
+        const data = await feedbackRes.json();
+        setWorkflowFeedback(Array.isArray(data) ? data : []);
       }
     } catch {
       // ignore
@@ -501,9 +524,97 @@ export function CommentsPanel({ documentId, editor, onContentReplaced, refreshKe
                 )}
               </div>
             )}
+
+            {/* Workflow Feedback */}
+            {workflowFeedback.length > 0 && (
+              <div>
+                <button
+                  onClick={() => setShowWorkflow(!showWorkflow)}
+                  className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider hover:text-foreground"
+                >
+                  {showWorkflow ? (
+                    <ChevronDown className="h-3 w-3" />
+                  ) : (
+                    <ChevronRight className="h-3 w-3" />
+                  )}
+                  <GitBranch className="h-3 w-3" />
+                  Workflow Feedback ({workflowFeedback.length})
+                </button>
+                {showWorkflow && (
+                  <div className="mt-2 space-y-2">
+                    {workflowFeedback.map((evt) => (
+                      <WorkflowFeedbackCard key={evt.id} event={evt} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function stageLabel(key: string): string {
+  const labels: Record<string, string> = {
+    research: 'Research',
+    serp_analysis: 'SERP Analysis',
+    outline_build: 'Outline',
+    prewrite: 'Prewrite',
+    pm_review: 'PM Review',
+    writing: 'Writing',
+    editing: 'Editing',
+    final_review: 'Final Review',
+  };
+  return labels[key] || key.replace(/_/g, ' ');
+}
+
+function feedbackColor(eventType: string): string {
+  switch (eventType) {
+    case 'approval':
+      return 'border-green-500/40 bg-green-500/5';
+    case 'discussion':
+      return 'border-amber-500/40 bg-amber-500/5';
+    case 'transition':
+      return 'border-blue-500/40 bg-blue-500/5';
+    default:
+      return 'border-border';
+  }
+}
+
+function WorkflowFeedbackCard({ event }: { event: WorkflowFeedbackEvent }) {
+  const isAgent = event.actorType === 'agent' || event.actorType === 'system';
+  const p = event.payload && typeof event.payload === 'object'
+    ? (event.payload as Record<string, unknown>)
+    : null;
+  const rawPayload = p?.text || p?.feedback || p?.reason || p?.value;
+  const payloadText = typeof rawPayload === 'string' ? rawPayload : null;
+
+  return (
+    <div className={`p-2.5 rounded-md border-l-2 ${feedbackColor(event.eventType)}`}>
+      <div className="flex items-center gap-1.5 mb-1">
+        {isAgent ? (
+          <Bot className="h-3 w-3 text-muted-foreground shrink-0" />
+        ) : (
+          <User className="h-3 w-3 text-muted-foreground shrink-0" />
+        )}
+        <span className="text-[10px] font-medium text-muted-foreground">
+          {event.actorName}
+        </span>
+        <span className="text-[10px] text-muted-foreground/60">
+          &middot; {stageLabel(event.stageKey)}
+        </span>
+      </div>
+      <p className="text-xs leading-relaxed whitespace-pre-wrap">{event.summary}</p>
+      {payloadText && (
+        <p className="text-[11px] text-muted-foreground mt-1 italic border-l-2 border-muted-foreground/20 pl-2">
+          {payloadText.length > 300 ? payloadText.slice(0, 300) + '...' : payloadText}
+        </p>
+      )}
+      <p className="text-[10px] text-muted-foreground/50 mt-1">
+        {new Date(event.createdAt).toLocaleString()}
+      </p>
     </div>
   );
 }
