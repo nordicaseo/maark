@@ -52,7 +52,36 @@ function activityIcon(type: string) {
   }
 }
 
-function activityColor(type: string): string {
+type ActivityCategory = 'assignment' | 'progress' | 'review' | 'revision' | 'error' | 'default';
+
+const CATEGORY_COLORS: Record<ActivityCategory, string> = {
+  assignment: 'var(--mc-progress)',      // green — PM assignments & handoffs
+  progress: '#4a9eda',                   // blue — stage starts & completions
+  review: 'var(--mc-review, #d19745)',   // amber — review feedback
+  revision: 'var(--mc-accent)',          // orange — revision routing
+  error: 'var(--mc-urgent)',             // red — blocks & errors
+  default: 'var(--mc-text-tertiary)',    // grey — everything else
+};
+
+function classifyActivity(description: string): ActivityCategory {
+  const d = description.toLowerCase();
+  if (d.includes('blocked') || d.includes('failed') || d.includes('error') || d.includes('writer queue'))
+    return 'error';
+  if (d.includes('revision') || d.includes('routing back'))
+    return 'revision';
+  if (d.includes('pm assigned') || d.includes('pm handoff'))
+    return 'assignment';
+  if (d.includes('started') || d.includes('completed') || d.includes('moving to'))
+    return 'progress';
+  if (d.includes('demonstrates') || d.includes('coverage') || d.includes('approval') || d.includes('review'))
+    return 'review';
+  return 'default';
+}
+
+function activityColor(type: string, description?: string): string {
+  if (description) {
+    return CATEGORY_COLORS[classifyActivity(description)];
+  }
   switch (type) {
     case 'task_created':
       return 'var(--mc-accent)';
@@ -165,39 +194,47 @@ function ActivityFeed({ projectId }: { projectId: number | null }) {
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="p-3 space-y-1">
-        {activities.map((activity) => (
-          <div
-            key={activity._id}
-            className="flex items-start gap-2.5 p-2 rounded-md hover:bg-[var(--mc-overlay)] transition-colors"
-          >
-            {/* Icon */}
+        {activities.map((activity) => {
+          const color = activityColor(activity.type, activity.description);
+          const category = classifyActivity(activity.description);
+          return (
             <div
-              className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-              style={{
-                background: `color-mix(in srgb, ${activityColor(activity.type)} 15%, transparent)`,
-                color: activityColor(activity.type),
-              }}
+              key={activity._id}
+              className="flex items-start gap-2.5 p-2 rounded-md hover:bg-[var(--mc-overlay)] transition-colors border-l-2"
+              style={{ borderLeftColor: color }}
             >
-              {activityIcon(activity.type)}
-            </div>
+              {/* Icon */}
+              <div
+                className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+                style={{
+                  background: `color-mix(in srgb, ${color} 15%, transparent)`,
+                  color,
+                }}
+              >
+                {activityIcon(activity.type)}
+              </div>
 
-            {/* Content */}
-            <div className="flex-1 min-w-0">
-              <p
-                className="text-xs leading-relaxed"
-                style={{ color: 'var(--mc-text-secondary)' }}
-              >
-                {activity.description}
-              </p>
-              <p
-                className="text-[10px] mt-0.5"
-                style={{ color: 'var(--mc-text-tertiary)' }}
-              >
-                {relativeTime(activity.createdAt)}
-              </p>
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <p
+                  className="text-xs leading-relaxed"
+                  style={{
+                    color: category === 'error' ? 'var(--mc-urgent)' : 'var(--mc-text-secondary)',
+                    fontWeight: category === 'error' || category === 'revision' ? 500 : 400,
+                  }}
+                >
+                  {activity.description}
+                </p>
+                <p
+                  className="text-[10px] mt-0.5"
+                  style={{ color: 'var(--mc-text-tertiary)' }}
+                >
+                  {relativeTime(activity.createdAt)}
+                </p>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

@@ -529,7 +529,7 @@ export default function MissionControlPage() {
         </header>
 
         {/* Body */}
-        <div className="flex">
+        <div className="flex flex-1 min-h-0">
           {/* Agents sidebar — left */}
           {showAgents && (
             <aside
@@ -541,7 +541,7 @@ export default function MissionControlPage() {
           )}
 
           {/* Kanban area */}
-          <main className="flex-1 min-w-0 p-6 overflow-x-auto">
+          <main className="flex-1 min-w-0 p-6 overflow-auto">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2

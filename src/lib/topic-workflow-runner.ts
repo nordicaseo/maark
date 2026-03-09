@@ -1581,10 +1581,19 @@ async function runWritingStageInner(
     );
   }
 
+  // Detect revision: document already has content from a prior writing round
+  const existingHtml =
+    typeof document.content === 'string'
+      ? document.content
+      : contentToHtml(document.content, document.plainText);
+  const existingText = stripHtmlForCompleteness(existingHtml || '');
+  const isRevision = existingText.length > 200;
+  const revisionBrief = String(task.workflowLastEventText || '').trim();
+
   const system = `You are a senior SEO writer.
 Output clean HTML only (no markdown, no code fences).
 Requirements:
-- Write a complete, publication-ready article.
+- ${isRevision ? 'Revise the existing article based on reviewer feedback.' : 'Write a complete, publication-ready article.'}
 - Respect heading hierarchy.
 - Use short paragraphs and clear transitions.
 - Incorporate research facts and statistics naturally.
@@ -1593,11 +1602,7 @@ Requirements:
 - Do not use em dashes.
 - Use colon only for structural heading/list label contexts.`;
 
-  const user = `Topic: ${task.title}
-Description: ${task.description || ''}
-Target keyword: ${document.targetKeyword || task.title}
-
-Research summary:
+  const researchBlock = `Research summary:
 ${research || '-'}
 
 Key facts:
@@ -1612,7 +1617,34 @@ ${seoLsiKeywords.map((term) => `- ${term}`).join('\n') || '-'}
 Top competing domains:
 ${competitorDomains.map((domain) => `- ${domain}`).join('\n') || '-'}
 SEO brief recommendations:
-${seoSuggestions.map((item) => `- ${item}`).join('\n') || '-'}
+${seoSuggestions.map((item) => `- ${item}`).join('\n') || '-'}`;
+
+  const user = isRevision
+    ? `Topic: ${task.title}
+Target keyword: ${document.targetKeyword || task.title}
+
+REVISION INSTRUCTIONS:
+${revisionBrief || 'Improve clarity, SEO alignment, completeness, and fix any missing sections.'}
+
+Outline to follow (ensure ALL sections are present):
+${trimTo(outlineMarkdown, 2500)}
+
+${researchBlock}
+
+Template policy:
+- Word range: ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.max}
+- Style: em dash ${templatePolicy.styleGuard.emDash}, colon ${templatePolicy.styleGuard.colon}
+
+CURRENT ARTICLE TO REVISE:
+${trimTo(existingHtml || '', 12000)}
+
+Revise the article above. Address every point in the revision instructions.
+Output the complete revised article as clean HTML. Do not skip or truncate any section.`
+    : `Topic: ${task.title}
+Description: ${task.description || ''}
+Target keyword: ${document.targetKeyword || task.title}
+
+${researchBlock}
 
 Outline to follow:
 ${trimTo(outlineMarkdown, 2500)}
