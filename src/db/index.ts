@@ -362,6 +362,15 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
     );
   `);
 
+  // ── Migrate: Apply model tiering — Haiku for lightweight stages ──
+  await sql.query(`
+    UPDATE ai_model_config
+    SET model = 'claude-haiku-4-5-20251001',
+        updated_at = NOW()
+    WHERE action IN ('workflow_research', 'workflow_serp', 'workflow_prewrite', 'workflow_pm', 'workflow_final_review')
+      AND (model LIKE 'claude-sonnet%' OR model LIKE 'claude-opus%');
+  `);
+
   // ── Content Templates ──
   await sql.query(`
     CREATE TABLE IF NOT EXISTS content_templates (
@@ -1494,6 +1503,15 @@ function createDb() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+  `);
+
+  // ── Migrate: Apply model tiering — Haiku for lightweight stages ──
+  sqlite.exec(`
+    UPDATE ai_model_config
+    SET model = 'claude-haiku-4-5-20251001',
+        updated_at = datetime('now')
+    WHERE action IN ('workflow_research', 'workflow_serp', 'workflow_prewrite', 'workflow_pm', 'workflow_final_review')
+      AND (model LIKE 'claude-sonnet%' OR model LIKE 'claude-opus%');
   `);
 
   // ── Content Templates ──
