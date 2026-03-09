@@ -24,6 +24,16 @@ import { EditorToolbar } from './editor-toolbar';
 import { ImageGeneratorDialog } from './image-generator-dialog';
 import type { Document } from '@/types/document';
 
+const DRAFT_PHASE_LABELS: Record<string, string> = {
+  initial_draft: 'Writing initial draft…',
+  continuation_1: 'Expanding content (pass 1)…',
+  continuation_2: 'Expanding content (pass 2)…',
+  continuation_3: 'Expanding content (pass 3)…',
+  compression: 'Optimizing word count…',
+  style_fix: 'Applying style corrections…',
+  complete: 'Writing complete',
+};
+
 interface TiptapEditorProps {
   document: Document;
   onSave: (content: JSONContent, plainText: string, wordCount: number) => void;
@@ -104,6 +114,65 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting, onA
     }
   }, [editor, isAiWriting]);
 
+  // ── Live draft polling ────────────────────────────────────────────
+  const [draftPhase, setDraftPhase] = useState<string | null>(null);
+  const lastDraftPhaseRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!isAiWriting || !editor || !document.id) return;
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/documents/${document.id}/draft`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json() as {
+          draftContent?: string | null;
+          draftPhase?: string | null;
+          content?: unknown;
+          status?: string;
+        };
+
+        if (cancelled) return;
+
+        // Update phase label
+        if (data.draftPhase && data.draftPhase !== lastDraftPhaseRef.current) {
+          lastDraftPhaseRef.current = data.draftPhase;
+          setDraftPhase(data.draftPhase);
+
+          // If writing is complete, load the final JSON content
+          if (data.draftPhase === 'complete' && data.content) {
+            editor.commands.setContent(data.content as JSONContent);
+            return; // Stop polling
+          }
+
+          // Otherwise show the draft HTML
+          if (data.draftContent) {
+            editor.commands.setContent(data.draftContent);
+          }
+        }
+      } catch {
+        // Polling errors are non-fatal
+      }
+    };
+
+    const interval = setInterval(poll, 3000);
+    poll(); // immediate first fetch
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isAiWriting, editor, document.id]);
+
+  // Clear draft phase when AI writing stops
+  useEffect(() => {
+    if (!isAiWriting) {
+      setDraftPhase(null);
+      lastDraftPhaseRef.current = null;
+    }
+  }, [isAiWriting]);
+
   // Notify parent of editor instance
   useEffect(() => {
     if (editor && onEditorReady) {
@@ -141,7 +210,13 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting, onA
   if (!editor) return null;
 
   return (
-    <div className={isAiWriting ? 'border-l-2 border-primary/50 animate-pulse pl-2' : ''}>
+    <div className={isAiWriting ? 'border-l-2 border-primary/50 pl-2' : ''}>
+      {isAiWriting && draftPhase && (
+        <div className="flex items-center gap-2 px-3 py-1.5 mb-2 rounded-md text-xs font-medium bg-primary/10 text-primary border border-primary/20">
+          <span className="inline-block h-2 w-2 rounded-full bg-primary animate-pulse" />
+          {DRAFT_PHASE_LABELS[draftPhase] || `Writing (${draftPhase})…`}
+        </div>
+      )}
       <EditorToolbar
         editor={editor}
         onOpenImageGenerator={() => setImageDialogOpen(true)}

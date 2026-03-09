@@ -59,6 +59,8 @@ export const documents = pgTable('documents', {
   prewriteChecklist: jsonb('prewrite_checklist'),
   agentQuestions: jsonb('agent_questions'),
   previewToken: text('preview_token'),
+  draftContent: text('draft_content'),
+  draftPhase: varchar('draft_phase', { length: 50 }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });

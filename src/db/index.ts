@@ -111,6 +111,8 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS outline_snapshot JSONB;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS prewrite_checklist JSONB;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS agent_questions JSONB;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS draft_content TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS draft_phase VARCHAR(50);
   `);
 
   // ── Migrate: Convert content_type from enum to varchar if it's still enum ──
@@ -1310,6 +1312,8 @@ function createDb() {
   addColumnSafe(sqlite, 'documents', 'outline_snapshot', "TEXT");
   addColumnSafe(sqlite, 'documents', 'prewrite_checklist', "TEXT");
   addColumnSafe(sqlite, 'documents', 'agent_questions', "TEXT");
+  addColumnSafe(sqlite, 'documents', 'draft_content', "TEXT");
+  addColumnSafe(sqlite, 'documents', 'draft_phase', "TEXT");
 
   // ── Migrate: Remap old content type values ──
   sqlite.exec(`

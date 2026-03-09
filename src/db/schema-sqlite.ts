@@ -41,6 +41,8 @@ export const documents = sqliteTable('documents', {
   prewriteChecklist: text('prewrite_checklist', { mode: 'json' }),
   agentQuestions: text('agent_questions', { mode: 'json' }),
   previewToken: text('preview_token'),
+  draftContent: text('draft_content'),
+  draftPhase: text('draft_phase'),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
 });

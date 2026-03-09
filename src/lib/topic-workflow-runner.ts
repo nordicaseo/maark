@@ -308,6 +308,21 @@ function aiCtx(task: Doc<'tasks'>, stageKey: string, providerName: string, actio
   };
 }
 
+/**
+ * Save a draft snapshot so the editor can show live writing progress.
+ * Fire-and-forget — never blocks or throws.
+ */
+function saveDraftProgress(
+  documentId: number,
+  html: string,
+  phase: string
+): void {
+  db.update(documents)
+    .set({ draftContent: html, draftPhase: phase })
+    .where(eq(documents.id, documentId))
+    .catch(() => {});
+}
+
 function parseJsonObject<T>(raw: string): T {
   const cleaned = stripCodeFences(raw);
   try {
@@ -1625,6 +1640,8 @@ Write the final article now.`;
   }
 
   let normalizedHtml = normalizeGeneratedHtml(raw);
+  saveDraftProgress(document.id, normalizedHtml, 'initial_draft');
+
   let plainText = stripHtmlForCompleteness(normalizedHtml);
   let completion = evaluateWritingCompleteness({
     html: normalizedHtml,
@@ -1655,6 +1672,7 @@ Write the final article now.`;
     }
 
     normalizedHtml = normalizeGeneratedHtml(`${normalizedHtml}\n${continuationRaw}`);
+    saveDraftProgress(document.id, normalizedHtml, `continuation_${continuationAttempts}`);
     plainText = stripHtmlForCompleteness(normalizedHtml);
     completion = evaluateWritingCompleteness({
       html: normalizedHtml,
@@ -1719,6 +1737,7 @@ Write the final article now.`;
     }
 
     normalizedHtml = normalizeGeneratedHtml(compressedRaw);
+    saveDraftProgress(document.id, normalizedHtml, 'compression');
     plainText = stripHtmlForCompleteness(normalizedHtml);
     completion = evaluateWritingCompleteness({
       html: normalizedHtml,
@@ -1764,6 +1783,7 @@ Write the final article now.`;
       break;
     }
     normalizedHtml = normalizeGeneratedHtml(styleFixRaw);
+    saveDraftProgress(document.id, normalizedHtml, 'style_fix');
     const adjusted = applyStyleGuard(normalizedHtml, templatePolicy.styleGuard);
     styleAdjusted = styleAdjusted || adjusted.changed;
     normalizedHtml = normalizeGeneratedHtml(adjusted.html);
@@ -1835,6 +1855,8 @@ Write the final article now.`;
       aiDetectionScore,
       aiRiskLevel,
       contentQualityScore,
+      draftContent: null,
+      draftPhase: 'complete',
       updatedAt: dbNow(),
     })
     .where(eq(documents.id, document.id));

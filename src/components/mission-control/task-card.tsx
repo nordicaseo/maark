@@ -400,6 +400,17 @@ function TaskCardContent({
               Edit
             </a>
           )}
+          {task.documentId && isTopicWorkflow && workflowStage === 'writing' && (workflowRuntimeState === 'active' || workflowRuntimeState === 'working') && (
+            <a
+              href={withProjectScope(`/documents/${task.documentId}`, task.projectId)}
+              className="flex items-center gap-0.5 hover:underline"
+              style={{ color: '#22c55e' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Eye className="h-3 w-3" />
+              Watch Live
+            </a>
+          )}
           {task.assignedAgentId && (
             <span className="flex items-center gap-0.5">
               <Bot className="h-3 w-3" />
