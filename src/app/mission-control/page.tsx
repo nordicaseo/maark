@@ -617,7 +617,7 @@ export default function MissionControlPage() {
           {/* Activity sidebar — right */}
           {showActivity && (
             <aside
-              className="w-80 shrink-0 border-l overflow-y-auto"
+              className="w-80 shrink-0 border-l overflow-hidden"
               style={{ borderColor: 'var(--mc-border)', background: 'var(--mc-surface-alt)' }}
             >
               <ActivitySidebar projectId={projectId} />
