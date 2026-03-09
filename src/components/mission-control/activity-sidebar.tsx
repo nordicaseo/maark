@@ -200,8 +200,15 @@ function ActivityFeed({ projectId }: { projectId: number | null }) {
           return (
             <div
               key={activity._id}
-              className="flex items-start gap-2.5 p-2 rounded-md hover:bg-[var(--mc-overlay)] transition-colors border-l-2"
-              style={{ borderLeftColor: color }}
+              className="flex items-start gap-2.5 p-2 rounded-md hover:bg-[var(--mc-overlay)] transition-colors border-l-[3px]"
+              style={{
+                borderLeftColor: color,
+                background: category === 'error'
+                  ? 'color-mix(in srgb, var(--mc-urgent) 6%, transparent)'
+                  : category === 'revision'
+                    ? 'color-mix(in srgb, var(--mc-accent) 5%, transparent)'
+                    : undefined,
+              }}
             >
               {/* Icon */}
               <div
