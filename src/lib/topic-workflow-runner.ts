@@ -31,6 +31,7 @@ import { contentToHtml } from '@/lib/tiptap/to-html';
 import { normalizeGeneratedHtml } from '@/lib/utils/html-normalize';
 import { getConvexClient } from '@/lib/convex/server';
 import { resolveTaskLinkedPageCleanContent } from '@/lib/pages/artifacts';
+import { resolveInternalLinkCandidates, resolveTaskSelfPageId } from '@/lib/pages/internal-links';
 import { logAlertEvent } from '@/lib/observability';
 import {
   buildEndingCompletionPrompt,
@@ -1424,6 +1425,19 @@ async function runPrewriteStage(
     String(document.outlineSnapshot?.markdown || '').trim() ||
     stripHtml(contentToHtml(document.content, document.plainText));
 
+  // Resolve internal link candidates for data-driven readiness check
+  const internalLinkCandidates = task.projectId
+    ? await resolveInternalLinkCandidates({
+        projectId: task.projectId,
+        targetKeyword: document.targetKeyword || task.title,
+        limit: 5,
+      }).catch(() => [])
+    : [];
+
+  const internalLinksInfo = internalLinkCandidates.length > 0
+    ? `Internal link candidates found (${internalLinkCandidates.length}):\n${internalLinkCandidates.map((c) => `- ${c.url} | ${c.title || 'Untitled'}`).join('\n')}`
+    : 'Internal link candidates: none available (page keyword mappings may be incomplete).';
+
   const system = `You are a project manager agent preparing content for writing.
 Return strict JSON only with this shape:
 {
@@ -1439,6 +1453,7 @@ Research summary: ${document.researchSnapshot?.summary || ''}
 Outline excerpt: ${trimTo(outlineText, 1200)}
 Template: ${templatePolicy.name} (${templatePolicy.key})
 Target word range: ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.max}
+${internalLinksInfo}
 
 Produce prewrite readiness and open questions.`;
 
@@ -1470,7 +1485,7 @@ Produce prewrite readiness and open questions.`;
 
   const prewriteChecklist = {
     brandContextReady: Boolean(parsed.brandContextReady),
-    internalLinksReady: Boolean(parsed.internalLinksReady),
+    internalLinksReady: internalLinkCandidates.length >= 2,
     unresolvedQuestions: agentQuestions.length,
     completedAt: agentQuestions.length === 0 ? Date.now() : undefined,
   };
@@ -1587,6 +1602,20 @@ async function runWritingStageInner(
         .slice(0, 6)
     : [];
   const researchSources = parseResearchSources(document.researchSnapshot);
+
+  // Resolve internal link candidates (non-blocking, best-effort)
+  const selfPageId = task.projectId
+    ? await resolveTaskSelfPageId({ taskId: String(task._id), projectId: task.projectId }).catch(() => null)
+    : null;
+  const internalLinkCandidates = task.projectId
+    ? await resolveInternalLinkCandidates({
+        projectId: task.projectId,
+        targetKeyword: document.targetKeyword || task.title,
+        excludePageId: selfPageId,
+        limit: 8,
+      }).catch(() => [])
+    : [];
+
   const outlineMarkdown = String(document.outlineSnapshot?.markdown || '').trim();
   if (!outlineMarkdown) {
     throw new Error(
@@ -1617,6 +1646,7 @@ Requirements:
 - Use short paragraphs and clear transitions.
 - Incorporate research facts and statistics naturally.
 - Where relevant, cite authoritative research sources as outbound links using <a href="URL" target="_blank" rel="noopener">descriptive anchor text</a>. Aim for 2-4 outbound source links per article.
+- Include internal links to other pages on the same site using <a href="URL">natural anchor text</a> (no target="_blank" for internal links). Aim for 3-5 internal links per article.
 - Do not truncate; finish the full article.
 - Keep final word count between ${templatePolicy.wordRange.min} and ${templatePolicy.wordRange.max}.
 - Do not use em dashes.
@@ -1641,6 +1671,10 @@ ${seoSuggestions.map((item) => `- ${item}`).join('\n') || '-'}
 Reference sources (cite where relevant using outbound links):
 ${researchSources.map((s) => `- ${s.title}: ${s.url}`).join('\n') || '- (none available)'}`;
 
+  const internalLinksBlock = internalLinkCandidates.length > 0
+    ? `\nInternal pages to link to (include 3-5 internal links naturally using <a href="URL">descriptive anchor text</a>, no target="_blank"):\n${internalLinkCandidates.map((c) => `- ${c.url} | ${c.title || 'Untitled'}${c.primaryKeyword ? ` (keyword: ${c.primaryKeyword})` : ''}`).join('\n')}`
+    : '';
+
   const user = isRevision
     ? `Topic: ${task.title}
 Target keyword: ${document.targetKeyword || task.title}
@@ -1652,6 +1686,7 @@ Outline to follow (ensure ALL sections are present):
 ${trimTo(outlineMarkdown, 2500)}
 
 ${researchBlock}
+${internalLinksBlock}
 
 Template policy:
 - Word range: ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.max}
@@ -1667,6 +1702,7 @@ Description: ${task.description || ''}
 Target keyword: ${document.targetKeyword || task.title}
 
 ${researchBlock}
+${internalLinksBlock}
 
 Outline to follow:
 ${trimTo(outlineMarkdown, 2500)}
@@ -1989,11 +2025,25 @@ async function runEditingStage(
   const outlineHeadings = extractOutlineHeadings(outlineMarkdown);
   const researchSources = parseResearchSources(document.researchSnapshot);
 
+  // Resolve internal link candidates (non-blocking, best-effort)
+  const selfPageId = task.projectId
+    ? await resolveTaskSelfPageId({ taskId: String(task._id), projectId: task.projectId }).catch(() => null)
+    : null;
+  const internalLinkCandidates = task.projectId
+    ? await resolveInternalLinkCandidates({
+        projectId: task.projectId,
+        targetKeyword: document.targetKeyword || task.title,
+        excludePageId: selfPageId,
+        limit: 8,
+      }).catch(() => [])
+    : [];
+
   const system = `You are a senior editor.
 Return clean HTML only.
 Edit for clarity, flow, and readability while preserving SEO intent.
 Do not remove required outline sections.
 Ensure outbound source links use <a href="URL" target="_blank" rel="noopener">descriptive anchor text</a>. Add source links from the reference list if the draft is missing them.
+Ensure internal links to other site pages use <a href="URL">descriptive anchor text</a> (no target="_blank"). Add internal links from the provided list if the draft is missing them. Aim for 3-5 internal links.
 Do not use em dashes.
 Use colon only for structural heading/list-label contexts.
 Keep output within ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.max} words.`;
@@ -2002,10 +2052,15 @@ Keep output within ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.ma
     ? `\nReference sources (ensure these are linked where relevant):\n${researchSources.map((s) => `- ${s.title}: ${s.url}`).join('\n')}`
     : '';
 
+  const internalLinksBlock = internalLinkCandidates.length > 0
+    ? `\nInternal pages to link to (include 3-5 internal links using <a href="URL">descriptive anchor text</a>, no target="_blank"):\n${internalLinkCandidates.map((c) => `- ${c.url} | ${c.title || 'Untitled'}${c.primaryKeyword ? ` (keyword: ${c.primaryKeyword})` : ''}`).join('\n')}`
+    : '';
+
   const user = `Task title: ${task.title}
 Target keyword: ${document.targetKeyword || task.title}
 Template: ${templatePolicy.name} (${templatePolicy.key})
 ${sourcesBlock}
+${internalLinksBlock}
 
 Current draft HTML:
 ${trimTo(currentHtml, 9000)}
