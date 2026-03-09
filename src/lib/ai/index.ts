@@ -98,21 +98,16 @@ export async function seedDefaultProvider() {
 
   if (!provider) return;
 
+  // Only seed workflow stage configs — legacy actions are unused fallbacks
   const defaults: { action: string; model: string }[] = [
-    { action: 'writing', model: 'claude-sonnet-4-20250514' },
-    { action: 'rewriting', model: 'claude-sonnet-4-20250514' },
-    { action: 'formatting', model: 'claude-sonnet-4-20250514' },
-    { action: 'skill_generation', model: 'claude-sonnet-4-20250514' },
-    { action: 'comment_processing', model: 'claude-sonnet-4-20250514' },
-    { action: 'research', model: 'claude-sonnet-4-20250514' },
     { action: 'workflow_research', model: 'claude-sonnet-4-20250514' },
     { action: 'workflow_serp', model: 'claude-sonnet-4-20250514' },
     { action: 'workflow_outline', model: 'claude-sonnet-4-20250514' },
     { action: 'workflow_prewrite', model: 'claude-sonnet-4-20250514' },
+    { action: 'workflow_pm', model: 'claude-sonnet-4-20250514' },
     { action: 'workflow_writing', model: 'claude-sonnet-4-20250514' },
     { action: 'workflow_editing', model: 'claude-sonnet-4-20250514' },
     { action: 'workflow_final_review', model: 'claude-sonnet-4-20250514' },
-    { action: 'workflow_pm', model: 'claude-sonnet-4-20250514' },
   ];
 
   for (const d of defaults) {

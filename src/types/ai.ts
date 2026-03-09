@@ -35,38 +35,48 @@ export type AIAction =
   | 'workflow_final_review'
   | 'workflow_pm';
 
-export const AI_ACTIONS: readonly AIAction[] = [
+/** Primary workflow stage actions — these are what the pipeline uses. */
+export const WORKFLOW_ACTIONS: readonly AIAction[] = [
+  'workflow_research',
+  'workflow_serp',
+  'workflow_outline',
+  'workflow_prewrite',
+  'workflow_pm',
+  'workflow_writing',
+  'workflow_editing',
+  'workflow_final_review',
+] as const;
+
+/** Legacy/editor actions — kept for backward compatibility as fallbacks. */
+export const LEGACY_ACTIONS: readonly AIAction[] = [
   'writing',
   'rewriting',
   'formatting',
   'skill_generation',
   'comment_processing',
   'research',
-  'workflow_research',
-  'workflow_serp',
-  'workflow_outline',
-  'workflow_prewrite',
-  'workflow_writing',
-  'workflow_editing',
-  'workflow_final_review',
-  'workflow_pm',
+] as const;
+
+export const AI_ACTIONS: readonly AIAction[] = [
+  ...WORKFLOW_ACTIONS,
+  ...LEGACY_ACTIONS,
 ] as const;
 
 export const AI_ACTION_LABELS: Record<AIAction, string> = {
-  writing: 'Content Writing',
-  rewriting: 'AI Rewriting',
-  formatting: 'Format Fixing',
-  skill_generation: 'Skill Generation',
-  comment_processing: 'Comment Processing',
-  research: 'Research',
-  workflow_research: 'Workflow: Research Stage',
-  workflow_serp: 'Workflow: SERP Intel Stage',
-  workflow_outline: 'Workflow: Outline Stage',
-  workflow_prewrite: 'Workflow: PM Prewrite Stage',
-  workflow_writing: 'Workflow: Writing Stage',
-  workflow_editing: 'Workflow: Editing Stage',
-  workflow_final_review: 'Workflow: Final SEO Review',
-  workflow_pm: 'Workflow: PM General',
+  workflow_research: 'Research Stage',
+  workflow_serp: 'SERP Intel Stage',
+  workflow_outline: 'Outline Stage',
+  workflow_prewrite: 'PM Prewrite Stage',
+  workflow_pm: 'PM General',
+  workflow_writing: 'Writing Stage',
+  workflow_editing: 'Editing Stage',
+  workflow_final_review: 'Final SEO Review',
+  writing: 'Content Writing (legacy)',
+  rewriting: 'AI Rewriting (legacy)',
+  formatting: 'Format Fixing (legacy)',
+  skill_generation: 'Skill Generation (legacy)',
+  comment_processing: 'Comment Processing (legacy)',
+  research: 'Research (legacy)',
 };
 
 export const KNOWN_PROVIDERS: Record<string, { displayName: string; models: string[] }> = {

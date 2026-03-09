@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Plus, Pencil, Trash2, Cpu, Settings2 } from 'lucide-react';
-import { AI_ACTIONS, AI_ACTION_LABELS, type AIAction } from '@/types/ai';
+import { AI_ACTIONS, AI_ACTION_LABELS, WORKFLOW_ACTIONS, LEGACY_ACTIONS, type AIAction } from '@/types/ai';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -49,10 +49,17 @@ interface ModelConfig {
 
 const PROVIDER_NAMES = ['anthropic', 'openai', 'perplexity'] as const;
 
-const ACTIONS = AI_ACTIONS.map((value) => ({
+const WORKFLOW_ACTION_OPTIONS = WORKFLOW_ACTIONS.map((value) => ({
   value,
   label: AI_ACTION_LABELS[value as AIAction],
 }));
+
+const LEGACY_ACTION_OPTIONS = LEGACY_ACTIONS.map((value) => ({
+  value,
+  label: AI_ACTION_LABELS[value as AIAction],
+}));
+
+const ALL_ACTION_OPTIONS = [...WORKFLOW_ACTION_OPTIONS, ...LEGACY_ACTION_OPTIONS];
 
 const MODEL_OPTIONS: Record<string, string[]> = {
   anthropic: [
@@ -344,10 +351,10 @@ export default function AdminAIPage() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-xl font-bold flex items-center gap-2">
-              <Settings2 className="h-5 w-5" /> Model Configuration
+              <Settings2 className="h-5 w-5" /> Workflow Stage Models
             </h2>
             <p className="text-sm text-muted-foreground">
-              Choose which provider and model to use for each action.
+              Choose which provider and model to use for each pipeline stage.
             </p>
           </div>
           <Button size="sm" onClick={openNewConfig}>
@@ -357,39 +364,85 @@ export default function AdminAIPage() {
 
         {configs.length === 0 ? (
           <div className="border border-dashed border-border rounded-lg p-8 text-center text-muted-foreground">
-            No model configs set yet. Configure one for each action.
+            No model configs set yet. Configure one for each stage.
           </div>
         ) : (
-          <div className="border border-border rounded-lg divide-y divide-border">
-            {configs.map((c) => (
-              <div
-                key={c.id}
-                className="flex items-center justify-between px-4 py-3"
-              >
-                <div className="flex items-center gap-4">
-                  <Badge variant="outline" className="capitalize">
-                    {c.action.replace('_', ' ')}
-                  </Badge>
-                  <span className="text-sm">
-                    {c.providerDisplayName}{' '}
-                    <span className="text-muted-foreground font-mono text-xs">
-                      {c.model}
-                    </span>
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    max_tokens: {c.maxTokens} | temp: {c.temperature}
-                  </span>
+          <>
+            {/* Workflow stage configs */}
+            <div className="border border-border rounded-lg divide-y divide-border">
+              {configs
+                .filter((c) => (WORKFLOW_ACTIONS as readonly string[]).includes(c.action))
+                .map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center justify-between px-4 py-3"
+                  >
+                    <div className="flex items-center gap-4">
+                      <Badge variant="outline" className="min-w-[140px] justify-center">
+                        {AI_ACTION_LABELS[c.action as AIAction] || c.action}
+                      </Badge>
+                      <span className="text-sm">
+                        {c.providerDisplayName}{' '}
+                        <span className="text-muted-foreground font-mono text-xs">
+                          {c.model}
+                        </span>
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        max_tokens: {c.maxTokens} | temp: {c.temperature}
+                      </span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openEditConfig(c)}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+            </div>
+
+            {/* Legacy configs */}
+            {configs.some((c) => (LEGACY_ACTIONS as readonly string[]).includes(c.action)) && (
+              <details className="mt-4">
+                <summary className="text-sm text-muted-foreground cursor-pointer hover:text-foreground">
+                  Legacy configs ({configs.filter((c) => (LEGACY_ACTIONS as readonly string[]).includes(c.action)).length}) — used as fallbacks only
+                </summary>
+                <div className="border border-border rounded-lg divide-y divide-border mt-2 opacity-60">
+                  {configs
+                    .filter((c) => (LEGACY_ACTIONS as readonly string[]).includes(c.action))
+                    .map((c) => (
+                      <div
+                        key={c.id}
+                        className="flex items-center justify-between px-4 py-3"
+                      >
+                        <div className="flex items-center gap-4">
+                          <Badge variant="secondary" className="min-w-[140px] justify-center">
+                            {AI_ACTION_LABELS[c.action as AIAction] || c.action}
+                          </Badge>
+                          <span className="text-sm">
+                            {c.providerDisplayName}{' '}
+                            <span className="text-muted-foreground font-mono text-xs">
+                              {c.model}
+                            </span>
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            max_tokens: {c.maxTokens} | temp: {c.temperature}
+                          </span>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openEditConfig(c)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => openEditConfig(c)}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            ))}
-          </div>
+              </details>
+            )}
+          </>
         )}
       </section>
 
@@ -518,7 +571,14 @@ export default function AdminAIPage() {
                   <SelectValue placeholder="Select action" />
                 </SelectTrigger>
                 <SelectContent>
-                  {ACTIONS.map((a) => (
+                  <div className="px-2 py-1 text-xs font-semibold text-muted-foreground">Workflow Stages</div>
+                  {WORKFLOW_ACTION_OPTIONS.map((a) => (
+                    <SelectItem key={a.value} value={a.value}>
+                      {a.label}
+                    </SelectItem>
+                  ))}
+                  <div className="px-2 py-1 text-xs font-semibold text-muted-foreground mt-1 border-t">Legacy / Editor</div>
+                  {LEGACY_ACTION_OPTIONS.map((a) => (
                     <SelectItem key={a.value} value={a.value}>
                       {a.label}
                     </SelectItem>
