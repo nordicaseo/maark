@@ -80,6 +80,22 @@ function MissionOverviewStrip({
   const queuedTasks = tasks.filter((task) => task.status !== 'COMPLETED').length;
   const workingTasks = tasks.filter((task) => task.status === 'IN_PROGRESS').length;
 
+  // AI spend for today
+  const [aiSpend, setAiSpend] = useState<string | null>(null);
+  useEffect(() => {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const params = new URLSearchParams({ since });
+    if (projectId) params.set('projectId', String(projectId));
+    fetch(`/api/admin/ai/usage?${params}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.overall?.totalCostFormatted) {
+          setAiSpend(data.overall.totalCostFormatted);
+        }
+      })
+      .catch(() => {});
+  }, [projectId]);
+
   return (
     <div
       className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-xl border"
@@ -108,6 +124,17 @@ function MissionOverviewStrip({
         </p>
         <p className="mc-header-mono mt-1">Working Now</p>
       </div>
+      {aiSpend && (
+        <>
+          <div className="w-px h-8" style={{ background: 'var(--mc-border)' }} />
+          <div className="px-2">
+            <p className="text-lg font-semibold leading-none" style={{ color: '#a78bfa' }}>
+              {aiSpend}
+            </p>
+            <p className="mc-header-mono mt-1">AI Spend 24h</p>
+          </div>
+        </>
+      )}
       <div className="w-px h-8" style={{ background: 'var(--mc-border)' }} />
       <div className="px-2">
         <p className="text-sm font-semibold leading-none" style={{ color: 'var(--mc-text-primary)' }}>

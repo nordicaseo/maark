@@ -1119,6 +1119,27 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       resolved_at TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS ai_usage_log (
+      id SERIAL PRIMARY KEY,
+      task_id TEXT,
+      agent_id TEXT,
+      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+      stage_key VARCHAR(50),
+      action VARCHAR(50),
+      provider VARCHAR(30) NOT NULL,
+      model VARCHAR(100) NOT NULL,
+      input_tokens INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      total_tokens INTEGER DEFAULT 0,
+      cost_cents REAL DEFAULT 0,
+      duration_ms INTEGER DEFAULT 0,
+      success BOOLEAN DEFAULT TRUE,
+      error_message TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS ai_usage_log_task_idx ON ai_usage_log(task_id);
+    CREATE INDEX IF NOT EXISTS ai_usage_log_project_idx ON ai_usage_log(project_id, created_at);
   `);
 }
 
@@ -2175,6 +2196,25 @@ function createDb() {
       metadata TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       resolved_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_usage_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT,
+      agent_id TEXT,
+      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+      stage_key TEXT,
+      action TEXT,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      input_tokens INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      total_tokens INTEGER DEFAULT 0,
+      cost_cents REAL DEFAULT 0,
+      duration_ms INTEGER DEFAULT 0,
+      success INTEGER DEFAULT 1,
+      error_message TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
 

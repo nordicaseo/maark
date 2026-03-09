@@ -40,5 +40,6 @@ export const pageIssues = schema.pageIssues;
 export const documentPageLinks = schema.documentPageLinks;
 export const taskPageLinks = schema.taskPageLinks;
 export const pageKeywordMappings = schema.pageKeywordMappings;
+export const aiUsageLog = schema.aiUsageLog;
 export const auditLogs = schema.auditLogs;
 export const alertEvents = schema.alertEvents;

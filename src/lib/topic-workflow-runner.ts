@@ -6,7 +6,8 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { AppUser } from '@/lib/auth';
 import { db, ensureDb } from '@/db';
 import { dbNow } from '@/db/utils';
-import { documents } from '@/db/schema';
+import { documents, aiUsageLog } from '@/db/schema';
+import { calculateCostCents } from '@/lib/ai/pricing';
 import {
   getWorkflowTaskForUser,
   type TopicStageKey,
@@ -233,6 +234,78 @@ async function collectStreamText(
     out += decoder.decode(result.value, { stream: true });
   }
   return out.trim();
+}
+
+interface AiCallContext {
+  taskId?: string;
+  agentId?: string;
+  projectId?: number;
+  stageKey?: string;
+  action?: string;
+  providerName: string;
+}
+
+/**
+ * Stream AI call with automatic usage tracking.
+ * Logs token usage + cost to ai_usage_log after each call.
+ */
+async function trackedAiCall(
+  provider: import('@/lib/ai/types').AIProviderInterface,
+  options: { model: string; system: string; messages: { role: 'user' | 'assistant'; content: string }[]; maxTokens: number; temperature?: number },
+  context: AiCallContext,
+  timeoutMs?: number
+): Promise<string> {
+  let inputTok = 0;
+  let outputTok = 0;
+  const startMs = Date.now();
+
+  function logUsage(success: boolean, errorMsg?: string) {
+    const totalTok = inputTok + outputTok;
+    const costCents = totalTok > 0 ? calculateCostCents(options.model, inputTok, outputTok) : 0;
+    db.insert(aiUsageLog).values({
+      taskId: context.taskId,
+      agentId: context.agentId,
+      projectId: context.projectId,
+      stageKey: context.stageKey,
+      action: context.action,
+      provider: context.providerName,
+      model: options.model,
+      inputTokens: inputTok,
+      outputTokens: outputTok,
+      totalTokens: totalTok,
+      costCents,
+      durationMs: Date.now() - startMs,
+      success: success ? 1 : 0,
+      errorMessage: errorMsg,
+    }).catch(() => {});
+  }
+
+  try {
+    const raw = await collectStreamText(
+      provider.stream({
+        ...options,
+        onUsage: (u) => { inputTok = u.inputTokens; outputTok = u.outputTokens; },
+      }),
+      timeoutMs
+    );
+
+    logUsage(true);
+    return raw;
+  } catch (error) {
+    logUsage(false, error instanceof Error ? error.message : 'Unknown error');
+    throw error;
+  }
+}
+
+function aiCtx(task: Doc<'tasks'>, stageKey: string, providerName: string, action?: string): AiCallContext {
+  return {
+    taskId: task._id,
+    agentId: task.assignedAgentId ?? undefined,
+    projectId: task.projectId ?? undefined,
+    stageKey,
+    action,
+    providerName,
+  };
 }
 
 function parseJsonObject<T>(raw: string): T {
@@ -897,14 +970,10 @@ Produce a concise research brief for content production.`;
     stageProfileContext.promptText
   );
 
-  const raw = await collectStreamText(
-    provider.stream({
-      model,
-      system,
-      messages: [{ role: 'user', content: fullUserPrompt }],
-      maxTokens,
-      temperature,
-    })
+  const raw = await trackedAiCall(
+    provider,
+    { model, system, messages: [{ role: 'user', content: fullUserPrompt }], maxTokens, temperature },
+    aiCtx(task, 'research', providerName, 'workflow_research')
   );
 
   const parsed = parseJsonObject<{
@@ -1235,14 +1304,10 @@ Template policy:
     stageProfileContext.promptText
   );
 
-  const outlineRaw = await collectStreamText(
-    provider.stream({
-      model,
-      system,
-      messages: [{ role: 'user', content: fullUserPrompt }],
-      maxTokens,
-      temperature,
-    })
+  const outlineRaw = await trackedAiCall(
+    provider,
+    { model, system, messages: [{ role: 'user', content: fullUserPrompt }], maxTokens, temperature },
+    aiCtx(task, 'outline_build', providerName, 'workflow_outline')
   );
 
   const generatedOutline =
@@ -1349,14 +1414,10 @@ Produce prewrite readiness and open questions.`;
     stageProfileContext.promptText
   );
 
-  const raw = await collectStreamText(
-    provider.stream({
-      model,
-      system,
-      messages: [{ role: 'user', content: fullUserPrompt }],
-      maxTokens,
-      temperature,
-    })
+  const raw = await trackedAiCall(
+    provider,
+    { model, system, messages: [{ role: 'user', content: fullUserPrompt }], maxTokens, temperature },
+    aiCtx(task, 'prewrite_context', providerName, 'workflow_prewrite')
   );
 
   const parsed = parseJsonObject<{
@@ -1553,14 +1614,10 @@ Write the final article now.`;
     stageProfileContext.promptText
   );
 
-  const raw = await collectStreamText(
-    provider.stream({
-      model,
-      system,
-      messages: [{ role: 'user', content: fullUserPrompt }],
-      maxTokens,
-      temperature,
-    })
+  const raw = await trackedAiCall(
+    provider,
+    { model, system, messages: [{ role: 'user', content: fullUserPrompt }], maxTokens, temperature },
+    aiCtx(task, 'writing', providerName, 'workflow_writing')
   );
 
   if (!raw.trim()) {
@@ -1587,14 +1644,10 @@ Write the final article now.`;
       currentHtml: trimTo(normalizedHtml, 9000),
     });
 
-    const continuationRaw = await collectStreamText(
-      provider.stream({
-        model,
-        system,
-        messages: [{ role: 'user', content: continuationPrompt }],
-        maxTokens,
-        temperature,
-      })
+    const continuationRaw = await trackedAiCall(
+      provider,
+      { model, system, messages: [{ role: 'user', content: continuationPrompt }], maxTokens, temperature },
+      aiCtx(task, 'writing:continuation', providerName, 'workflow_writing')
     );
 
     if (!continuationRaw.trim()) {
@@ -1622,14 +1675,10 @@ Write the final article now.`;
     const endingPrompt = buildEndingCompletionPrompt({
       currentHtml: trimTo(normalizedHtml, 9000),
     });
-    const endingRaw = await collectStreamText(
-      provider.stream({
-        model,
-        system,
-        messages: [{ role: 'user', content: endingPrompt }],
-        maxTokens,
-        temperature,
-      })
+    const endingRaw = await trackedAiCall(
+      provider,
+      { model, system, messages: [{ role: 'user', content: endingPrompt }], maxTokens, temperature },
+      aiCtx(task, 'writing:ending', providerName, 'workflow_writing')
     );
 
     if (endingRaw.trim()) {
@@ -1659,14 +1708,10 @@ Write the final article now.`;
       missingHeadings: completion.missingHeadings,
     });
 
-    const compressedRaw = await collectStreamText(
-      provider.stream({
-        model,
-        system,
-        messages: [{ role: 'user', content: compressionPrompt }],
-        maxTokens,
-        temperature,
-      })
+    const compressedRaw = await trackedAiCall(
+      provider,
+      { model, system, messages: [{ role: 'user', content: compressionPrompt }], maxTokens, temperature },
+      aiCtx(task, 'writing:compression', providerName, 'workflow_writing')
     );
 
     if (!compressedRaw.trim()) {
@@ -1710,14 +1755,10 @@ Write the final article now.`;
       currentHtml: trimTo(normalizedHtml, 9000),
       policy: templatePolicy.styleGuard,
     });
-    const styleFixRaw = await collectStreamText(
-      provider.stream({
-        model,
-        system,
-        messages: [{ role: 'user', content: styleFixPrompt }],
-        maxTokens,
-        temperature,
-      })
+    const styleFixRaw = await trackedAiCall(
+      provider,
+      { model, system, messages: [{ role: 'user', content: styleFixPrompt }], maxTokens, temperature },
+      aiCtx(task, 'writing:style_fix', providerName, 'workflow_writing')
     );
     if (!styleFixRaw.trim()) {
       break;
@@ -1890,14 +1931,10 @@ Revise this draft now and return the complete edited HTML.`;
     stageProfileContext.promptText
   );
 
-  const raw = await collectStreamText(
-    provider.stream({
-      model,
-      system,
-      messages: [{ role: 'user', content: fullUserPrompt }],
-      maxTokens,
-      temperature,
-    })
+  const raw = await trackedAiCall(
+    provider,
+    { model, system, messages: [{ role: 'user', content: fullUserPrompt }], maxTokens, temperature },
+    aiCtx(task, 'editing', providerName, 'workflow_editing')
   );
 
   if (!raw.trim()) {
@@ -2046,14 +2083,10 @@ Return your final review decision now.`;
     stageProfileContext.promptText
   );
 
-  const raw = await collectStreamText(
-    provider.stream({
-      model,
-      system,
-      messages: [{ role: 'user', content: fullUserPrompt }],
-      maxTokens,
-      temperature,
-    })
+  const raw = await trackedAiCall(
+    provider,
+    { model, system, messages: [{ role: 'user', content: fullUserPrompt }], maxTokens, temperature },
+    aiCtx(task, 'final_review', providerName, 'workflow_final_review')
   );
 
   const parsed = parseJsonObject<{

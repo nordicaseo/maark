@@ -641,6 +641,27 @@ export const pageKeywordMappings = sqliteTable('page_keyword_mappings', {
   uniqueIndex('page_keyword_mappings_unique').on(table.pageId, table.keywordId, table.mappingType),
 ]);
 
+// ── AI Usage Log ─────────────────────────────────────────────────
+
+export const aiUsageLog = sqliteTable('ai_usage_log', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  taskId: text('task_id'),
+  agentId: text('agent_id'),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'set null' }),
+  stageKey: text('stage_key'),
+  action: text('action'),
+  provider: text('provider').notNull(),
+  model: text('model').notNull(),
+  inputTokens: integer('input_tokens').default(0),
+  outputTokens: integer('output_tokens').default(0),
+  totalTokens: integer('total_tokens').default(0),
+  costCents: real('cost_cents').default(0),
+  durationMs: integer('duration_ms').default(0),
+  success: integer('success').default(1),
+  errorMessage: text('error_message'),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+});
+
 // ── Observability ─────────────────────────────────────────────────
 
 export const auditLogs = sqliteTable('audit_logs', {

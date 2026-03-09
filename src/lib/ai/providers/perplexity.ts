@@ -20,6 +20,7 @@ export class PerplexityProvider implements AIProviderInterface {
   stream(options: AIStreamOptions): ReadableStream<Uint8Array> {
     const client = this.client;
     const encoder = new TextEncoder();
+    const onUsage = options.onUsage;
 
     return new ReadableStream({
       async start(controller) {
@@ -35,12 +36,19 @@ export class PerplexityProvider implements AIProviderInterface {
               })),
             ],
             stream: true,
+            stream_options: onUsage ? { include_usage: true } : undefined,
           });
 
           for await (const chunk of stream) {
             const text = chunk.choices[0]?.delta?.content;
             if (text) {
               controller.enqueue(encoder.encode(text));
+            }
+            if (onUsage && chunk.usage) {
+              onUsage({
+                inputTokens: chunk.usage.prompt_tokens ?? 0,
+                outputTokens: chunk.usage.completion_tokens ?? 0,
+              });
             }
           }
           controller.close();

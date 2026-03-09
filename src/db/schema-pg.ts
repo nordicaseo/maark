@@ -663,6 +663,30 @@ export const pageKeywordMappings = pgTable('page_keyword_mappings', {
   uniqueIndex('page_keyword_mappings_unique').on(table.pageId, table.keywordId, table.mappingType),
 ]);
 
+// ── AI Usage Log ─────────────────────────────────────────────────
+
+export const aiUsageLog = pgTable('ai_usage_log', {
+  id: serial('id').primaryKey(),
+  taskId: text('task_id'),
+  agentId: text('agent_id'),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'set null' }),
+  stageKey: varchar('stage_key', { length: 50 }),
+  action: varchar('action', { length: 50 }),
+  provider: varchar('provider', { length: 30 }).notNull(),
+  model: varchar('model', { length: 100 }).notNull(),
+  inputTokens: integer('input_tokens').default(0),
+  outputTokens: integer('output_tokens').default(0),
+  totalTokens: integer('total_tokens').default(0),
+  costCents: real('cost_cents').default(0),
+  durationMs: integer('duration_ms').default(0),
+  success: boolean('success').default(true),
+  errorMessage: text('error_message'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => [
+  index('ai_usage_log_task_idx').on(table.taskId),
+  index('ai_usage_log_project_idx').on(table.projectId, table.createdAt),
+]);
+
 // ── Observability ─────────────────────────────────────────────────
 
 export const auditLogs = pgTable('audit_logs', {

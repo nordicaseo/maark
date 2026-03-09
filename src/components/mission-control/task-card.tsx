@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import NextImage from 'next/image';
@@ -120,6 +121,24 @@ function summarizePlannedOwners(task: Task): string | null {
   return parts.join(' · ');
 }
 
+/** Fetch AI cost for a task (fire once, cache in state). */
+function useTaskCost(taskId: string) {
+  const [cost, setCost] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/admin/ai/usage?taskId=${encodeURIComponent(taskId)}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!cancelled && data?.totalCostFormatted) {
+          setCost(data.totalCostFormatted);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [taskId]);
+  return cost;
+}
+
 export function SortableTaskCard({
   task,
   readOnly = false,
@@ -187,6 +206,7 @@ function TaskCardContent({
 }) {
   const { getMember } = useTeamMembers();
   const assignee = task.assigneeId ? getMember(task.assigneeId) : undefined;
+  const taskCost = useTaskCost(task._id);
   const isTopicWorkflow = task.workflowTemplateKey === 'topic_production_v1';
   const workflowStage = task.workflowCurrentStageKey || 'research';
   const workflowStageLabel =
@@ -262,6 +282,11 @@ function TaskCardContent({
               )}
               {researchReady && (
                 <span className="mc-tag text-green-400">Research Ready</span>
+              )}
+              {taskCost && taskCost !== '$0.00' && (
+                <span className="mc-tag" style={{ color: '#a78bfa', borderColor: '#7c3aed33' }} title="AI cost for this task">
+                  {taskCost}
+                </span>
               )}
             </div>
           )}

@@ -11,6 +11,7 @@ export class AnthropicProvider implements AIProviderInterface {
   stream(options: AIStreamOptions): ReadableStream<Uint8Array> {
     const client = this.client;
     const encoder = new TextEncoder();
+    const onUsage = options.onUsage;
 
     return new ReadableStream({
       async start(controller) {
@@ -34,6 +35,21 @@ export class AnthropicProvider implements AIProviderInterface {
               controller.enqueue(encoder.encode(event.delta.text));
             }
           }
+
+          if (onUsage) {
+            try {
+              const finalMessage = await stream.finalMessage();
+              if (finalMessage.usage) {
+                onUsage({
+                  inputTokens: finalMessage.usage.input_tokens,
+                  outputTokens: finalMessage.usage.output_tokens,
+                });
+              }
+            } catch {
+              // Usage extraction is best-effort
+            }
+          }
+
           controller.close();
         } catch (error) {
           controller.error(error);
