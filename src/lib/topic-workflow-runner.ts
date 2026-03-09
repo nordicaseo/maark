@@ -2855,8 +2855,8 @@ export async function runTopicWorkflow(
           error instanceof IncompleteDraftError ? error : null;
         const failedSummary = `Stage ${stage} failed: ${errorMessage}`;
         const blockedBySafety =
-          stage === 'writing' &&
-          /incomplete|truncat|abrupt|minimum|maximum|overflow|coverage|style guard|outlineSnapshot/i.test(
+          (stage === 'writing' || stage === 'editing') &&
+          /incomplete|truncat|abrupt|minimum|maximum|overflow|coverage|style guard|outlineSnapshot|too short|empty content/i.test(
             errorMessage
           );
         if (incompleteDraftError) {
