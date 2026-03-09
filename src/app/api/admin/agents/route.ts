@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { api } from '../../../../../convex/_generated/api';
 import { requireRole } from '@/lib/auth';
 import { userCanAccessProject } from '@/lib/access';
+import { getConvexClient } from '@/lib/convex/server';
 import { logAlertEvent, logAuditEvent } from '@/lib/observability';
 import {
   seedProjectAgentProfiles,
@@ -352,6 +354,42 @@ export async function POST(req: NextRequest) {
         writersRenamed: synced.writersRenamed,
         health,
       });
+    }
+
+    if (action === 'reset_runtime_agents') {
+      const convex = getConvexClient();
+      if (!convex) {
+        return NextResponse.json({ error: 'Convex client unavailable' }, { status: 503 });
+      }
+      const agents = await convex.query(api.agents.list, {
+        projectId,
+        limit: 200,
+      });
+      let resetCount = 0;
+      for (const agent of agents || []) {
+        const status = String(agent.status || '').toUpperCase();
+        if (status === 'WORKING' || status === 'OFFLINE') {
+          try {
+            await convex.mutation(api.topicWorkflow.forceReleaseStaleAgent, {
+              agentId: agent._id,
+              taskId: agent.currentTaskId ?? undefined,
+              reason: 'admin_reset_runtime_agents',
+            });
+            resetCount++;
+          } catch (resetErr) {
+            console.error(`Failed to reset agent ${agent._id}:`, resetErr);
+          }
+        }
+      }
+      await logAuditEvent({
+        userId: auth.user.id,
+        action: 'admin.agent_runtime.reset',
+        resourceType: 'project',
+        resourceId: projectId,
+        projectId,
+        metadata: { resetCount, totalAgents: (agents || []).length },
+      });
+      return NextResponse.json({ projectId, resetCount, totalAgents: (agents || []).length });
     }
 
     return NextResponse.json({ error: 'Unsupported action' }, { status: 400 });

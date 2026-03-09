@@ -386,6 +386,47 @@ async function executeAutoResume(req: NextRequest) {
       0
     );
 
+    // Proactive stale agent sweep: release WORKING agents with no active task
+    let staleAgentsRecovered = 0;
+    for (const projectId of projectIds) {
+      try {
+        const workingAgents = await convex.query(api.agents.list, {
+          projectId,
+          status: 'WORKING',
+          limit: 100,
+        });
+        for (const agent of workingAgents || []) {
+          let isStale = false;
+          if (!agent.currentTaskId) {
+            isStale = true;
+          } else {
+            try {
+              const task = await convex.query(api.tasks.get, { id: agent.currentTaskId });
+              if (!task || task.status === 'COMPLETED' || task.workflowCurrentStageKey === 'complete') {
+                isStale = true;
+              }
+            } catch {
+              isStale = true;
+            }
+          }
+          if (isStale) {
+            try {
+              await convex.mutation(api.topicWorkflow.forceReleaseStaleAgent, {
+                agentId: agent._id,
+                taskId: agent.currentTaskId ?? undefined,
+                reason: 'auto_resume_stale_sweep',
+              });
+              staleAgentsRecovered++;
+            } catch (releaseErr) {
+              console.error(`Stale sweep: failed to release agent ${agent._id}:`, releaseErr);
+            }
+          }
+        }
+      } catch (sweepErr) {
+        console.error(`Stale agent sweep failed for project ${projectId}:`, sweepErr);
+      }
+    }
+
     const queuedWritingTasks = workflowTasks
       .filter((task) => {
         if (task.workflowCurrentStageKey !== 'writing') return false;
@@ -614,6 +655,7 @@ async function executeAutoResume(req: NextRequest) {
         strictPoolRouting: strictPools,
         scaledUpWriters,
         scaledDownWriters,
+        staleAgentsRecovered,
         laneScalingByProject: Object.fromEntries(laneScalingByProject.entries()),
         writerRouteRepairs,
         failures,
@@ -646,6 +688,7 @@ async function executeAutoResume(req: NextRequest) {
       strictPoolRouting: strictPools,
       scaledUpWriters,
       scaledDownWriters,
+      staleAgentsRecovered,
       writerRouteRepairs,
       failures,
     });

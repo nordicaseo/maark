@@ -12,7 +12,7 @@ const WORKFLOW_TEMPLATE_KEY = "topic_production_v1";
 const INITIAL_WORKFLOW_START_DELAY_MS = 20_000;
 const MIN_WORKFLOW_START_DELAY_MS = 0;
 const MAX_WORKFLOW_START_DELAY_MS = 10 * 60 * 1000;
-const DEFAULT_WRITER_LOCK_TIMEOUT_MS = 25 * 60 * 1000;
+const DEFAULT_WRITER_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_PROJECT_AGENT_POOL_MODE = "strict";
 
 type TopicStageKey =
@@ -354,7 +354,7 @@ function resolveWriterLockTimeoutMs(): number {
     10
   );
   if (!Number.isFinite(parsed)) return DEFAULT_WRITER_LOCK_TIMEOUT_MS;
-  const minutes = clampNumber(parsed, 5, 180);
+  const minutes = clampNumber(parsed, 2, 60);
   return minutes * 60 * 1000;
 }
 
@@ -1327,6 +1327,32 @@ async function assignStageOwner(
     }
   }
 
+  // Strict routing fallthrough: configured slot failed → try general pool
+  if (strictConfiguredStage && !assignment) {
+    assignment = await resolveStageOwnerAgent(ctx, args.stageKey, args.projectId, effectiveLaneKey);
+    if (!assignment && args.stageKey === "writing") {
+      const healResult = await healWriterAvailability(ctx, args.projectId, effectiveLaneKey);
+      if (healResult.healed || healResult.assignableWriterId) {
+        assignment = await resolveStageOwnerAgent(ctx, args.stageKey, args.projectId, effectiveLaneKey);
+        if (!assignment && healResult.assignableWriterId) {
+          const w = await ctx.db.get(healResult.assignableWriterId);
+          if (w && normalizedRoleCandidates("writer").includes(w.role.toLowerCase())) {
+            assignment = { agent: w, requestedRole: "writer", matchedRole: w.role };
+          }
+        }
+      }
+    }
+    if (!assignment && args.stageKey !== "writing") {
+      const gh = await healAgentAvailability(ctx, args.stageKey, args.projectId);
+      if (gh.healed) {
+        assignment = await resolveStageOwnerAgent(ctx, args.stageKey, args.projectId, laneKey);
+      }
+    }
+    if (assignment) {
+      assignmentDiagnostics = { ...assignmentDiagnostics, reasonCode: "configured_fallthrough_pool", fallthroughUsed: true };
+    }
+  }
+
   if (!assignment) {
     const queueTask =
       strictConfiguredStage ||
@@ -2213,5 +2239,28 @@ export const getWorkflowContext = query({
       .order("desc")
       .take(30);
     return { task, events };
+  },
+});
+
+export const forceReleaseStaleAgent = mutation({
+  args: {
+    agentId: v.id("agents"),
+    taskId: v.optional(v.id("tasks")),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const agent = await ctx.db.get(args.agentId);
+    if (!agent || normalizeAgentStatus(agent.status) !== "WORKING") {
+      return { released: false, reason: "not_working" };
+    }
+    if (args.taskId && agent.currentTaskId && agent.currentTaskId !== args.taskId) {
+      return { released: false, reason: "different_task" };
+    }
+    await ctx.db.patch(args.agentId, {
+      status: "IDLE",
+      currentTaskId: undefined,
+      updatedAt: Date.now(),
+    });
+    return { released: true, reason: args.reason || "force_release" };
   },
 });

@@ -42,7 +42,7 @@ const BLOG_CONTENT_FORMATS = new Set<ContentFormat>([
   'blog_review',
 ]);
 
-const DEFAULT_WRITER_LOCK_TIMEOUT_MS = 25 * 60 * 1000;
+const DEFAULT_WRITER_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
 
 type RuntimeAgent = {
   _id: Id<'agents'>;

@@ -2880,10 +2880,30 @@ export async function runTopicWorkflow(
         throw error;
       }
     } finally {
-      try {
-        await setAgentOnline(convex, currentTask);
-      } catch (statusError) {
-        console.error('Failed to reset agent status to ONLINE after stage run:', statusError);
+      // Bulletproof agent release: 3 retries with backoff, then force-release
+      let released = false;
+      for (let attempt = 1; attempt <= 3 && !released; attempt++) {
+        try {
+          await setAgentOnline(convex, currentTask);
+          released = true;
+        } catch (statusError) {
+          console.error(`Agent release attempt ${attempt}/3 failed:`, statusError);
+          if (attempt < 3) {
+            await new Promise((r) => setTimeout(r, attempt * 1000));
+          }
+        }
+      }
+      if (!released && convex && currentTask.assignedAgentId) {
+        try {
+          await convex.mutation(api.topicWorkflow.forceReleaseStaleAgent, {
+            agentId: currentTask.assignedAgentId,
+            taskId: currentTask._id,
+            reason: 'finally_block_release_failed',
+          });
+          console.warn(`Force-released agent ${currentTask.assignedAgentId} after 3 failed attempts`);
+        } catch (forceErr) {
+          console.error(`CRITICAL: Force-release also failed for agent ${currentTask.assignedAgentId}:`, forceErr);
+        }
       }
     }
 
