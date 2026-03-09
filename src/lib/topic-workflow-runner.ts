@@ -516,7 +516,7 @@ async function countFinalReviewAutoRevisionAttempts(
     limit: 120,
   });
   return (history.events || []).filter((event) => {
-    const payload = (event.payload as { meta?: { reasonCode?: string } } | undefined)?.meta;
+    const payload = event.payload as { reasonCode?: string } | undefined;
     return (
       event.stageKey === 'final_review' &&
       event.eventType === 'stage_progress' &&
