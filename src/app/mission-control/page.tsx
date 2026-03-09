@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { useConvexAvailable } from '@/lib/convex/provider';
 import { useRouter } from 'next/navigation';
@@ -152,7 +152,20 @@ export default function MissionControlPage() {
   const { user, isLoading } = useAuth();
   const convexAvailable = useConvexAvailable();
   const router = useRouter();
-  const { activeProjectId: projectId, setActiveProjectId: setProjectId } = useActiveProject();
+  const { activeProjectId: projectId, setActiveProjectId: setProjectIdRaw } = useActiveProject();
+  // Wrap setter to also update URL synchronously, so useProjectScopeSync doesn't revert changes
+  const setProjectId = useCallback((id: number | null) => {
+    setProjectIdRaw(id);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (id !== null) {
+        url.searchParams.set('projectId', String(id));
+      } else {
+        url.searchParams.delete('projectId');
+      }
+      window.history.replaceState(null, '', url.toString());
+    }
+  }, [setProjectIdRaw]);
   useProjectScopeSync(projectId, setProjectId);
   const [showNewTask, setShowNewTask] = useState(false);
   const [showAgents, setShowAgents] = useState(true);
