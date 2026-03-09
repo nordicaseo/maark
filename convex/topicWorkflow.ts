@@ -1343,19 +1343,20 @@ async function assignStageOwner(
         }
       }
     }
-    // 2. Lane-filtered fallthrough failed → try ANY available writer (no lane filter)
+    // 2. Lane-filtered fallthrough: try any available writer matching the task lane
     if (!assignment && args.stageKey === "writing") {
       const allAgents = await ctx.db.query("agents").collect();
       const projectWriters = allAgents.filter(
         (a) =>
           normalizedRoleCandidates("writer").includes(a.role.toLowerCase()) &&
           isAgentRoutableForProject(a, args.projectId) &&
-          (normalizeAgentStatus(a.status) === "ONLINE" || normalizeAgentStatus(a.status) === "IDLE")
+          (normalizeAgentStatus(a.status) === "ONLINE" || normalizeAgentStatus(a.status) === "IDLE") &&
+          (!effectiveLaneKey || a.laneKey === effectiveLaneKey)
       );
       if (projectWriters.length > 0) {
         const best = projectWriters.find((a) => normalizeAgentStatus(a.status) === "ONLINE") || projectWriters[0];
         assignment = { agent: best, requestedRole: "writer", matchedRole: best.role };
-        assignmentDiagnostics = { ...assignmentDiagnostics, reasonCode: "configured_fallthrough_any_writer", laneBypass: true };
+        assignmentDiagnostics = { ...assignmentDiagnostics, reasonCode: "configured_fallthrough_lane_writer", laneBypass: false };
       }
     }
     if (!assignment && args.stageKey !== "writing") {
