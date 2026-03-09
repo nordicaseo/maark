@@ -13,6 +13,7 @@ export class PerplexityProvider implements AIProviderInterface {
     this.client = new OpenAI({
       apiKey,
       baseURL: 'https://api.perplexity.ai',
+      timeout: 180_000,
     });
   }
 

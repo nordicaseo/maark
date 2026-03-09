@@ -5,7 +5,7 @@ export class OpenAIProvider implements AIProviderInterface {
   private client: OpenAI;
 
   constructor(apiKey: string) {
-    this.client = new OpenAI({ apiKey });
+    this.client = new OpenAI({ apiKey, timeout: 180_000 });
   }
 
   stream(options: AIStreamOptions): ReadableStream<Uint8Array> {

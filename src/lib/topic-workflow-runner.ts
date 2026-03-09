@@ -209,14 +209,28 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-async function collectStreamText(stream: ReadableStream<Uint8Array>): Promise<string> {
+async function collectStreamText(
+  stream: ReadableStream<Uint8Array>,
+  timeoutMs = 180_000
+): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let out = '';
+  const deadline = Date.now() + timeoutMs;
   while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    out += decoder.decode(value, { stream: true });
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      reader.cancel().catch(() => {});
+      throw new Error(`Stream timeout after ${timeoutMs / 1000}s (collected ${out.length} chars)`);
+    }
+    const result = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Stream chunk timeout after ${timeoutMs / 1000}s`)), remaining)
+      ),
+    ]);
+    if (result.done) break;
+    out += decoder.decode(result.value, { stream: true });
   }
   return out.trim();
 }
@@ -1412,6 +1426,25 @@ Produce prewrite readiness and open questions.`;
 }
 
 async function runWritingStage(
+  task: Doc<'tasks'>,
+  document: Awaited<ReturnType<typeof getDocumentById>>,
+  stageProfileContext: StageProfileContext
+): Promise<StageRunResult> {
+  // Hard ceiling: abort entire writing stage after 10 minutes
+  const WRITING_STAGE_TIMEOUT_MS = 10 * 60 * 1000;
+  const result = await Promise.race([
+    runWritingStageInner(task, document, stageProfileContext),
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`Writing stage hard timeout after ${WRITING_STAGE_TIMEOUT_MS / 1000}s`)),
+        WRITING_STAGE_TIMEOUT_MS
+      )
+    ),
+  ]);
+  return result;
+}
+
+async function runWritingStageInner(
   task: Doc<'tasks'>,
   document: Awaited<ReturnType<typeof getDocumentById>>,
   stageProfileContext: StageProfileContext

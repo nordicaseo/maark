@@ -5,7 +5,7 @@ export class AnthropicProvider implements AIProviderInterface {
   private client: Anthropic;
 
   constructor(apiKey: string) {
-    this.client = new Anthropic({ apiKey });
+    this.client = new Anthropic({ apiKey, timeout: 180_000 });
   }
 
   stream(options: AIStreamOptions): ReadableStream<Uint8Array> {
