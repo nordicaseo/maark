@@ -23,11 +23,11 @@ const DEFAULT_STYLE_GUARD: StyleGuardPolicy = {
 };
 
 const FALLBACK_TEMPLATE_BY_FORMAT: Record<ContentFormat, string> = {
-  blog_post: 'blog_standard',
-  blog_listicle: 'blog_listicle',
-  blog_buying_guide: 'blog_buying_guide',
-  blog_how_to: 'blog_how_to',
-  blog_review: 'blog_review',
+  blog_post: 'blog_standard_v2',
+  blog_listicle: 'blog_listicle_v2',
+  blog_buying_guide: 'blog_buying_guide_v2',
+  blog_how_to: 'blog_how_to_v2',
+  blog_review: 'blog_review_v2',
   product_category: 'product_collection',
   product_description: 'product_landing',
   comparison: 'comparison',

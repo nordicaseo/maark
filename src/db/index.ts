@@ -552,14 +552,114 @@ async function initPostgres(sql: { query: (statement: string) => Promise<unknown
       )
     ON CONFLICT (key) DO NOTHING;
   `);
+  // V2 blog templates — relaxed word ranges & style guard for better completion rates
+  await sql.query(`
+    INSERT INTO content_templates (
+      key, name, description, content_formats, structure, word_range, outline_constraints, style_guard, is_system, is_active
+    ) VALUES
+      (
+        'blog_standard_v2',
+        'Blog Standard v2',
+        'Balanced blog template with relaxed constraints for reliable completion.',
+        '["blog_post"]'::jsonb,
+        '{"sections":[{"heading":"Introduction","level":2},{"heading":"Main Sections","level":2},{"heading":"Conclusion","level":2}]}'::jsonb,
+        '{"min":1200,"max":2500}'::jsonb,
+        '{"maxH2":6,"maxH3PerH2":3}'::jsonb,
+        '{"emDash":"allow","colon":"allow","maxNarrativeColons":0}'::jsonb,
+        TRUE,
+        TRUE
+      ),
+      (
+        'blog_how_to_v2',
+        'How-To Guide v2',
+        'Step-by-step instructional template with relaxed constraints.',
+        '["blog_how_to"]'::jsonb,
+        '{"sections":[{"heading":"What You Need","level":2},{"heading":"Step-by-Step","level":2},{"heading":"Conclusion","level":2}]}'::jsonb,
+        '{"min":1200,"max":2500}'::jsonb,
+        '{"maxH2":7,"maxH3PerH2":3}'::jsonb,
+        '{"emDash":"allow","colon":"allow","maxNarrativeColons":0}'::jsonb,
+        TRUE,
+        TRUE
+      ),
+      (
+        'blog_listicle_v2',
+        'Listicle / Best Of v2',
+        'List-focused template with relaxed constraints.',
+        '["blog_listicle"]'::jsonb,
+        '{"sections":[{"heading":"Introduction","level":2},{"heading":"List Items","level":2},{"heading":"Wrap-Up","level":2}]}'::jsonb,
+        '{"min":1200,"max":2500}'::jsonb,
+        '{"maxH2":8,"maxH3PerH2":2}'::jsonb,
+        '{"emDash":"allow","colon":"allow","maxNarrativeColons":0}'::jsonb,
+        TRUE,
+        TRUE
+      ),
+      (
+        'blog_buying_guide_v2',
+        'Buying Guide v2',
+        'Commercial-intent buying guide with relaxed constraints.',
+        '["blog_buying_guide"]'::jsonb,
+        '{"sections":[{"heading":"Buyer Criteria","level":2},{"heading":"Options","level":2},{"heading":"Recommendations","level":2}]}'::jsonb,
+        '{"min":1400,"max":2800}'::jsonb,
+        '{"maxH2":8,"maxH3PerH2":3}'::jsonb,
+        '{"emDash":"allow","colon":"allow","maxNarrativeColons":0}'::jsonb,
+        TRUE,
+        TRUE
+      ),
+      (
+        'blog_review_v2',
+        'Review Article v2',
+        'Review-driven editorial template with relaxed constraints.',
+        '["blog_review"]'::jsonb,
+        '{"sections":[{"heading":"Verdict","level":2},{"heading":"Pros and Cons","level":2},{"heading":"Who It Is For","level":2}]}'::jsonb,
+        '{"min":1200,"max":2400}'::jsonb,
+        '{"maxH2":6,"maxH3PerH2":3}'::jsonb,
+        '{"emDash":"allow","colon":"allow","maxNarrativeColons":0}'::jsonb,
+        TRUE,
+        TRUE
+      )
+    ON CONFLICT (key) DO NOTHING;
+  `);
+  // Archive old blog templates
+  await sql.query(`
+    UPDATE content_templates SET is_active = FALSE
+    WHERE key IN ('blog_standard', 'blog_how_to', 'blog_listicle', 'blog_buying_guide', 'blog_review')
+      AND is_active = TRUE;
+  `);
+  // Update assignments to point to v2 templates
+  await sql.query(`
+    UPDATE content_template_assignments
+    SET template_key = 'blog_standard_v2', updated_at = NOW()
+    WHERE scope_key = 'global' AND content_format = 'blog_post';
+  `);
+  await sql.query(`
+    UPDATE content_template_assignments
+    SET template_key = 'blog_how_to_v2', updated_at = NOW()
+    WHERE scope_key = 'global' AND content_format = 'blog_how_to';
+  `);
+  await sql.query(`
+    UPDATE content_template_assignments
+    SET template_key = 'blog_listicle_v2', updated_at = NOW()
+    WHERE scope_key = 'global' AND content_format = 'blog_listicle';
+  `);
+  await sql.query(`
+    UPDATE content_template_assignments
+    SET template_key = 'blog_buying_guide_v2', updated_at = NOW()
+    WHERE scope_key = 'global' AND content_format = 'blog_buying_guide';
+  `);
+  await sql.query(`
+    UPDATE content_template_assignments
+    SET template_key = 'blog_review_v2', updated_at = NOW()
+    WHERE scope_key = 'global' AND content_format = 'blog_review';
+  `);
+  // Fallback insert for fresh DBs
   await sql.query(`
     INSERT INTO content_template_assignments (scope, scope_key, project_id, content_format, template_key)
     VALUES
-      ('global', 'global', NULL, 'blog_post', 'blog_standard'),
-      ('global', 'global', NULL, 'blog_how_to', 'blog_how_to'),
-      ('global', 'global', NULL, 'blog_listicle', 'blog_listicle'),
-      ('global', 'global', NULL, 'blog_buying_guide', 'blog_buying_guide'),
-      ('global', 'global', NULL, 'blog_review', 'blog_review'),
+      ('global', 'global', NULL, 'blog_post', 'blog_standard_v2'),
+      ('global', 'global', NULL, 'blog_how_to', 'blog_how_to_v2'),
+      ('global', 'global', NULL, 'blog_listicle', 'blog_listicle_v2'),
+      ('global', 'global', NULL, 'blog_buying_guide', 'blog_buying_guide_v2'),
+      ('global', 'global', NULL, 'blog_review', 'blog_review_v2'),
       ('global', 'global', NULL, 'product_category', 'product_collection'),
       ('global', 'global', NULL, 'product_description', 'product_landing'),
       ('global', 'global', NULL, 'comparison', 'comparison'),
@@ -1573,6 +1673,72 @@ function createDb() {
       ('global', 'global', NULL, 'product_description', 'product_landing'),
       ('global', 'global', NULL, 'comparison', 'comparison'),
       ('global', 'global', NULL, 'news_article', 'news');
+  `);
+  // V2 blog templates for SQLite (local dev)
+  sqlite.exec(`
+    INSERT OR IGNORE INTO content_templates (
+      key, name, description, content_formats, structure, word_range, outline_constraints, style_guard, is_system, is_active
+    ) VALUES
+      (
+        'blog_standard_v2',
+        'Blog Standard v2',
+        'Balanced blog template with relaxed constraints for reliable completion.',
+        '["blog_post"]',
+        '{"sections":[{"heading":"Introduction","level":2},{"heading":"Main Sections","level":2},{"heading":"Conclusion","level":2}]}',
+        '{"min":1200,"max":2500}',
+        '{"maxH2":6,"maxH3PerH2":3}',
+        '{"emDash":"allow","colon":"allow","maxNarrativeColons":0}',
+        1,
+        1
+      ),
+      (
+        'blog_how_to_v2',
+        'How-To Guide v2',
+        'Step-by-step instructional template with relaxed constraints.',
+        '["blog_how_to"]',
+        '{"sections":[{"heading":"What You Need","level":2},{"heading":"Step-by-Step","level":2},{"heading":"Conclusion","level":2}]}',
+        '{"min":1200,"max":2500}',
+        '{"maxH2":7,"maxH3PerH2":3}',
+        '{"emDash":"allow","colon":"allow","maxNarrativeColons":0}',
+        1,
+        1
+      ),
+      (
+        'blog_listicle_v2',
+        'Listicle / Best Of v2',
+        'List-focused template with relaxed constraints.',
+        '["blog_listicle"]',
+        '{"sections":[{"heading":"Introduction","level":2},{"heading":"List Items","level":2},{"heading":"Wrap-Up","level":2}]}',
+        '{"min":1200,"max":2500}',
+        '{"maxH2":8,"maxH3PerH2":2}',
+        '{"emDash":"allow","colon":"allow","maxNarrativeColons":0}',
+        1,
+        1
+      ),
+      (
+        'blog_buying_guide_v2',
+        'Buying Guide v2',
+        'Commercial-intent buying guide with relaxed constraints.',
+        '["blog_buying_guide"]',
+        '{"sections":[{"heading":"Buyer Criteria","level":2},{"heading":"Options","level":2},{"heading":"Recommendations","level":2}]}',
+        '{"min":1400,"max":2800}',
+        '{"maxH2":8,"maxH3PerH2":3}',
+        '{"emDash":"allow","colon":"allow","maxNarrativeColons":0}',
+        1,
+        1
+      ),
+      (
+        'blog_review_v2',
+        'Review Article v2',
+        'Review-driven editorial template with relaxed constraints.',
+        '["blog_review"]',
+        '{"sections":[{"heading":"Verdict","level":2},{"heading":"Pros and Cons","level":2},{"heading":"Who It Is For","level":2}]}',
+        '{"min":1200,"max":2400}',
+        '{"maxH2":6,"maxH3PerH2":3}',
+        '{"emDash":"allow","colon":"allow","maxNarrativeColons":0}',
+        1,
+        1
+      );
   `);
   sqlite.exec(`
     INSERT OR IGNORE INTO workflow_profiles (

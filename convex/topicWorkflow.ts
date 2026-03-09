@@ -1329,6 +1329,7 @@ async function assignStageOwner(
 
   // Strict routing fallthrough: configured slot failed → try general pool
   if (strictConfiguredStage && !assignment) {
+    // 1. Try with lane key first
     assignment = await resolveStageOwnerAgent(ctx, args.stageKey, args.projectId, effectiveLaneKey);
     if (!assignment && args.stageKey === "writing") {
       const healResult = await healWriterAvailability(ctx, args.projectId, effectiveLaneKey);
@@ -1342,13 +1343,28 @@ async function assignStageOwner(
         }
       }
     }
+    // 2. Lane-filtered fallthrough failed → try ANY available writer (no lane filter)
+    if (!assignment && args.stageKey === "writing") {
+      const allAgents = await ctx.db.query("agents").collect();
+      const projectWriters = allAgents.filter(
+        (a) =>
+          normalizedRoleCandidates("writer").includes(a.role.toLowerCase()) &&
+          isAgentRoutableForProject(a, args.projectId) &&
+          (normalizeAgentStatus(a.status) === "ONLINE" || normalizeAgentStatus(a.status) === "IDLE")
+      );
+      if (projectWriters.length > 0) {
+        const best = projectWriters.find((a) => normalizeAgentStatus(a.status) === "ONLINE") || projectWriters[0];
+        assignment = { agent: best, requestedRole: "writer", matchedRole: best.role };
+        assignmentDiagnostics = { ...assignmentDiagnostics, reasonCode: "configured_fallthrough_any_writer", laneBypass: true };
+      }
+    }
     if (!assignment && args.stageKey !== "writing") {
       const gh = await healAgentAvailability(ctx, args.stageKey, args.projectId);
       if (gh.healed) {
         assignment = await resolveStageOwnerAgent(ctx, args.stageKey, args.projectId, laneKey);
       }
     }
-    if (assignment) {
+    if (assignment && !assignmentDiagnostics?.reasonCode?.toString().includes("fallthrough")) {
       assignmentDiagnostics = { ...assignmentDiagnostics, reasonCode: "configured_fallthrough_pool", fallthroughUsed: true };
     }
   }

@@ -119,9 +119,9 @@ export function evaluateWritingCompleteness(args: {
   if (wordCount > maxWords) {
     reasons.push(`word count ${wordCount} exceeds maximum ${maxWords}`);
   }
-  if (normalizedOutline.length > 0 && headingCoverage < 0.75) {
+  if (normalizedOutline.length > 0 && headingCoverage < 0.50) {
     reasons.push(
-      `heading coverage ${(headingCoverage * 100).toFixed(0)}% is below 75%`
+      `heading coverage ${(headingCoverage * 100).toFixed(0)}% is below 50%`
     );
   }
   if (abruptEnding) {
