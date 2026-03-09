@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useQuery } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,6 +17,7 @@ import { SemanticPanel } from './semantic-panel';
 import { QualityPanel } from './quality-panel';
 import { AiWritingPanel } from '@/components/ai/ai-writing-panel';
 import { CommentsPanel } from '@/components/editor/comments-panel';
+import { WorkflowActivityFeed } from '@/components/mission-control/workflow-feed/workflow-activity-feed';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
 import type { Document } from '@/types/document';
@@ -83,6 +86,13 @@ function SidebarContent({
 }: SidebarContentProps) {
   void onInsertAiText;
   void onReplaceContent;
+
+  // Resolve linked task for the Feed tab
+  const documentTasks = useQuery(
+    api.tasks.getByDocument,
+    document.id ? { documentId: document.id } : 'skip',
+  );
+  const linkedTaskId = documentTasks?.[0]?._id ?? null;
 
   const [researchSummary, setResearchSummary] = useState('');
   const [researchFacts, setResearchFacts] = useState('');
@@ -205,10 +215,11 @@ function SidebarContent({
 
   return (
     <Tabs defaultValue="write" className="flex flex-col h-full">
-      <TabsList className={`mx-3 mt-3 w-full grid grid-cols-3 sm:grid-cols-6 gap-1 h-auto shrink-0 ${expanded ? 'mx-4 mt-4' : ''}`}>
+      <TabsList className={`mx-3 mt-3 w-full grid grid-cols-4 sm:grid-cols-7 gap-1 h-auto shrink-0 ${expanded ? 'mx-4 mt-4' : ''}`}>
         <TabsTrigger value="write" className="text-[11px] min-h-8 px-2">Write</TabsTrigger>
         <TabsTrigger value="comments" className="text-[11px] min-h-8 px-2">Comments</TabsTrigger>
         <TabsTrigger value="workflow" className="text-[11px] min-h-8 px-2">Workflow</TabsTrigger>
+        <TabsTrigger value="feed" className="text-[11px] min-h-8 px-2">Feed</TabsTrigger>
         <TabsTrigger value="ai" className="text-[11px] min-h-8 px-2">AI</TabsTrigger>
         <TabsTrigger value="seo" className="text-[11px] min-h-8 px-2">SEO</TabsTrigger>
         <TabsTrigger value="quality" className="text-[11px] min-h-8 px-2">Quality</TabsTrigger>
@@ -377,6 +388,10 @@ function SidebarContent({
 
         <TabsContent value="quality" className={`p-3 mt-0 ${expanded ? 'p-4 max-w-2xl mx-auto' : ''}`}>
           <QualityPanel result={qualityResult} analyzing={analyzing} />
+        </TabsContent>
+
+        <TabsContent value="feed" className="mt-0 h-full">
+          <WorkflowActivityFeed taskId={linkedTaskId} compact />
         </TabsContent>
       </div>
     </Tabs>

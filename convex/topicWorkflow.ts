@@ -2246,6 +2246,21 @@ export const listWorkflowHistory = query({
   },
 });
 
+export const listProjectWorkflowFeed = query({
+  args: {
+    projectId: v.number(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = Math.max(1, Math.min(args.limit ?? 80, 200));
+    return await ctx.db
+      .query("taskWorkflowEvents")
+      .withIndex("by_project_time", (q) => q.eq("projectId", args.projectId))
+      .order("desc")
+      .take(limit);
+  },
+});
+
 export const getWorkflowContext = query({
   args: { taskId: v.id("tasks") },
   handler: async (ctx, args) => {

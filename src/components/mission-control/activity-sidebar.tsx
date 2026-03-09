@@ -7,12 +7,11 @@ import { useAuth } from '@/components/auth/auth-provider';
 import {
   Activity,
   MessageCircle,
-  Plus,
-  ArrowRight,
   Bot,
   User,
   Send,
 } from 'lucide-react';
+import { WorkflowActivityFeed } from './workflow-feed/workflow-activity-feed';
 
 interface ActivitySidebarProps {
   projectId: number | null;
@@ -31,71 +30,6 @@ function relativeTime(timestamp: number): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d ago`;
   return new Date(timestamp).toLocaleDateString();
-}
-
-function activityIcon(type: string) {
-  switch (type) {
-    case 'task_created':
-      return <Plus className="h-3.5 w-3.5" />;
-    case 'status_changed':
-      return <ArrowRight className="h-3.5 w-3.5" />;
-    case 'agent_executed':
-      return <Bot className="h-3.5 w-3.5" />;
-    case 'task_assigned':
-      return <User className="h-3.5 w-3.5" />;
-    case 'comment_added':
-      return <MessageCircle className="h-3.5 w-3.5" />;
-    case 'message':
-      return <MessageCircle className="h-3.5 w-3.5" />;
-    default:
-      return <Activity className="h-3.5 w-3.5" />;
-  }
-}
-
-type ActivityCategory = 'assignment' | 'progress' | 'review' | 'revision' | 'error' | 'default';
-
-const CATEGORY_COLORS: Record<ActivityCategory, string> = {
-  assignment: 'var(--mc-progress)',      // green — PM assignments & handoffs
-  progress: '#4a9eda',                   // blue — stage starts & completions
-  review: 'var(--mc-review, #d19745)',   // amber — review feedback
-  revision: 'var(--mc-accent)',          // orange — revision routing
-  error: 'var(--mc-urgent)',             // red — blocks & errors
-  default: 'var(--mc-text-tertiary)',    // grey — everything else
-};
-
-function classifyActivity(description: string): ActivityCategory {
-  const d = description.toLowerCase();
-  if (d.includes('blocked') || d.includes('failed') || d.includes('error') || d.includes('writer queue'))
-    return 'error';
-  if (d.includes('revision') || d.includes('routing back'))
-    return 'revision';
-  if (d.includes('pm assigned') || d.includes('pm handoff'))
-    return 'assignment';
-  if (d.includes('started') || d.includes('completed') || d.includes('moving to'))
-    return 'progress';
-  if (d.includes('demonstrates') || d.includes('coverage') || d.includes('approval') || d.includes('review'))
-    return 'review';
-  return 'default';
-}
-
-function activityColor(type: string, description?: string): string {
-  if (description) {
-    return CATEGORY_COLORS[classifyActivity(description)];
-  }
-  switch (type) {
-    case 'task_created':
-      return 'var(--mc-accent)';
-    case 'status_changed':
-      return 'var(--mc-review, #e6a756)';
-    case 'agent_executed':
-      return 'var(--mc-progress)';
-    case 'task_assigned':
-      return 'var(--mc-pending, #4a9eda)';
-    case 'message':
-      return 'var(--mc-text-tertiary)';
-    default:
-      return 'var(--mc-text-tertiary)';
-  }
 }
 
 // ── Main Component ───────────────────────────────────────────────
@@ -133,116 +67,10 @@ export function ActivitySidebar({ projectId }: ActivitySidebarProps) {
       </div>
 
       {tab === 'activity' ? (
-        <ActivityFeed projectId={projectId} />
+        <WorkflowActivityFeed projectId={projectId} />
       ) : (
         <MessagesFeed projectId={projectId} user={user} />
       )}
-    </div>
-  );
-}
-
-// ── Activity Feed ────────────────────────────────────────────────
-
-function ActivityFeed({ projectId }: { projectId: number | null }) {
-  const activities = useQuery(
-    api.activities.list,
-    projectId ? { projectId, limit: 120 } : 'skip'
-  );
-
-  if (!projectId) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-4">
-        <p className="text-xs" style={{ color: 'var(--mc-text-tertiary)' }}>
-          Select a project to load activity.
-        </p>
-      </div>
-    );
-  }
-
-  if (!activities) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-4">
-        <div
-          className="text-xs animate-pulse"
-          style={{ color: 'var(--mc-text-tertiary)' }}
-        >
-          Loading activity...
-        </div>
-      </div>
-    );
-  }
-
-  if (activities.length === 0) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-        <div
-          className="w-10 h-10 rounded-full flex items-center justify-center mb-3"
-          style={{ background: 'var(--mc-overlay, #f3f3f0)' }}
-        >
-          <Activity className="h-5 w-5" style={{ color: 'var(--mc-text-tertiary)' }} />
-        </div>
-        <p className="text-xs" style={{ color: 'var(--mc-text-tertiary)' }}>
-          No activity yet
-        </p>
-        <p className="text-xs mt-1" style={{ color: 'var(--mc-text-tertiary)' }}>
-          Activity will appear here as tasks are created and updated.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="p-3 space-y-1">
-        {activities.map((activity) => {
-          const color = activityColor(activity.type, activity.description);
-          const category = classifyActivity(activity.description);
-          return (
-            <div
-              key={activity._id}
-              className="flex items-start gap-2.5 p-2 rounded-md hover:bg-[var(--mc-overlay)] transition-colors border-l-[3px]"
-              style={{
-                borderLeftColor: color,
-                background: category === 'error'
-                  ? 'color-mix(in srgb, var(--mc-urgent) 6%, transparent)'
-                  : category === 'revision'
-                    ? 'color-mix(in srgb, var(--mc-accent) 5%, transparent)'
-                    : undefined,
-              }}
-            >
-              {/* Icon */}
-              <div
-                className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-                style={{
-                  background: `color-mix(in srgb, ${color} 15%, transparent)`,
-                  color,
-                }}
-              >
-                {activityIcon(activity.type)}
-              </div>
-
-              {/* Content */}
-              <div className="flex-1 min-w-0">
-                <p
-                  className="text-xs leading-relaxed"
-                  style={{
-                    color: category === 'error' ? 'var(--mc-urgent)' : 'var(--mc-text-secondary)',
-                    fontWeight: category === 'error' || category === 'revision' ? 500 : 400,
-                  }}
-                >
-                  {activity.description}
-                </p>
-                <p
-                  className="text-[10px] mt-0.5"
-                  style={{ color: 'var(--mc-text-tertiary)' }}
-                >
-                  {relativeTime(activity.createdAt)}
-                </p>
-              </div>
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }
