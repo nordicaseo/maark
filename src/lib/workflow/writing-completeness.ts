@@ -107,6 +107,7 @@ export function evaluateWritingCompleteness(args: {
   outlineHeadings: string[];
   minimumWords?: number;
   maximumWords?: number;
+  headingCoverageThreshold?: number;
 }): WritingCompletenessResult {
   const plainText = (args.plainText || stripHtmlForCompleteness(args.html)).trim();
   const normalizedOutline = args.outlineHeadings.map(normalizeHeading).filter(Boolean);
@@ -139,9 +140,10 @@ export function evaluateWritingCompleteness(args: {
   if (wordCount > maxWords) {
     reasons.push(`word count ${wordCount} exceeds maximum ${maxWords}`);
   }
-  if (normalizedOutline.length > 0 && headingCoverage < 0.50) {
+  const hcThreshold = args.headingCoverageThreshold ?? 0.50;
+  if (normalizedOutline.length > 0 && headingCoverage < hcThreshold) {
     reasons.push(
-      `heading coverage ${(headingCoverage * 100).toFixed(0)}% is below 50%`
+      `heading coverage ${(headingCoverage * 100).toFixed(0)}% is below ${(hcThreshold * 100).toFixed(0)}%`
     );
   }
   if (abruptEnding) {

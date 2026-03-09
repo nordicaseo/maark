@@ -359,6 +359,24 @@ function parseTermArray(value: unknown, limit = 10): string[] {
     .slice(0, limit);
 }
 
+function parseResearchSources(
+  snapshot: unknown,
+  limit = 6
+): Array<{ url: string; title: string }> {
+  const sources = (snapshot as { sources?: unknown } | null)?.sources;
+  if (!Array.isArray(sources)) return [];
+  return sources
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const url = String((item as { url?: unknown }).url ?? '').trim();
+      if (!url) return null;
+      const title = String((item as { title?: unknown }).title ?? '').trim();
+      return { url, title: title || url };
+    })
+    .filter((item): item is { url: string; title: string } => Boolean(item))
+    .slice(0, limit);
+}
+
 function trimTo(input: string, maxChars: number): string {
   if (input.length <= maxChars) return input;
   return `${input.slice(0, maxChars).trimEnd()}…`;
@@ -1568,6 +1586,7 @@ async function runWritingStageInner(
         .filter(Boolean)
         .slice(0, 6)
     : [];
+  const researchSources = parseResearchSources(document.researchSnapshot);
   const outlineMarkdown = String(document.outlineSnapshot?.markdown || '').trim();
   if (!outlineMarkdown) {
     throw new Error(
@@ -1597,6 +1616,7 @@ Requirements:
 - Respect heading hierarchy.
 - Use short paragraphs and clear transitions.
 - Incorporate research facts and statistics naturally.
+- Where relevant, cite authoritative research sources as outbound links using <a href="URL" target="_blank" rel="noopener">descriptive anchor text</a>. Aim for 2-4 outbound source links per article.
 - Do not truncate; finish the full article.
 - Keep final word count between ${templatePolicy.wordRange.min} and ${templatePolicy.wordRange.max}.
 - Do not use em dashes.
@@ -1617,7 +1637,9 @@ ${seoLsiKeywords.map((term) => `- ${term}`).join('\n') || '-'}
 Top competing domains:
 ${competitorDomains.map((domain) => `- ${domain}`).join('\n') || '-'}
 SEO brief recommendations:
-${seoSuggestions.map((item) => `- ${item}`).join('\n') || '-'}`;
+${seoSuggestions.map((item) => `- ${item}`).join('\n') || '-'}
+Reference sources (cite where relevant using outbound links):
+${researchSources.map((s) => `- ${s.title}: ${s.url}`).join('\n') || '- (none available)'}`;
 
   const user = isRevision
     ? `Topic: ${task.title}
@@ -1938,6 +1960,9 @@ async function runEditingStage(
   document: Awaited<ReturnType<typeof getDocumentById>>,
   stageProfileContext: StageProfileContext
 ): Promise<StageRunResult> {
+  const EDITING_HEADING_COVERAGE_THRESHOLD = 0.30;
+  const EDITING_MAX_RETRY = 1;
+
   const modelOverride = await resolveAgentStageModelOverride(task, 'editing');
   const { provider, providerName, model, maxTokens, temperature } = await resolveProviderForStage(
     task,
@@ -1962,18 +1987,25 @@ async function runEditingStage(
 
   const outlineMarkdown = String(document.outlineSnapshot?.markdown || '').trim();
   const outlineHeadings = extractOutlineHeadings(outlineMarkdown);
+  const researchSources = parseResearchSources(document.researchSnapshot);
 
   const system = `You are a senior editor.
 Return clean HTML only.
 Edit for clarity, flow, and readability while preserving SEO intent.
 Do not remove required outline sections.
+Ensure outbound source links use <a href="URL" target="_blank" rel="noopener">descriptive anchor text</a>. Add source links from the reference list if the draft is missing them.
 Do not use em dashes.
 Use colon only for structural heading/list-label contexts.
 Keep output within ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.max} words.`;
 
+  const sourcesBlock = researchSources.length > 0
+    ? `\nReference sources (ensure these are linked where relevant):\n${researchSources.map((s) => `- ${s.title}: ${s.url}`).join('\n')}`
+    : '';
+
   const user = `Task title: ${task.title}
 Target keyword: ${document.targetKeyword || task.title}
 Template: ${templatePolicy.name} (${templatePolicy.key})
+${sourcesBlock}
 
 Current draft HTML:
 ${trimTo(currentHtml, 9000)}
@@ -2008,18 +2040,67 @@ Revise this draft now and return the complete edited HTML.`;
     throw new Error('Editing output failed style guard validation.');
   }
 
-  const editedText = stripHtmlForCompleteness(editedHtml);
-  const completeness = evaluateWritingCompleteness({
+  let editedText = stripHtmlForCompleteness(editedHtml);
+  let completeness = evaluateWritingCompleteness({
     html: editedHtml,
     plainText: editedText,
     outlineHeadings,
     minimumWords: templatePolicy.wordRange.min,
     maximumWords: templatePolicy.wordRange.max,
+    headingCoverageThreshold: EDITING_HEADING_COVERAGE_THRESHOLD,
   });
-  if (!completeness.complete) {
-    throw new Error(
-      `Editing output incomplete: ${completeness.reasons.join('; ')}`
+
+  // Retry once if completeness fails
+  let editingRetryAttempts = 0;
+  if (!completeness.complete && editingRetryAttempts < EDITING_MAX_RETRY) {
+    editingRetryAttempts += 1;
+    const retryPrompt = `The edited draft has issues: ${completeness.reasons.join('; ')}.
+${completeness.missingHeadings.length > 0
+  ? `Missing outline headings (preserve these EXACTLY):\n${completeness.missingHeadings.slice(0, 8).map((h) => `- <h2>${h}</h2>`).join('\n')}`
+  : ''}
+
+Current edited HTML:
+${trimTo(editedHtml, 9000)}
+
+Re-edit, keeping all outline headings intact and within ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.max} words.
+Return clean HTML only.`;
+
+    const retryRaw = await trackedAiCall(
+      provider,
+      { model, system, messages: [{ role: 'user', content: retryPrompt }], maxTokens, temperature },
+      aiCtx(task, 'editing', providerName, 'workflow_editing_retry')
     );
+
+    if (retryRaw.trim()) {
+      editedHtml = normalizeGeneratedHtml(retryRaw);
+      const retryStyle = applyStyleGuard(editedHtml, templatePolicy.styleGuard);
+      if (retryStyle.changed) {
+        styleAdjusted = true;
+        editedHtml = normalizeGeneratedHtml(retryStyle.html);
+        styleResult = applyStyleGuard(editedHtml, templatePolicy.styleGuard);
+      } else {
+        styleResult = retryStyle;
+      }
+      editedText = stripHtmlForCompleteness(editedHtml);
+      completeness = evaluateWritingCompleteness({
+        html: editedHtml,
+        plainText: editedText,
+        outlineHeadings,
+        minimumWords: templatePolicy.wordRange.min,
+        maximumWords: templatePolicy.wordRange.max,
+        headingCoverageThreshold: EDITING_HEADING_COVERAGE_THRESHOLD,
+      });
+    }
+  }
+
+  // After retry: soft-warn for non-critical, hard-block only for critical failures
+  const completenessWarnings: string[] = [];
+  if (!completeness.complete) {
+    const criticalFailure = completeness.wordCount < Math.floor(templatePolicy.wordRange.min * 0.5);
+    if (criticalFailure) {
+      throw new Error(`Editing output critically incomplete: ${completeness.reasons.join('; ')}`);
+    }
+    completenessWarnings.push(...completeness.reasons);
   }
 
   await db
@@ -2033,8 +2114,12 @@ Revise this draft now and return the complete edited HTML.`;
     })
     .where(eq(documents.id, document.id));
 
+  const warningSuffix = completenessWarnings.length > 0
+    ? ` (warnings: ${completenessWarnings.join('; ')})`
+    : '';
+
   return {
-    summary: `Editing completed (${completeness.wordCount.toLocaleString()} words).`,
+    summary: `Editing completed (${completeness.wordCount.toLocaleString()} words).${warningSuffix}`,
     artifactTitle: 'Edited Draft',
     artifactBody: trimTo(editedText, 1200),
     artifactData: {
@@ -2042,6 +2127,8 @@ Revise this draft now and return the complete edited HTML.`;
       headingCoverage: completeness.headingCoverage,
       styleAdjusted,
       styleMetrics: styleResult.metrics,
+      editingRetryAttempts,
+      completenessWarnings,
       template: {
         key: templatePolicy.key,
         name: templatePolicy.name,
