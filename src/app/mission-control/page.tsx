@@ -10,7 +10,7 @@ import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { TeamMembersProvider } from '@/components/mission-control/team-members-provider';
-import { ArrowLeft, Loader2, Bot, AlertTriangle, Activity, Search, Globe } from 'lucide-react';
+import { Loader2, Bot, AlertTriangle, Activity, PenLine, LayoutDashboard } from 'lucide-react';
 import Link from 'next/link';
 import { useActiveProject } from '@/hooks/use-active-project';
 import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
@@ -71,7 +71,6 @@ function MissionOverviewStrip({
     projectId ? { projectId, limit: 300 } : { limit: 300 }
   );
   const projectScopedTasks = useQuery(api.tasks.list, projectId ? { projectId, limit: 500 } : 'skip');
-  const now = new Date();
   const tasks = projectId ? (projectScopedTasks || []) : orgTasks;
 
   const activeAgents = (agents || []).filter(
@@ -135,15 +134,6 @@ function MissionOverviewStrip({
           </div>
         </>
       )}
-      <div className="w-px h-8" style={{ background: 'var(--mc-border)' }} />
-      <div className="px-2">
-        <p className="text-sm font-semibold leading-none" style={{ color: 'var(--mc-text-primary)' }}>
-          {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        </p>
-        <p className="mc-header-mono mt-1">
-          {now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
-        </p>
-      </div>
     </div>
   );
 }
@@ -392,11 +382,12 @@ export default function MissionControlPage() {
         >
           <div className="flex items-center gap-4">
             <Link
-              href={withProjectScope('/documents', projectId)}
+              href="/documents"
               style={{ color: 'var(--mc-text-secondary)' }}
-              className="hover:opacity-80 transition-opacity"
+              className="hover:opacity-80 transition-opacity inline-flex items-center gap-1.5 text-sm"
             >
-              <ArrowLeft className="h-5 w-5" />
+              <LayoutDashboard className="h-4 w-4" />
+              Dashboard
             </Link>
             <div>
               <h1
@@ -439,11 +430,11 @@ export default function MissionControlPage() {
               <p>3. Add NEXT_PUBLIC_CONVEX_URL to .env.local</p>
             </div>
             <Link
-              href={withProjectScope('/documents', projectId)}
+              href="/documents"
               className="mc-btn-secondary inline-flex items-center gap-2"
             >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Back to Editor
+              <LayoutDashboard className="h-3.5 w-3.5" />
+              Back to Dashboard
             </Link>
           </div>
         </div>
@@ -459,14 +450,15 @@ export default function MissionControlPage() {
           className="border-b px-6 py-4"
           style={{ borderColor: 'var(--mc-border)', background: 'var(--mc-surface)' }}
         >
-          <div className="flex items-center justify-between gap-4">
+          <div className="relative flex items-center justify-between gap-4">
+            {/* Left — Dashboard link + title */}
             <div className="flex items-center gap-4">
               <Link
-                href={withProjectScope('/documents', projectId)}
-                style={{ color: 'var(--mc-text-secondary)' }}
-                className="hover:opacity-80 transition-opacity"
+                href="/documents"
+                className="mc-btn-secondary flex items-center gap-1.5"
               >
-                <ArrowLeft className="h-5 w-5" />
+                <LayoutDashboard className="h-3.5 w-3.5" />
+                Dashboard
               </Link>
               <div>
                 <h1
@@ -479,28 +471,25 @@ export default function MissionControlPage() {
               </div>
             </div>
 
-            <MissionOverviewStrip
-              projectId={projectId}
-              orgTasks={projectId === null ? filteredOrgTasks : []}
-            />
+            {/* Center — Stats pill, absolute-centered */}
+            <div className="absolute left-1/2 -translate-x-1/2 pointer-events-auto">
+              <MissionOverviewStrip
+                projectId={projectId}
+                orgTasks={projectId === null ? filteredOrgTasks : []}
+              />
+            </div>
 
+            {/* Right — Controls */}
             <div className="flex items-center gap-3">
               <div className="w-48">
                 <ProjectSwitcher activeProjectId={projectId} onProjectChange={setProjectId} />
               </div>
               <Link
-                href={withProjectScope('/keywords', projectId)}
+                href={withProjectScope('/documents', projectId)}
                 className="mc-btn-secondary flex items-center gap-1.5"
               >
-                <Search className="h-3.5 w-3.5" />
-                Keywords
-              </Link>
-              <Link
-                href={withProjectScope('/pages', projectId)}
-                className="mc-btn-secondary flex items-center gap-1.5"
-              >
-                <Globe className="h-3.5 w-3.5" />
-                Pages
+                <PenLine className="h-3.5 w-3.5" />
+                Editor
               </Link>
               <button
                 onClick={() => setShowAgents(!showAgents)}

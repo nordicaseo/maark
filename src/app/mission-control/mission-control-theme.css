@@ -66,23 +66,19 @@
   font-family: var(--mc-font-mono);
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  border: 1px solid transparent;
 }
 
 .mc-badge-writer {
   background: rgba(58, 149, 103, 0.11);
   color: #266847;
-  border-color: rgba(58, 149, 103, 0.2);
 }
 .mc-badge-editor {
   background: rgba(198, 115, 50, 0.12);
   color: #8a4b1f;
-  border-color: rgba(198, 115, 50, 0.25);
 }
 .mc-badge-researcher {
   background: rgba(209, 151, 69, 0.12);
   color: #895e23;
-  border-color: rgba(209, 151, 69, 0.25);
 }
 
 .mc-status-dot {
@@ -147,6 +143,7 @@
   background: color-mix(in srgb, var(--mc-surface-alt) 90%, white 10%);
   border: 1px solid var(--mc-border);
   border-radius: var(--mc-radius);
+  overflow: hidden;
   min-height: 200px;
   display: flex;
   flex-direction: column;
@@ -438,4 +435,72 @@
 .mc-feed-expand-open {
   max-height: 600px;
   opacity: 1;
+}
+
+/* ── Task Card Pipeline ──────────────────────────────────── */
+
+.mc-pipeline {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.mc-pipeline-segment {
+  height: 4px;
+  flex: 1;
+  border-radius: 2px;
+  background: var(--mc-border);
+  transition: background 0.2s;
+  position: relative;
+}
+.mc-pipeline-segment.completed {
+  background: var(--mc-complete);
+}
+.mc-pipeline-segment.active {
+  background: var(--mc-progress);
+  animation: mc-pipeline-pulse 1.5s infinite ease-in-out;
+}
+@keyframes mc-pipeline-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ── Active State Banner ─────────────────────────────────── */
+
+.mc-active-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--mc-radius-sm);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.mc-active-banner.working {
+  background: color-mix(in srgb, var(--mc-progress) 8%, transparent);
+  color: var(--mc-text-secondary);
+}
+.mc-active-banner.queued {
+  background: color-mix(in srgb, var(--mc-pending) 8%, transparent);
+  color: var(--mc-text-secondary);
+}
+.mc-active-banner.blocked {
+  background: color-mix(in srgb, var(--mc-urgent) 8%, transparent);
+  color: #b91c1c;
+}
+.mc-active-banner.idle {
+  background: var(--mc-overlay);
+  color: var(--mc-text-tertiary);
+}
+
+.mc-alive-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mc-progress);
+  flex-shrink: 0;
+  animation: mc-alive-pulse 2s infinite ease-in-out;
+}
+@keyframes mc-alive-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(58, 149, 103, 0.4); }
+  50% { opacity: 0.6; box-shadow: 0 0 0 3px rgba(58, 149, 103, 0); }
 }

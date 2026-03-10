@@ -293,33 +293,37 @@ function HumanCard({
     <button
       type="button"
       onClick={onToggle}
-      className="w-full text-left rounded-lg border border-[var(--mc-border)] bg-[color-mix(in_srgb,var(--mc-surface)_92%,white_8%)] px-2.5 py-2 transition-colors hover:border-[var(--mc-border-hover)]"
+      className="w-full text-left rounded-lg px-2.5 py-2 transition-colors hover:bg-[var(--mc-overlay)]"
       aria-expanded={expanded}
     >
       <div className="flex items-start gap-2.5">
-        {member.image ? (
-          <Image
-            src={member.image}
-            alt={label}
-            width={28}
-            height={28}
-            unoptimized
-            className="h-7 w-7 rounded-full object-cover border border-[var(--mc-border)]"
+        {/* Avatar with status badge overlay */}
+        <div className="relative shrink-0">
+          {member.image ? (
+            <Image
+              src={member.image}
+              alt={label}
+              width={28}
+              height={28}
+              unoptimized
+              className="h-7 w-7 rounded-full object-cover"
+            />
+          ) : (
+            <div className="h-7 w-7 rounded-full bg-[var(--mc-overlay)] flex items-center justify-center text-xs font-semibold">
+              {label.charAt(0).toUpperCase()}
+            </div>
+          )}
+          <span
+            className={`mc-status-dot ${statusClass} absolute -bottom-0.5 -right-0.5`}
+            style={{ border: '2px solid var(--mc-surface-alt)', width: 10, height: 10 }}
           />
-        ) : (
-          <div className="h-7 w-7 rounded-full border border-[var(--mc-border)] bg-[var(--mc-overlay)] flex items-center justify-center text-xs font-semibold">
-            {label.charAt(0).toUpperCase()}
-          </div>
-        )}
+        </div>
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <span className="text-sm font-medium truncate" style={{ color: 'var(--mc-text-primary)' }}>
-              {label}
-            </span>
-            <span className={`mc-status-dot ${statusClass}`} />
-          </div>
-          <p className="text-[11px] leading-4 truncate" style={{ color: 'var(--mc-text-secondary)' }}>
+          <span className="text-sm font-medium truncate block" style={{ color: 'var(--mc-text-primary)' }}>
+            {label}
+          </span>
+          <p className="text-[10px] leading-4 truncate" style={{ color: 'var(--mc-text-muted)' }}>
             {member.role}
           </p>
         </div>
@@ -347,6 +351,14 @@ function HumanCard({
   );
 }
 
+function agentActivityText(agent: RuntimeAgentSummary): string {
+  if (agent.status === 'WORKING' && agent.currentTaskId) return '\u21B3 Working on task\u2026';
+  if (agent.status === 'WORKING') return '\u21B3 Working\u2026';
+  if (agent.status === 'ONLINE') return '\u21B3 Idle, ready';
+  if (agent.status === 'IDLE') return '\u21B3 Idle';
+  return '\u21B3 Offline';
+}
+
 function AgentCard({
   agent,
   profile,
@@ -360,33 +372,32 @@ function AgentCard({
 }) {
   const tools = useMemo(() => profile?.tools?.slice(0, 6) || [], [profile?.tools]);
   const cardTitle = agent.name || profile?.displayName || agent.role;
-  const runtimeIdentity = [agent.slotKey, agent.laneKey ? `lane ${agent.laneKey}` : null]
-    .filter(Boolean)
-    .join(' · ');
-  const subtitle = profile?.shortDescription || agent.specialization || `${agent.role} agent`;
 
   return (
     <button
       type="button"
       onClick={onToggle}
-      className="w-full text-left rounded-lg border border-[var(--mc-border)] bg-[color-mix(in_srgb,var(--mc-surface)_90%,white_10%)] px-2.5 py-2 transition-colors hover:border-[var(--mc-border-hover)]"
+      className="w-full text-left rounded-lg px-2.5 py-2 transition-colors hover:bg-[var(--mc-overlay)]"
       aria-expanded={expanded}
     >
       <div className="flex items-start gap-2.5">
-        <AgentAvatar agent={agent} profile={profile} />
+        {/* Avatar with status badge overlay */}
+        <div className="relative shrink-0">
+          <AgentAvatar agent={agent} profile={profile} />
+          <span
+            className={`mc-status-dot ${STATUS_DOTS[agent.status] || 'offline'} absolute -bottom-0.5 -right-0.5`}
+            style={{ border: '2px solid var(--mc-surface-alt)', width: 10, height: 10 }}
+          />
+        </div>
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="text-sm font-medium truncate" style={{ color: 'var(--mc-text-primary)' }}>
               {cardTitle}
             </span>
-            <span className={`mc-status-dot ${STATUS_DOTS[agent.status] || 'offline'}`} />
           </div>
-          <p className="text-[11px] leading-4 truncate" style={{ color: 'var(--mc-text-secondary)' }}>
-            {subtitle}
-          </p>
           <p className="text-[10px] leading-4 truncate" style={{ color: 'var(--mc-text-muted)' }}>
-            Runtime: {runtimeIdentity}
+            {agentActivityText(agent)}
           </p>
         </div>
 
@@ -401,6 +412,11 @@ function AgentCard({
 
       {expanded && (
         <div className="mt-2.5 border-t border-[var(--mc-border)] pt-2.5 space-y-2">
+          {profile?.shortDescription && (
+            <p className="text-[11px] leading-4" style={{ color: 'var(--mc-text-secondary)' }}>
+              {profile.shortDescription}
+            </p>
+          )}
           {profile?.mission && (
             <p className="text-[11px] leading-4" style={{ color: 'var(--mc-text-secondary)' }}>
               {profile.mission}
@@ -416,7 +432,7 @@ function AgentCard({
                     className="text-[11px] leading-4 truncate"
                     style={{ color: 'var(--mc-text-secondary)' }}
                   >
-                    • {tool}
+                    &bull; {tool}
                   </li>
                 ))}
               </ul>

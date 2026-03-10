@@ -6,10 +6,7 @@ import { CSS } from '@dnd-kit/utilities';
 import NextImage from 'next/image';
 import {
   FileText,
-  MessageSquare,
-  Calendar,
   Eye,
-  Bot,
   Tag,
   Trash2,
   GripVertical,
@@ -55,33 +52,15 @@ const ROUTED_STAGE_ORDER = [
   'final_review',
 ] as const;
 
-function plannedStageLineup(task: Task): string[] {
-  const plan =
-    task.workflowStagePlan && typeof task.workflowStagePlan === 'object'
-      ? (task.workflowStagePlan as Record<string, unknown>)
-      : null;
-  const owners =
-    plan?.owners && typeof plan.owners === 'object'
-      ? (plan.owners as Record<string, unknown>)
-      : null;
-  if (!owners) {
-    return ROUTED_STAGE_ORDER.map(
-      (stage) => TOPIC_STAGE_LABELS[stage as keyof typeof TOPIC_STAGE_LABELS] || stage
-    );
-  }
-
-  return ROUTED_STAGE_ORDER.filter((stage) => {
-    const owner =
-      owners[stage] && typeof owners[stage] === 'object'
-        ? (owners[stage] as Record<string, unknown>)
-        : null;
-    if (!owner) return true;
-    if (owner.enabled === undefined) return true;
-    return owner.enabled === true || String(owner.enabled).toLowerCase() === 'true';
-  }).map((stage) => TOPIC_STAGE_LABELS[stage as keyof typeof TOPIC_STAGE_LABELS] || stage);
+interface PipelineStep {
+  key: string;
+  label: string;
+  state: 'completed' | 'active' | 'future';
+  owner?: string;
 }
 
-function summarizePlannedOwners(task: Task): string | null {
+function buildPipeline(task: Task): PipelineStep[] {
+  const currentStage = task.workflowCurrentStageKey || 'research';
   const plan =
     task.workflowStagePlan && typeof task.workflowStagePlan === 'object'
       ? (task.workflowStagePlan as Record<string, unknown>)
@@ -90,35 +69,43 @@ function summarizePlannedOwners(task: Task): string | null {
     plan?.owners && typeof plan.owners === 'object'
       ? (plan.owners as Record<string, unknown>)
       : null;
-  if (!owners) return null;
 
-  const parts = ROUTED_STAGE_ORDER.map((stage) => {
+  // Filter enabled stages
+  const enabledStages = ROUTED_STAGE_ORDER.filter((stage) => {
+    if (!owners) return true;
     const owner =
       owners[stage] && typeof owners[stage] === 'object'
         ? (owners[stage] as Record<string, unknown>)
         : null;
-    const short =
-      stage === 'research'
-        ? 'R'
-        : stage === 'seo_intel_review'
-          ? 'SERP'
-          : stage === 'outline_build'
-            ? 'O'
-            : stage === 'writing'
-              ? 'W'
-              : stage === 'editing'
-                ? 'E'
-                : 'SEO';
-    const name =
-      typeof owner?.agentName === 'string' && owner.agentName.trim().length > 0
-        ? owner.agentName.trim()
-        : typeof owner?.slotKey === 'string' && owner.slotKey.trim().length > 0
-          ? owner.slotKey.trim()
-          : 'Unconfigured';
-    return `${short}: ${name}`;
+    if (!owner || owner.enabled === undefined) return true;
+    return owner.enabled === true || String(owner.enabled).toLowerCase() === 'true';
   });
 
-  return parts.join(' · ');
+  const currentIdx = enabledStages.indexOf(currentStage as typeof enabledStages[number]);
+
+  return enabledStages.map((stage, i) => {
+    const owner =
+      owners?.[stage] && typeof owners[stage] === 'object'
+        ? (owners[stage] as Record<string, unknown>)
+        : null;
+    const ownerName =
+      typeof owner?.agentName === 'string' && owner.agentName.trim().length > 0
+        ? owner.agentName.trim()
+        : undefined;
+
+    let state: 'completed' | 'active' | 'future' = 'future';
+    if (currentIdx >= 0) {
+      if (i < currentIdx) state = 'completed';
+      else if (i === currentIdx) state = 'active';
+    }
+
+    return {
+      key: stage,
+      label: TOPIC_STAGE_LABELS[stage as keyof typeof TOPIC_STAGE_LABELS] || stage,
+      state,
+      owner: ownerName,
+    };
+  });
 }
 
 /** Fetch AI cost for a task (fire once, cache in state). */
@@ -213,7 +200,6 @@ function TaskCardContent({
     TOPIC_STAGE_LABELS[workflowStage as keyof typeof TOPIC_STAGE_LABELS] || workflowStage;
   const workflowLastEvent = task.workflowLastEventText;
   const workflowBlocked = isTopicWorkflow && task.workflowStageStatus === 'blocked';
-  const workflowQueued = isTopicWorkflow && task.workflowStageStatus === 'queued';
   const workflowRuntimeState = resolveWorkflowRuntimeState({
     workflowTemplateKey: task.workflowTemplateKey,
     workflowCurrentStageKey: task.workflowCurrentStageKey,
@@ -223,12 +209,6 @@ function TaskCardContent({
   const workflowRuntimeStyle = workflowRuntimeState
     ? WORKFLOW_RUNTIME_STATE_STYLES[workflowRuntimeState]
     : null;
-  const researchReady =
-    isTopicWorkflow &&
-    !workflowBlocked &&
-    !workflowQueued &&
-    workflowStage !== 'research' &&
-    workflowStage !== 'outline_build';
   const filteredTags = (task.tags || []).filter(
     (tag) => !/^skill(?::|_|$)/i.test(String(tag || '').trim())
   );
@@ -237,8 +217,17 @@ function TaskCardContent({
   const visibleDeliverables = task.deliverables ? task.deliverables.slice(0, 2) : [];
   const hiddenDeliverableCount =
     task.deliverables && task.deliverables.length > 2 ? task.deliverables.length - 2 : 0;
-  const plannedOwnersSummary = isTopicWorkflow ? summarizePlannedOwners(task) : null;
-  const stageLineup = isTopicWorkflow ? plannedStageLineup(task) : [];
+  const pipeline = isTopicWorkflow ? buildPipeline(task) : [];
+  const activeStep = pipeline.findIndex((s) => s.state === 'active');
+
+  // Banner state
+  const bannerVariant = workflowBlocked
+    ? 'blocked'
+    : workflowRuntimeState === 'active' || workflowRuntimeState === 'working'
+      ? 'working'
+      : workflowRuntimeState === 'queued'
+        ? 'queued'
+        : 'idle';
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -260,41 +249,16 @@ function TaskCardContent({
   };
 
   return (
-    <div className="space-y-2.5 min-w-0 overflow-hidden">
-      {/* Header: priority + title + delete */}
+    <div className="space-y-2 min-w-0 overflow-hidden">
+      {/* ── Title first ── */}
       <div className="flex items-start gap-2">
         <div className={`mc-priority-dot mt-1.5 ${PRIORITY_COLORS[task.priority] || 'low'}`} />
         <div className="min-w-0 flex-1">
-          {isTopicWorkflow && (
-            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-              <span className="mc-tag">{workflowStageLabel}</span>
-              {workflowRuntimeState && workflowRuntimeStyle && (
-                <span
-                  className="mc-tag border"
-                  style={{
-                    background: workflowRuntimeStyle.background,
-                    color: workflowRuntimeStyle.color,
-                    borderColor: workflowRuntimeStyle.borderColor,
-                  }}
-                >
-                  {WORKFLOW_RUNTIME_STATE_LABELS[workflowRuntimeState]}
-                </span>
-              )}
-              {researchReady && (
-                <span className="mc-tag text-green-400">Research Ready</span>
-              )}
-              {taskCost && taskCost !== '$0.00' && (
-                <span className="mc-tag" style={{ color: '#a78bfa', borderColor: '#7c3aed33' }} title="AI cost for this task">
-                  {taskCost}
-                </span>
-              )}
-            </div>
-          )}
           <p className="text-sm font-medium leading-snug" style={{ color: 'var(--mc-text-primary)' }}>
             {task.title}
           </p>
           {task.description && (
-            <p className="text-xs mt-0.5 line-clamp-1" style={{ color: 'var(--mc-text-secondary)' }}>
+            <p className="text-[11px] mt-0.5 line-clamp-1" style={{ color: 'var(--mc-text-tertiary)' }}>
               {task.description}
             </p>
           )}
@@ -328,41 +292,57 @@ function TaskCardContent({
         </button>
       </div>
 
-      {/* Latest workflow update */}
-      {isTopicWorkflow && workflowLastEvent && (
-        <div
-          className="rounded-md px-2 py-1.5 space-y-0.5"
-          style={{
-            background: workflowBlocked ? '#fef2f2' : 'var(--mc-overlay)',
-            color: workflowBlocked ? '#b91c1c' : 'var(--mc-text-tertiary)',
-          }}
-        >
-          <p className="mc-header-mono text-[9px]">Latest update</p>
-          <p className="text-[10px] leading-4 line-clamp-2">{workflowLastEvent}</p>
-        </div>
-      )}
-      {isTopicWorkflow && plannedOwnersSummary && (
-        <div className="rounded-md px-2 py-1.5 space-y-0.5" style={{ background: 'var(--mc-overlay)' }}>
-          <p className="mc-header-mono text-[9px]">Planned owners</p>
-          <p className="text-[10px] leading-4 line-clamp-2" style={{ color: 'var(--mc-text-tertiary)' }}>
-            {plannedOwnersSummary}
-          </p>
-        </div>
-      )}
-      {isTopicWorkflow && stageLineup.length > 0 && (
-        <div className="rounded-md px-2 py-1.5 space-y-0.5" style={{ background: 'var(--mc-overlay)' }}>
-          <p className="mc-header-mono text-[9px]">Stage lineup</p>
-          <p className="text-[10px] leading-4 line-clamp-2" style={{ color: 'var(--mc-text-tertiary)' }}>
-            {stageLineup.join(' -> ')}
-          </p>
+      {/* ── Status tags (compact row below title) ── */}
+      {isTopicWorkflow && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="mc-tag">{workflowStageLabel}</span>
+          {workflowRuntimeState && workflowRuntimeStyle && (
+            <span
+              className="mc-tag"
+              style={{
+                background: workflowRuntimeStyle.background,
+                color: workflowRuntimeStyle.color,
+              }}
+            >
+              {WORKFLOW_RUNTIME_STATE_LABELS[workflowRuntimeState]}
+            </span>
+          )}
         </div>
       )}
 
-      {/* Context */}
-      {(visibleTags.length > 0 || showProjectBadge) && (
+      {/* ── Active state banner ── */}
+      {isTopicWorkflow && workflowLastEvent && (
+        <div className={`mc-active-banner ${bannerVariant}`}>
+          {bannerVariant === 'working' && <span className="mc-alive-dot" />}
+          <span className="text-[11px] leading-4 line-clamp-1 min-w-0">
+            {workflowLastEvent}
+          </span>
+        </div>
+      )}
+
+      {/* ── Visual pipeline ── */}
+      {isTopicWorkflow && pipeline.length > 0 && (
+        <div className="flex items-center gap-2">
+          <div className="mc-pipeline flex-1">
+            {pipeline.map((step) => (
+              <div
+                key={step.key}
+                className={`mc-pipeline-segment ${step.state}`}
+                title={`${step.label}${step.owner ? ` (${step.owner})` : ''}`}
+              />
+            ))}
+          </div>
+          <span className="text-[9px] shrink-0 whitespace-nowrap" style={{ color: 'var(--mc-text-muted)' }}>
+            {activeStep >= 0 ? `${activeStep + 1}/${pipeline.length}` : `${pipeline.length}/${pipeline.length}`}
+          </span>
+        </div>
+      )}
+
+      {/* ── Tags ── */}
+      {(visibleTags.length > 0 || (showProjectBadge && projectLabel)) && (
         <div className="flex flex-wrap gap-1">
           {showProjectBadge && projectLabel && (
-            <span className="mc-tag border" style={{ borderColor: 'var(--mc-border)' }}>
+            <span className="mc-tag" style={{ borderColor: 'var(--mc-border)' }}>
               {projectLabel}
             </span>
           )}
@@ -378,88 +358,9 @@ function TaskCardContent({
         </div>
       )}
 
-      {filteredTags.length === 0 && showProjectBadge && projectLabel && (
-        <div className="flex flex-wrap gap-1">
-          <span className="mc-tag border" style={{ borderColor: 'var(--mc-border)' }}>
-            {projectLabel}
-          </span>
-        </div>
-      )}
-
-      {/* Footer: metadata */}
+      {/* ── Footer: deliverables left, metadata right ── */}
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--mc-text-tertiary)' }}>
-          {task.documentId && (
-            <a
-              href={withProjectScope(`/documents/${task.documentId}`, task.projectId)}
-              className="flex items-center gap-0.5 hover:underline"
-              style={{ color: 'var(--mc-accent)' }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <FileText className="h-3 w-3" />
-              Edit
-            </a>
-          )}
-          {task.documentId && isTopicWorkflow && workflowStage === 'writing' && (workflowRuntimeState === 'active' || workflowRuntimeState === 'working') && (
-            <a
-              href={withProjectScope(`/documents/${task.documentId}`, task.projectId)}
-              className="flex items-center gap-0.5 hover:underline"
-              style={{ color: '#22c55e' }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <Eye className="h-3 w-3" />
-              Watch Live
-            </a>
-          )}
-          {task.assignedAgentId && (
-            <span className="flex items-center gap-0.5">
-              <Bot className="h-3 w-3" />
-              Agent
-            </span>
-          )}
-          {task.commentCount && task.commentCount > 0 && (
-            <span className="flex items-center gap-0.5">
-              <MessageSquare className="h-3 w-3" />
-              {task.commentCount}
-            </span>
-          )}
-          {task.dueDate && (
-            <span className="flex items-center gap-0.5">
-              <Calendar className="h-3 w-3" />
-              {new Date(task.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5">
-          {assignee && (
-            assignee.image ? (
-              <NextImage
-                src={assignee.image}
-                alt={assignee.name || ''}
-                width={16}
-                height={16}
-                unoptimized
-                className="h-4 w-4 rounded-full"
-                title={assignee.name || assignee.email}
-              />
-            ) : (
-              <div
-                className="h-4 w-4 rounded-full bg-gray-200 flex items-center justify-center text-[8px] font-medium"
-                title={assignee.name || assignee.email}
-              >
-                {(assignee.name || assignee.email).charAt(0).toUpperCase()}
-              </div>
-            )
-          )}
-          <span className="text-[10px]" style={{ color: 'var(--mc-text-muted)' }}>
-            {timeAgo(task.workflowLastEventAt || task.updatedAt)}
-          </span>
-        </div>
-      </div>
-
-      {/* Deliverables */}
-      {visibleDeliverables.length > 0 && (
-        <div className="flex flex-wrap items-start gap-1 pt-1 border-t min-w-0 overflow-hidden" style={{ borderColor: 'var(--mc-border)' }}>
+        <div className="flex items-center gap-1 min-w-0 overflow-hidden">
           {visibleDeliverables.map((d) => (
             d.url ? (
               <a
@@ -467,34 +368,69 @@ function TaskCardContent({
                 href={d.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex max-w-full min-w-0 items-start gap-0.5 text-[10px] px-1.5 py-0.5 rounded break-words whitespace-normal"
+                className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded truncate"
                 style={{ background: 'var(--mc-accent-soft)', color: 'var(--mc-accent)' }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <Eye className="h-3 w-3" />
-                <span className="min-w-0">{d.title}</span>
+                <FileText className="h-2.5 w-2.5 shrink-0" />
+                <span className="truncate">{d.title}</span>
               </a>
             ) : (
               <span
                 key={d.id}
-                className="inline-flex max-w-full min-w-0 items-start gap-0.5 text-[10px] px-1.5 py-0.5 rounded break-words whitespace-normal"
+                className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded truncate"
                 style={{ background: 'var(--mc-overlay)', color: 'var(--mc-text-secondary)' }}
               >
-                <FileText className="h-3 w-3" />
-                <span className="min-w-0">{d.title}</span>
+                <FileText className="h-2.5 w-2.5 shrink-0" />
+                <span className="truncate">{d.title}</span>
               </span>
             )
           ))}
           {hiddenDeliverableCount > 0 && (
-            <span
-              className="inline-flex max-w-full min-w-0 items-start text-[10px] px-1.5 py-0.5 rounded"
-              style={{ background: 'var(--mc-overlay)', color: 'var(--mc-text-secondary)' }}
-            >
-              +{hiddenDeliverableCount} more outputs
+            <span className="text-[10px] px-1" style={{ color: 'var(--mc-text-muted)' }}>
+              +{hiddenDeliverableCount}
             </span>
           )}
+          {task.documentId && isTopicWorkflow && workflowStage === 'writing' && (workflowRuntimeState === 'active' || workflowRuntimeState === 'working') && (
+            <a
+              href={withProjectScope(`/documents/${task.documentId}`, task.projectId)}
+              className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded"
+              style={{ color: '#22c55e' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Eye className="h-2.5 w-2.5" />
+              Live
+            </a>
+          )}
         </div>
-      )}
+        <div className="flex items-center gap-1 shrink-0 text-[10px]" style={{ color: 'var(--mc-text-muted)' }}>
+          {taskCost && taskCost !== '$0.00' && (
+            <span style={{ color: '#a78bfa' }}>{taskCost}</span>
+          )}
+          {taskCost && taskCost !== '$0.00' && <span>&middot;</span>}
+          <span>{timeAgo(task.workflowLastEventAt || task.updatedAt)}</span>
+          {assignee && (
+            assignee.image ? (
+              <NextImage
+                src={assignee.image}
+                alt={assignee.name || ''}
+                width={14}
+                height={14}
+                unoptimized
+                className="h-3.5 w-3.5 rounded-full ml-0.5"
+                title={assignee.name || assignee.email}
+              />
+            ) : (
+              <div
+                className="h-3.5 w-3.5 rounded-full bg-gray-200 flex items-center justify-center text-[7px] font-medium ml-0.5"
+                title={assignee.name || assignee.email}
+              >
+                {(assignee.name || assignee.email).charAt(0).toUpperCase()}
+              </div>
+            )
+          )}
+        </div>
+      </div>
     </div>
   );
 }
