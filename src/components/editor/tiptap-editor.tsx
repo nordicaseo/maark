@@ -208,7 +208,6 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting, onA
 
   useEffect(() => {
     if (!isAiWriting) {
-      setDraftPhase(null);
       lastDraftPhaseRef.current = null;
     }
   }, [isAiWriting]);

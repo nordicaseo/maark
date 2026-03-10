@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '../../../../convex/_generated/api';
 import type { Id } from '../../../../convex/_generated/dataModel';
@@ -27,6 +27,17 @@ function stageLabel(key?: string | null): string {
 
 export function WorkflowActivityFeed({ projectId, taskId, compact }: WorkflowActivityFeedProps) {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [nowTs, setNowTs] = useState(0);
+
+  useEffect(() => {
+    const updateNow = () => setNowTs(Date.now());
+    const timeout = setTimeout(updateNow, 0);
+    const interval = setInterval(updateNow, 60_000);
+    return () => {
+      clearTimeout(timeout);
+      clearInterval(interval);
+    };
+  }, []);
 
   // ── Data fetching ────────────────────────────────────────────
   // Task mode (editor): query by taskId
@@ -57,10 +68,11 @@ export function WorkflowActivityFeed({ projectId, taskId, compact }: WorkflowAct
 
   // ── Active agent detection ───────────────────────────────────
   const activeAgent = useMemo(() => {
+    if (nowTs <= 0) return null;
     if (rawEvents.length === 0) return null;
     const latest = rawEvents[0];
     const payload = latest.payload as Record<string, unknown> | undefined;
-    const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+    const fiveMinAgo = nowTs - 5 * 60 * 1000;
 
     if (
       latest.eventType === 'stage_progress' &&
@@ -73,7 +85,7 @@ export function WorkflowActivityFeed({ projectId, taskId, compact }: WorkflowAct
       };
     }
     return null;
-  }, [rawEvents]);
+  }, [rawEvents, nowTs]);
 
   // ── Toggle handler ───────────────────────────────────────────
   const toggleExpand = (groupId: string) => {
