@@ -123,9 +123,9 @@ const ROLE_DEFAULTS: Record<
       'Review drafts for SEO coverage, on-page quality, and launch-readiness before completion.',
   },
   'project-manager': {
-    displayName: 'Pulse',
+    displayName: 'Maark',
     emoji: '🧩',
-    shortDescription: 'Workflow orchestrator',
+    shortDescription: 'System orchestrator',
     mission:
       'Coordinate handoffs, unblock stages, and keep topic workflows moving with clear accountability.',
   },

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, ChevronDown, Loader2, Users } from 'lucide-react';
+import { Bot, ChevronDown, Loader2, Users, Zap } from 'lucide-react';
 import Image from 'next/image';
 import { useActiveProject } from '@/hooks/use-active-project';
 import { useTeamMembers } from './team-members-provider';
@@ -29,17 +29,13 @@ interface RuntimeAgentSummary {
   specialization: string | null;
 }
 
-const ROLE_BADGES: Record<string, string> = {
-  writer: 'mc-badge-writer',
-  editor: 'mc-badge-editor',
-  researcher: 'mc-badge-researcher',
-  outliner: 'mc-badge-editor',
-  'seo-reviewer': 'mc-badge-researcher',
-  'project-manager': 'mc-badge-writer',
-  seo: 'mc-badge-researcher',
-  content: 'mc-badge-editor',
-  lead: 'mc-badge-writer',
-};
+/* ── Badge colors based on active/inactive status ── */
+
+function statusBadgeClass(status: string): string {
+  if (status === 'WORKING' || status === 'ONLINE') return 'mc-badge-active';
+  if (status === 'IDLE') return 'mc-badge-idle';
+  return 'mc-badge-offline';
+}
 
 const STATUS_DOTS: Record<string, string> = {
   ONLINE: 'online',
@@ -121,9 +117,19 @@ export function AgentsSidebar() {
     };
   }, [activeProjectId]);
 
+  // Separate Maark (project-manager) from the rest
+  const maarkAgent = useMemo(
+    () => runtimeAgents.find((a) => a.role === 'project-manager'),
+    [runtimeAgents],
+  );
+  const otherAgents = useMemo(
+    () => runtimeAgents.filter((a) => a.role !== 'project-manager'),
+    [runtimeAgents],
+  );
+
   const sections = STATUS_ORDER.map((status) => ({
     label: status.charAt(0) + status.slice(1).toLowerCase(),
-    agents: runtimeAgents.filter((agent) => agent.status === status),
+    agents: otherAgents.filter((agent) => agent.status === status),
   })).filter((section) => section.agents.length > 0);
 
   const humanMembers = members
@@ -146,69 +152,229 @@ export function AgentsSidebar() {
     );
   }
 
+  const maarkProfile = profileMap['project-manager'];
+
   return (
-    <div className="p-4 space-y-4">
-      <div className="flex items-center gap-2">
-        <Bot className="h-4 w-4" style={{ color: 'var(--mc-text-secondary)' }} />
-        <span className="mc-header-mono">Agents ({runtimeAgents.length})</span>
-      </div>
+    <div className="flex flex-col h-full">
+      {/* ── Maark AI — Pinned System Orchestrator ── */}
+      <MaarkSection
+        agent={maarkAgent}
+        profile={maarkProfile}
+        expanded={expandedId === maarkAgent?.id}
+        onToggle={() =>
+          setExpandedId((prev) =>
+            maarkAgent ? (prev === maarkAgent.id ? null : maarkAgent.id) : null,
+          )
+        }
+      />
 
-      {runtimeAgents.length === 0 && (
-        <p className="text-xs" style={{ color: 'var(--mc-text-muted)' }}>
-          No agents registered yet
-        </p>
-      )}
+      {/* ── Scrollable Agent + Human list ── */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex items-center gap-2">
+          <Bot className="h-4 w-4" style={{ color: 'var(--mc-text-secondary)' }} />
+          <span className="mc-header-mono">Agents ({otherAgents.length})</span>
+        </div>
 
-      {sections.map((section) => (
-        <div key={section.label}>
-          <p className="mc-header-mono mb-2">{section.label}</p>
-          <div className="space-y-1.5">
-            {section.agents.map((agent) => {
-              const laneKey = String(agent.laneKey || '').toLowerCase();
-              const profile =
-                laneKey && agent.role.toLowerCase() === 'writer'
-                  ? profileMap[`writer:${laneKey}`] || profileMap[agent.role.toLowerCase()]
-                  : profileMap[agent.role.toLowerCase()];
-              return (
-                <AgentCard
-                  key={agent.id}
-                  agent={agent}
-                  profile={profile}
-                  expanded={expandedId === agent.id}
-                  onToggle={() => setExpandedId((prev) => (prev === agent.id ? null : agent.id))}
-                />
-              );
-            })}
+        {otherAgents.length === 0 && (
+          <p className="text-xs" style={{ color: 'var(--mc-text-muted)' }}>
+            No agents registered yet
+          </p>
+        )}
+
+        {sections.map((section) => (
+          <div key={section.label}>
+            <p className="mc-header-mono mb-2">{section.label}</p>
+            <div className="space-y-1.5">
+              {section.agents.map((agent) => {
+                const laneKey = String(agent.laneKey || '').toLowerCase();
+                const profile =
+                  laneKey && agent.role.toLowerCase() === 'writer'
+                    ? profileMap[`writer:${laneKey}`] || profileMap[agent.role.toLowerCase()]
+                    : profileMap[agent.role.toLowerCase()];
+                return (
+                  <AgentCard
+                    key={agent.id}
+                    agent={agent}
+                    profile={profile}
+                    expanded={expandedId === agent.id}
+                    onToggle={() => setExpandedId((prev) => (prev === agent.id ? null : agent.id))}
+                  />
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
 
-      <div className="pt-1">
-        <div className="flex items-center gap-2 mb-2">
-          <Users className="h-4 w-4" style={{ color: 'var(--mc-text-secondary)' }} />
-          <span className="mc-header-mono">Human Workforce ({humanMembers.length})</span>
-        </div>
-        <div className="space-y-1.5">
-          {humanMembers.map((member) => (
-            <HumanCard
-              key={member.id}
-              member={member}
-              expanded={expandedHumanId === member.id}
-              onToggle={() =>
-                setExpandedHumanId((prev) => (prev === member.id ? null : member.id))
-              }
-            />
-          ))}
-          {humanMembers.length === 0 && (
-            <p className="text-xs" style={{ color: 'var(--mc-text-muted)' }}>
-              No human members in current scope.
-            </p>
-          )}
+        <div className="pt-1">
+          <div className="flex items-center gap-2 mb-2">
+            <Users className="h-4 w-4" style={{ color: 'var(--mc-text-secondary)' }} />
+            <span className="mc-header-mono">Human Workforce ({humanMembers.length})</span>
+          </div>
+          <div className="space-y-1.5">
+            {humanMembers.map((member) => (
+              <HumanCard
+                key={member.id}
+                member={member}
+                expanded={expandedHumanId === member.id}
+                onToggle={() =>
+                  setExpandedHumanId((prev) => (prev === member.id ? null : member.id))
+                }
+              />
+            ))}
+            {humanMembers.length === 0 && (
+              <p className="text-xs" style={{ color: 'var(--mc-text-muted)' }}>
+                No human members in current scope.
+              </p>
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 }
+
+/* ── Maark AI — Pinned orchestrator hero section ── */
+
+function MaarkSection({
+  agent,
+  profile,
+  expanded,
+  onToggle,
+}: {
+  agent?: RuntimeAgentSummary;
+  profile?: AgentProfileSummary;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const isActive = agent?.status === 'WORKING' || agent?.status === 'ONLINE';
+  const statusLabel = agent
+    ? agent.status === 'WORKING'
+      ? 'Orchestrating'
+      : agent.status === 'ONLINE'
+        ? 'Online'
+        : agent.status === 'IDLE'
+          ? 'Idle'
+          : 'Offline'
+    : 'Standby';
+
+  return (
+    <div
+      className="shrink-0 border-b px-4 py-3"
+      style={{
+        borderColor: 'var(--mc-border)',
+        background: 'color-mix(in srgb, var(--mc-surface) 92%, var(--mc-accent) 8%)',
+      }}
+    >
+      {/* Header label */}
+      <div className="flex items-center gap-1.5 mb-2.5">
+        <Zap className="h-3 w-3" style={{ color: 'var(--mc-accent)' }} />
+        <span
+          className="mc-header-mono"
+          style={{ color: 'var(--mc-accent)', letterSpacing: '0.14em' }}
+        >
+          System Orchestrator
+        </span>
+      </div>
+
+      {/* Maark card */}
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full text-left rounded-lg px-2.5 py-2 transition-colors hover:bg-[var(--mc-overlay)]"
+        aria-expanded={expanded}
+      >
+        <div className="flex items-start gap-3">
+          {/* Company logo avatar with permanent pulsing green dot */}
+          <div className="relative shrink-0">
+            {profile?.avatarUrl ? (
+              <Image
+                src={profile.avatarUrl}
+                alt="Maark AI"
+                width={36}
+                height={36}
+                unoptimized
+                className="h-9 w-9 rounded-lg object-cover border border-[var(--mc-border)]"
+              />
+            ) : (
+              <div
+                className="h-9 w-9 rounded-lg border flex items-center justify-center text-sm font-bold"
+                style={{
+                  borderColor: 'var(--mc-border)',
+                  background: 'linear-gradient(135deg, rgba(198,115,50,0.15), rgba(58,149,103,0.12))',
+                  color: 'var(--mc-accent)',
+                }}
+              >
+                Mk
+              </div>
+            )}
+            {/* Permanent pulsing green dot */}
+            <span
+              className="mc-status-dot working absolute -bottom-0.5 -right-0.5 mc-maark-pulse"
+              style={{ border: '2px solid var(--mc-surface)', width: 11, height: 11 }}
+            />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span
+                className="text-sm font-semibold"
+                style={{ color: 'var(--mc-text-primary)' }}
+              >
+                Maark AI
+              </span>
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full"
+                style={{
+                  background: isActive
+                    ? 'rgba(58,149,103,0.12)'
+                    : 'rgba(198,133,63,0.12)',
+                  color: isActive ? '#266847' : '#895e23',
+                }}
+              >
+                <span
+                  className="inline-block w-1.5 h-1.5 rounded-full"
+                  style={{
+                    background: isActive ? 'var(--mc-progress)' : 'var(--mc-pending)',
+                  }}
+                />
+                {statusLabel}
+              </span>
+            </div>
+            <p
+              className="text-[11px] leading-4 mt-0.5"
+              style={{ color: 'var(--mc-text-tertiary)' }}
+            >
+              {agent?.status === 'WORKING'
+                ? 'Coordinating handoffs and unblocking stages'
+                : 'Monitoring pipeline, ready to orchestrate'}
+            </p>
+          </div>
+
+          <ChevronDown
+            className={`h-3.5 w-3.5 mt-0.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
+            style={{ color: 'var(--mc-text-tertiary)' }}
+          />
+        </div>
+
+        {expanded && (
+          <div className="mt-2.5 border-t border-[var(--mc-border)] pt-2.5 space-y-2">
+            {profile?.mission && (
+              <p className="text-[11px] leading-4" style={{ color: 'var(--mc-text-secondary)' }}>
+                {profile.mission}
+              </p>
+            )}
+            <p className="text-[11px] leading-4" style={{ color: 'var(--mc-text-muted)' }}>
+              System orchestrator &middot; Coordinates all agent handoffs, unblocks stages, and
+              narrates the activity feed.
+            </p>
+          </div>
+        )}
+      </button>
+    </div>
+  );
+}
+
+/* ── Helper functions ── */
 
 function formatDuration(seconds: number | undefined): string {
   const total = Math.max(0, Math.floor(seconds || 0));
@@ -402,7 +568,7 @@ function AgentCard({
         </div>
 
         <div className="flex items-center gap-1">
-          <span className={`mc-badge ${ROLE_BADGES[agent.role] || ''}`}>{agent.role}</span>
+          <span className={`mc-badge ${statusBadgeClass(agent.status)}`}>{agent.role}</span>
           <ChevronDown
             className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
             style={{ color: 'var(--mc-text-tertiary)' }}

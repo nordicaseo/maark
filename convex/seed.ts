@@ -74,9 +74,9 @@ export const seedAgents = mutation({
         updatedAt: now,
       },
       {
-        name: "Pulse",
+        name: "Maark",
         role: "project-manager",
-        specialization: "Workflow orchestration and handoffs",
+        specialization: "System orchestration and handoffs",
         skills: ["workflow planning", "handoffs", "risk checks"],
         status: "ONLINE",
         isDedicated: false,

@@ -40,7 +40,7 @@ const IDENTITY_MAP: Record<string, IdentityEntry> = {
   outliner:          { initials: 'O',  ...COLORS.outliner,   displayRole: 'Outliner' },
   'seo-reviewer':    { initials: 'SR', ...COLORS.seo,        displayRole: 'SEO Reviewer' },
   seo:               { initials: 'S',  ...COLORS.seo,        displayRole: 'SEO' },
-  'project-manager': { initials: 'PM', ...COLORS.pm,         displayRole: 'Project Manager' },
+  'project-manager': { initials: 'Mk', ...COLORS.pm,         displayRole: 'System Orchestrator' },
   content:           { initials: 'C',  ...COLORS.outliner,   displayRole: 'Content' },
   lead:              { initials: 'L',  ...COLORS.lead,       displayRole: 'Lead' },
 
@@ -51,13 +51,14 @@ const IDENTITY_MAP: Record<string, IdentityEntry> = {
   maple:  { initials: 'Ma', ...COLORS.outliner,   displayRole: 'Outliner' },
   orion:  { initials: 'Or', ...COLORS.seo,        displayRole: 'SEO Reviewer' },
   pulse:  { initials: 'Pu', ...COLORS.pm,         displayRole: 'Project Manager' },
+  maark:  { initials: 'Mk', ...COLORS.pm,         displayRole: 'System Orchestrator' },
   helix:  { initials: 'He', ...COLORS.seo,        displayRole: 'SEO' },
   lumen:  { initials: 'Lu', ...COLORS.outliner,   displayRole: 'Content' },
   astra:  { initials: 'As', ...COLORS.lead,       displayRole: 'Lead' },
 
   // Special
   system:      { initials: 'SY', ...COLORS.system, displayRole: 'System' },
-  'workflow pm': { initials: 'PM', ...COLORS.pm,   displayRole: 'Project Manager' },
+  'workflow pm': { initials: 'Mk', ...COLORS.pm,   displayRole: 'System Orchestrator' },
 };
 
 // ── Stage → primary role lookup ────────────────────────────────

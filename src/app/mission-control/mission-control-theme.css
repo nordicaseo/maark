@@ -68,6 +68,20 @@
   text-transform: uppercase;
 }
 
+/* Status-based badge colors: active = green, idle = yellow, offline = muted */
+.mc-badge-active {
+  background: rgba(58, 149, 103, 0.12);
+  color: #266847;
+}
+.mc-badge-idle {
+  background: rgba(209, 151, 69, 0.14);
+  color: #895e23;
+}
+.mc-badge-offline {
+  background: rgba(197, 83, 66, 0.10);
+  color: #9e4a3a;
+}
+/* Legacy role-based badge colors (kept for backward compat) */
 .mc-badge-writer {
   background: rgba(58, 149, 103, 0.11);
   color: #266847;
@@ -503,4 +517,14 @@
 @keyframes mc-alive-pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(58, 149, 103, 0.4); }
   50% { opacity: 0.6; box-shadow: 0 0 0 3px rgba(58, 149, 103, 0); }
+}
+
+/* ── Maark AI — permanent pulsing status dot ──────────────── */
+
+.mc-maark-pulse {
+  animation: mc-maark-glow 2.5s infinite ease-in-out;
+}
+@keyframes mc-maark-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(58, 149, 103, 0.5); }
+  50% { box-shadow: 0 0 0 4px rgba(58, 149, 103, 0); }
 }

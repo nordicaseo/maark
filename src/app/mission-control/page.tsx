@@ -10,7 +10,7 @@ import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { TeamMembersProvider } from '@/components/mission-control/team-members-provider';
-import { Loader2, Bot, AlertTriangle, Activity, PenLine, LayoutDashboard } from 'lucide-react';
+import { Loader2, Bot, AlertTriangle, Activity, PenLine, ArrowLeft, LayoutDashboard } from 'lucide-react';
 import Link from 'next/link';
 import { useActiveProject } from '@/hooks/use-active-project';
 import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
@@ -380,14 +380,13 @@ export default function MissionControlPage() {
           className="border-b px-6 py-4"
           style={{ borderColor: 'var(--mc-border)', background: 'var(--mc-surface)' }}
         >
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <Link
               href="/documents"
-              style={{ color: 'var(--mc-text-secondary)' }}
-              className="hover:opacity-80 transition-opacity inline-flex items-center gap-1.5 text-sm"
+              className="p-1.5 rounded-md transition-colors hover:bg-[var(--mc-overlay)]"
+              title="Back to Dashboard"
             >
-              <LayoutDashboard className="h-4 w-4" />
-              Dashboard
+              <ArrowLeft className="h-4.5 w-4.5" style={{ color: 'var(--mc-text-secondary)' }} />
             </Link>
             <div>
               <h1
@@ -451,14 +450,14 @@ export default function MissionControlPage() {
           style={{ borderColor: 'var(--mc-border)', background: 'var(--mc-surface)' }}
         >
           <div className="relative flex items-center justify-between gap-4">
-            {/* Left — Dashboard link + title */}
-            <div className="flex items-center gap-4">
+            {/* Left — Back arrow + title + Editor */}
+            <div className="flex items-center gap-3">
               <Link
                 href="/documents"
-                className="mc-btn-secondary flex items-center gap-1.5"
+                className="p-1.5 rounded-md transition-colors hover:bg-[var(--mc-overlay)]"
+                title="Back to Dashboard"
               >
-                <LayoutDashboard className="h-3.5 w-3.5" />
-                Dashboard
+                <ArrowLeft className="h-4.5 w-4.5" style={{ color: 'var(--mc-text-secondary)' }} />
               </Link>
               <div>
                 <h1
@@ -469,6 +468,13 @@ export default function MissionControlPage() {
                 </h1>
                 <p className="mc-header-mono mt-0.5">Content pipeline &middot; Real-time</p>
               </div>
+              <Link
+                href={withProjectScope('/documents', projectId)}
+                className="mc-btn-secondary flex items-center gap-1.5 ml-1"
+              >
+                <PenLine className="h-3.5 w-3.5" />
+                Editor
+              </Link>
             </div>
 
             {/* Center — Stats pill, absolute-centered */}
@@ -484,13 +490,6 @@ export default function MissionControlPage() {
               <div className="w-48">
                 <ProjectSwitcher activeProjectId={projectId} onProjectChange={setProjectId} />
               </div>
-              <Link
-                href={withProjectScope('/documents', projectId)}
-                className="mc-btn-secondary flex items-center gap-1.5"
-              >
-                <PenLine className="h-3.5 w-3.5" />
-                Editor
-              </Link>
               <button
                 onClick={() => setShowAgents(!showAgents)}
                 className="mc-btn-secondary flex items-center gap-1.5"
