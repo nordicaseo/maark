@@ -8,19 +8,33 @@ import type { JSONContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import CharacterCount from '@tiptap/extension-character-count';
-import Underline from '@tiptap/extension-underline';
+import UnderlineExt from '@tiptap/extension-underline';
 import Highlight from '@tiptap/extension-highlight';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
-import Link from '@tiptap/extension-link';
+import LinkExt from '@tiptap/extension-link';
 import { Table } from '@tiptap/extension-table';
 import { TableRow } from '@tiptap/extension-table-row';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
-import Image from '@tiptap/extension-image';
-import { MessageSquare } from 'lucide-react';
+import ImageExt from '@tiptap/extension-image';
+import {
+  MessageSquare,
+  Bold,
+  Italic,
+  Underline as UnderlineIcon,
+  Strikethrough,
+  Code,
+  Heading1,
+  Heading2,
+  Heading3,
+  List,
+  ListOrdered,
+  Quote,
+  Link2,
+  ImageIcon,
+} from 'lucide-react';
 import { CommentMark } from '@/lib/tiptap/comment-mark';
-import { EditorToolbar } from './editor-toolbar';
 import { ImageGeneratorDialog } from './image-generator-dialog';
 import type { Document } from '@/types/document';
 
@@ -33,6 +47,38 @@ const DRAFT_PHASE_LABELS: Record<string, string> = {
   style_fix: 'Applying style corrections…',
   complete: 'Writing complete',
 };
+
+/* ── BubbleMenu button ─────────────────────────────── */
+
+function BubbleButton({
+  onClick,
+  active,
+  title,
+  children,
+}: {
+  onClick: () => void;
+  active?: boolean;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`p-1.5 rounded text-zinc-300 hover:text-white hover:bg-zinc-700 transition-colors ${
+        active ? 'bg-zinc-700 text-white' : ''
+      }`}
+      title={title}
+    >
+      {children}
+    </button>
+  );
+}
+
+function BubbleSep() {
+  return <div className="w-px h-5 bg-zinc-700 mx-0.5" />;
+}
+
+/* ── Editor ────────────────────────────────────────── */
 
 interface TiptapEditorProps {
   document: Document;
@@ -54,14 +100,14 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting, onA
         heading: { levels: [1, 2, 3, 4] },
       }),
       Placeholder.configure({
-        placeholder: 'Start writing or press / for commands...',
+        placeholder: 'Start writing…',
       }),
       CharacterCount,
-      Underline,
+      UnderlineExt,
       Highlight.configure({ multicolor: true }),
       TaskList,
       TaskItem.configure({ nested: true }),
-      Link.configure({ openOnClick: false }),
+      LinkExt.configure({ openOnClick: false }),
       Table.configure({
         resizable: true,
         HTMLAttributes: { class: 'tiptap-table' },
@@ -69,7 +115,7 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting, onA
       TableRow,
       TableCell,
       TableHeader,
-      Image.configure({
+      ImageExt.configure({
         inline: false,
         allowBase64: false,
         HTMLAttributes: { class: 'tiptap-image' },
@@ -86,11 +132,9 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting, onA
       attributes: {
         class: 'tiptap prose prose-invert max-w-none focus:outline-none',
       },
-      // Improve paste handling for HTML content (tables, formatting)
       handlePaste(view, event) {
         const html = event.clipboardData?.getData('text/html');
         if (html) {
-          // Let TipTap handle HTML paste natively with table support
           return false;
         }
         return false;
@@ -135,18 +179,15 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting, onA
 
         if (cancelled) return;
 
-        // Update phase label
         if (data.draftPhase && data.draftPhase !== lastDraftPhaseRef.current) {
           lastDraftPhaseRef.current = data.draftPhase;
           setDraftPhase(data.draftPhase);
 
-          // If writing is complete, load the final JSON content
           if (data.draftPhase === 'complete' && data.content) {
             editor.commands.setContent(data.content as JSONContent);
-            return; // Stop polling
+            return;
           }
 
-          // Otherwise show the draft HTML
           if (data.draftContent) {
             editor.commands.setContent(data.draftContent);
           }
@@ -157,7 +198,7 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting, onA
     };
 
     const interval = setInterval(poll, 3000);
-    poll(); // immediate first fetch
+    poll();
 
     return () => {
       cancelled = true;
@@ -165,7 +206,6 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting, onA
     };
   }, [isAiWriting, editor, document.id]);
 
-  // Clear draft phase when AI writing stops
   useEffect(() => {
     if (!isAiWriting) {
       setDraftPhase(null);
@@ -200,12 +240,32 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting, onA
   const handleInsertImage = useCallback((url: string, alt: string) => {
     if (!editor) return;
     editor.chain().focus().setImage({ src: url, alt }).run();
-    // Trigger a save after image insert
     const content = editor.getJSON();
     const text = editor.getText();
     const words = text.split(/\s+/).filter(Boolean).length;
     onSave(content, text, words);
   }, [editor, onSave]);
+
+  const handleSetLink = useCallback(() => {
+    if (!editor) return;
+    const previousUrl = editor.getAttributes('link').href;
+    const url = window.prompt('URL', previousUrl);
+    if (url === null) return;
+    if (url === '') {
+      editor.chain().focus().extendMarkRange('link').unsetLink().run();
+      return;
+    }
+    editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+  }, [editor]);
+
+  const handleAddComment = useCallback(() => {
+    if (!editor || !onAddComment) return;
+    const { from, to } = editor.state.selection;
+    const quotedText = editor.state.doc.textBetween(from, to, ' ');
+    if (quotedText.trim()) {
+      onAddComment({ quotedText, selectionFrom: from, selectionTo: to });
+    }
+  }, [editor, onAddComment]);
 
   if (!editor) return null;
 
@@ -217,78 +277,75 @@ export function TiptapEditor({ document, onSave, onEditorReady, isAiWriting, onA
           {DRAFT_PHASE_LABELS[draftPhase] || `Writing (${draftPhase})…`}
         </div>
       )}
-      <EditorToolbar
-        editor={editor}
-        onOpenImageGenerator={() => setImageDialogOpen(true)}
-      />
 
+      {/* Dark floating toolbar on text selection */}
       {editor && (
         <BubbleMenu
           editor={editor}
-          className="bg-popover border border-border rounded-lg shadow-lg flex items-center overflow-hidden"
+          className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl flex items-center gap-0.5 p-1"
         >
-          <button
-            onClick={() => editor.chain().focus().toggleBold().run()}
-            className={`px-3 py-1.5 text-xs font-medium hover:bg-accent ${
-              editor.isActive('bold') ? 'bg-accent text-accent-foreground' : ''
-            }`}
-          >
-            B
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleItalic().run()}
-            className={`px-3 py-1.5 text-xs italic hover:bg-accent ${
-              editor.isActive('italic') ? 'bg-accent text-accent-foreground' : ''
-            }`}
-          >
-            I
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleUnderline().run()}
-            className={`px-3 py-1.5 text-xs underline hover:bg-accent ${
-              editor.isActive('underline') ? 'bg-accent text-accent-foreground' : ''
-            }`}
-          >
-            U
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleStrike().run()}
-            className={`px-3 py-1.5 text-xs line-through hover:bg-accent ${
-              editor.isActive('strike') ? 'bg-accent text-accent-foreground' : ''
-            }`}
-          >
-            S
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleHighlight().run()}
-            className={`px-3 py-1.5 text-xs hover:bg-accent ${
-              editor.isActive('highlight') ? 'bg-accent text-accent-foreground' : ''
-            }`}
-          >
-            H
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleCode().run()}
-            className={`px-3 py-1.5 text-xs font-mono hover:bg-accent ${
-              editor.isActive('code') ? 'bg-accent text-accent-foreground' : ''
-            }`}
-          >
-            {'<>'}
-          </button>
+          {/* Text formatting */}
+          <BubbleButton onClick={() => editor.chain().focus().toggleBold().run()} active={editor.isActive('bold')} title="Bold">
+            <Bold className="h-3.5 w-3.5" />
+          </BubbleButton>
+          <BubbleButton onClick={() => editor.chain().focus().toggleItalic().run()} active={editor.isActive('italic')} title="Italic">
+            <Italic className="h-3.5 w-3.5" />
+          </BubbleButton>
+          <BubbleButton onClick={() => editor.chain().focus().toggleUnderline().run()} active={editor.isActive('underline')} title="Underline">
+            <UnderlineIcon className="h-3.5 w-3.5" />
+          </BubbleButton>
+          <BubbleButton onClick={() => editor.chain().focus().toggleStrike().run()} active={editor.isActive('strike')} title="Strikethrough">
+            <Strikethrough className="h-3.5 w-3.5" />
+          </BubbleButton>
+          <BubbleButton onClick={() => editor.chain().focus().toggleCode().run()} active={editor.isActive('code')} title="Code">
+            <Code className="h-3.5 w-3.5" />
+          </BubbleButton>
+
+          <BubbleSep />
+
+          {/* Headings */}
+          <BubbleButton onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} active={editor.isActive('heading', { level: 1 })} title="Heading 1">
+            <Heading1 className="h-3.5 w-3.5" />
+          </BubbleButton>
+          <BubbleButton onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} active={editor.isActive('heading', { level: 2 })} title="Heading 2">
+            <Heading2 className="h-3.5 w-3.5" />
+          </BubbleButton>
+          <BubbleButton onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()} active={editor.isActive('heading', { level: 3 })} title="Heading 3">
+            <Heading3 className="h-3.5 w-3.5" />
+          </BubbleButton>
+
+          <BubbleSep />
+
+          {/* Block formatting */}
+          <BubbleButton onClick={() => editor.chain().focus().toggleBulletList().run()} active={editor.isActive('bulletList')} title="Bullet List">
+            <List className="h-3.5 w-3.5" />
+          </BubbleButton>
+          <BubbleButton onClick={() => editor.chain().focus().toggleOrderedList().run()} active={editor.isActive('orderedList')} title="Numbered List">
+            <ListOrdered className="h-3.5 w-3.5" />
+          </BubbleButton>
+          <BubbleButton onClick={() => editor.chain().focus().toggleBlockquote().run()} active={editor.isActive('blockquote')} title="Quote">
+            <Quote className="h-3.5 w-3.5" />
+          </BubbleButton>
+
+          <BubbleSep />
+
+          {/* Link */}
+          <BubbleButton onClick={handleSetLink} active={editor.isActive('link')} title="Link">
+            <Link2 className="h-3.5 w-3.5" />
+          </BubbleButton>
+          {/* Image */}
+          <BubbleButton onClick={() => setImageDialogOpen(true)} title="Image">
+            <ImageIcon className="h-3.5 w-3.5" />
+          </BubbleButton>
+
+          {/* Comment */}
           {onAddComment && (
-            <button
-              onClick={() => {
-                const { from, to } = editor.state.selection;
-                const quotedText = editor.state.doc.textBetween(from, to, ' ');
-                if (quotedText.trim()) {
-                  onAddComment({ quotedText, selectionFrom: from, selectionTo: to });
-                }
-              }}
-              className="px-3 py-1.5 text-xs hover:bg-accent"
-              title="Add comment"
-            >
-              <MessageSquare className="h-3.5 w-3.5" />
-            </button>
+            <>
+              <BubbleSep />
+              <BubbleButton onClick={handleAddComment} title="Comment">
+                <MessageSquare className="h-3.5 w-3.5" />
+              </BubbleButton>
+            </>
           )}
         </BubbleMenu>
       )}

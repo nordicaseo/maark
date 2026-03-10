@@ -132,7 +132,7 @@ export function SignalRadarChart({ signals, size = 'small' }: SignalRadarChartPr
           />
           <PolarAngleAxis
             dataKey="name"
-            tick={<CustomTick signals={signals} fontSize={labelFontSize} />}
+            tick={false}
             tickLine={false}
           />
           <PolarRadiusAxis

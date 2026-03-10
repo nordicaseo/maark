@@ -18,6 +18,12 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import { Separator } from '@/components/ui/separator';
+import {
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -31,6 +37,7 @@ import {
   FileType,
   Eye,
   Copy,
+  Settings,
 } from 'lucide-react';
 import type { Document } from '@/types/document';
 import { CONTENT_FORMAT_GROUPS, CONTENT_FORMAT_LABELS, STATUS_LABELS } from '@/types/document';
@@ -64,7 +71,6 @@ export function TopBar({
   rightOpen,
   onToggleLeft,
   onToggleRight,
-  isAiWriting,
 }: TopBarProps) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState('');
@@ -93,7 +99,7 @@ export function TopBar({
   };
 
   return (
-    <div className="h-14 border-b border-border bg-card/90 backdrop-blur-sm flex items-center gap-3 px-4 shrink-0">
+    <div className="h-12 border-b border-border bg-card/90 backdrop-blur-sm flex items-center gap-3 px-4 shrink-0">
       <Button
         variant="ghost"
         size="icon"
@@ -131,64 +137,10 @@ export function TopBar({
 
           <div className="flex-1" />
 
-          {/* AI Writing indicator */}
-          {isAiWriting && (
-            <span className="text-xs text-primary flex items-center gap-1">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              AI Writing...
-            </span>
-          )}
-
-          {/* Content Format */}
-          <Select
-            value={document.contentType}
-            onValueChange={(val) =>
-              onUpdate({ contentType: val } as Partial<Document>)
-            }
-          >
-            <SelectTrigger className="w-[150px] h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {Object.entries(CONTENT_FORMAT_GROUPS).map(([key, group]) => (
-                <SelectGroup key={key}>
-                  <SelectLabel>{group.label}</SelectLabel>
-                  {group.formats.map((f) => (
-                    <SelectItem key={f} value={f}>
-                      {CONTENT_FORMAT_LABELS[f]}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {/* Status */}
-          <Select
-            value={document.status}
-            onValueChange={(val) =>
-              onUpdate({ status: val } as Partial<Document>)
-            }
-          >
-            <SelectTrigger className="w-[120px] h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {Object.entries(STATUS_LABELS).map(([key, label]) => (
-                <SelectItem key={key} value={key}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {/* Word Count */}
-          <span className="text-xs text-muted-foreground tabular-nums">
+          {/* Quiet Stats */}
+          <span className="text-xs text-muted-foreground tabular-nums flex items-center gap-1.5">
             {document.wordCount || 0} words
-          </span>
-
-          {/* Save Status */}
-          <span className="text-xs text-muted-foreground flex items-center gap-1 w-16">
+            <span className="text-muted-foreground/40">·</span>
             {saveStatus === 'saving' && (
               <>
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -201,72 +153,137 @@ export function TopBar({
                 Saved
               </>
             )}
+            {saveStatus === 'idle' && (
+              <span className="text-muted-foreground/60">Ready</span>
+            )}
           </span>
 
-          {/* Preview */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5 h-8"
-            disabled={previewLoading}
-            onClick={async () => {
-              if (!document) return;
-              setPreviewLoading(true);
-              try {
-                const res = await fetch(`/api/documents/${document.id}/preview-token`, {
-                  method: 'POST',
-                });
-                if (!res.ok) throw new Error();
-                const { url } = await res.json();
-                const fullUrl = `${window.location.origin}${url}`;
-                await navigator.clipboard.writeText(fullUrl);
-                window.open(url, '_blank');
-              } catch {
-                alert('Failed to generate preview link.');
-              } finally {
-                setPreviewLoading(false);
-              }
-            }}
-          >
-            {previewLoading ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Eye className="h-3.5 w-3.5" />
-            )}
-            Preview
-          </Button>
-
-          {/* Export */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-1.5 h-8">
-                <Download className="h-3.5 w-3.5" />
-                Export
+          {/* Settings Popover (Format, Status, Preview, Export) */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8">
+                <Settings className="h-4 w-4" />
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => onExport('html')}>
-                <FileCode className="h-4 w-4 mr-2" />
-                HTML Document
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onExport('markdown')}>
-                <FileType className="h-4 w-4 mr-2" />
-                Markdown
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onExport('text')}>
-                <FileText className="h-4 w-4 mr-2" />
-                Plain Text
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onCopyHtml?.()}>
-                {htmlCopied ? (
-                  <Check className="h-4 w-4 mr-2 text-green-500" />
-                ) : (
-                  <Copy className="h-4 w-4 mr-2" />
-                )}
-                {htmlCopied ? 'Copied!' : 'Copy as HTML'}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-80 space-y-3">
+              {/* Content Format */}
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Format</label>
+                <Select
+                  value={document.contentType}
+                  onValueChange={(val) =>
+                    onUpdate({ contentType: val } as Partial<Document>)
+                  }
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(CONTENT_FORMAT_GROUPS).map(([key, group]) => (
+                      <SelectGroup key={key}>
+                        <SelectLabel>{group.label}</SelectLabel>
+                        {group.formats.map((f) => (
+                          <SelectItem key={f} value={f}>
+                            {CONTENT_FORMAT_LABELS[f]}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Status */}
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Status</label>
+                <Select
+                  value={document.status}
+                  onValueChange={(val) =>
+                    onUpdate({ status: val } as Partial<Document>)
+                  }
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(STATUS_LABELS).map(([key, label]) => (
+                      <SelectItem key={key} value={key}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <Separator />
+
+              {/* Preview + Export */}
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 h-8 flex-1"
+                  disabled={previewLoading}
+                  onClick={async () => {
+                    if (!document) return;
+                    setPreviewLoading(true);
+                    try {
+                      const res = await fetch(`/api/documents/${document.id}/preview-token`, {
+                        method: 'POST',
+                      });
+                      if (!res.ok) throw new Error();
+                      const { url } = await res.json();
+                      const fullUrl = `${window.location.origin}${url}`;
+                      await navigator.clipboard.writeText(fullUrl);
+                      window.open(url, '_blank');
+                    } catch {
+                      alert('Failed to generate preview link.');
+                    } finally {
+                      setPreviewLoading(false);
+                    }
+                  }}
+                >
+                  {previewLoading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Eye className="h-3.5 w-3.5" />
+                  )}
+                  Preview
+                </Button>
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-1.5 h-8 flex-1">
+                      <Download className="h-3.5 w-3.5" />
+                      Export
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => onExport('html')}>
+                      <FileCode className="h-4 w-4 mr-2" />
+                      HTML Document
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onExport('markdown')}>
+                      <FileType className="h-4 w-4 mr-2" />
+                      Markdown
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onExport('text')}>
+                      <FileText className="h-4 w-4 mr-2" />
+                      Plain Text
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onCopyHtml?.()}>
+                      {htmlCopied ? (
+                        <Check className="h-4 w-4 mr-2 text-green-500" />
+                      ) : (
+                        <Copy className="h-4 w-4 mr-2" />
+                      )}
+                      {htmlCopied ? 'Copied!' : 'Copy as HTML'}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </PopoverContent>
+          </Popover>
 
           {/* Analyze */}
           <Button

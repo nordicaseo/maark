@@ -5,6 +5,7 @@ import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
+import { Separator } from '@/components/ui/separator';
 import {
   Dialog,
   DialogContent,
@@ -18,7 +19,7 @@ import { QualityPanel } from './quality-panel';
 import { AiWritingPanel } from '@/components/ai/ai-writing-panel';
 import { CommentsPanel } from '@/components/editor/comments-panel';
 import { WorkflowActivityFeed } from '@/components/mission-control/workflow-feed/workflow-activity-feed';
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { Maximize2, Minimize2, Sparkles, BarChart3, Zap } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
 import type { Document } from '@/types/document';
 import type { AiDetectionResult, ContentQualityResult, SemanticResult } from '@/types/analysis';
@@ -87,13 +88,14 @@ function SidebarContent({
   void onInsertAiText;
   void onReplaceContent;
 
-  // Resolve linked task for the Feed tab
+  // Resolve linked task for the Feed
   const documentTasks = useQuery(
     api.tasks.getByDocument,
     document.id ? { documentId: document.id } : 'skip',
   );
   const linkedTaskId = documentTasks?.[0]?._id ?? null;
 
+  // Workflow editing state
   const [researchSummary, setResearchSummary] = useState('');
   const [researchFacts, setResearchFacts] = useState('');
   const [researchStats, setResearchStats] = useState('');
@@ -213,20 +215,29 @@ function SidebarContent({
     }
   };
 
+  // Selection awareness for the copilot placeholder
+  const hasSelection = editor ? !editor.state.selection.empty : false;
+
   return (
-    <Tabs defaultValue="write" className="flex flex-col h-full">
-      <TabsList className={`mx-3 mt-3 w-full grid grid-cols-4 sm:grid-cols-7 gap-1 h-auto shrink-0 ${expanded ? 'mx-4 mt-4' : ''}`}>
-        <TabsTrigger value="write" className="text-[11px] min-h-8 px-2">Write</TabsTrigger>
-        <TabsTrigger value="comments" className="text-[11px] min-h-8 px-2">Comments</TabsTrigger>
-        <TabsTrigger value="workflow" className="text-[11px] min-h-8 px-2">Workflow</TabsTrigger>
-        <TabsTrigger value="feed" className="text-[11px] min-h-8 px-2">Feed</TabsTrigger>
-        <TabsTrigger value="ai" className="text-[11px] min-h-8 px-2">AI</TabsTrigger>
-        <TabsTrigger value="seo" className="text-[11px] min-h-8 px-2">SEO</TabsTrigger>
-        <TabsTrigger value="quality" className="text-[11px] min-h-8 px-2">Quality</TabsTrigger>
+    <Tabs defaultValue="copilot" className="flex flex-col h-full">
+      <TabsList className={`mx-3 mt-3 w-full grid grid-cols-3 gap-1 h-auto shrink-0 ${expanded ? 'mx-4 mt-4' : ''}`}>
+        <TabsTrigger value="copilot" className="text-xs min-h-9 px-3 gap-1.5">
+          <Sparkles className="h-3.5 w-3.5" />
+          Copilot
+        </TabsTrigger>
+        <TabsTrigger value="intel" className="text-xs min-h-9 px-3 gap-1.5">
+          <BarChart3 className="h-3.5 w-3.5" />
+          Intel
+        </TabsTrigger>
+        <TabsTrigger value="activity" className="text-xs min-h-9 px-3 gap-1.5">
+          <Zap className="h-3.5 w-3.5" />
+          Activity
+        </TabsTrigger>
       </TabsList>
 
       <div className="flex-1 overflow-y-auto min-h-0">
-        <TabsContent value="write" className={`p-3 mt-0 ${expanded ? 'p-4 max-w-2xl mx-auto' : ''}`}>
+        {/* ═══════════ COPILOT: AI Writing + AI Detection ═══════════ */}
+        <TabsContent value="copilot" className={`p-3 mt-0 space-y-4 ${expanded ? 'p-4 max-w-2xl mx-auto' : ''}`}>
           <AiWritingPanel
             contentType={document.contentType}
             targetKeyword={document.targetKeyword}
@@ -235,163 +246,163 @@ function SidebarContent({
             isWriting={isAiWriting}
             onLiveGenerate={onLiveGenerate}
             onCancel={onCancelGeneration}
+            hasSelection={hasSelection}
           />
+
+          {(aiResult || analyzing) && (
+            <>
+              <Separator />
+              <AiDetectionPanel
+                result={aiResult}
+                analyzing={analyzing}
+                onOpenReport={onOpenReport}
+              />
+            </>
+          )}
         </TabsContent>
 
-        <TabsContent value="comments" className="mt-0 h-full">
-          <CommentsPanel
-            documentId={document.id}
-            editor={editor || null}
-            refreshKey={commentsRefreshKey}
-          />
-        </TabsContent>
-
-        <TabsContent value="workflow" className={`p-3 mt-0 space-y-3 ${expanded ? 'p-4 max-w-2xl mx-auto' : ''}`}>
-          <div className="rounded-md border p-3 space-y-2">
-            <p className="text-xs font-semibold">Editable Research Snapshot</p>
-            <textarea
-              className="w-full min-h-16 rounded-md border px-2 py-1 text-xs"
-              placeholder="Research summary"
-              value={researchSummary}
-              onChange={(e) => setResearchSummary(e.target.value)}
-            />
-            <textarea
-              className="w-full min-h-20 rounded-md border px-2 py-1 text-xs"
-              placeholder="Facts (one per line)"
-              value={researchFacts}
-              onChange={(e) => setResearchFacts(e.target.value)}
-            />
-            <textarea
-              className="w-full min-h-20 rounded-md border px-2 py-1 text-xs"
-              placeholder="Statistics (format: stat | source)"
-              value={researchStats}
-              onChange={(e) => setResearchStats(e.target.value)}
-            />
-            <textarea
-              className="w-full min-h-20 rounded-md border px-2 py-1 text-xs"
-              placeholder="Sources (format: url | title)"
-              value={researchSources}
-              onChange={(e) => setResearchSources(e.target.value)}
-            />
-          </div>
-
-          <div className="rounded-md border p-3 space-y-2">
-            <p className="text-xs font-semibold">Editable Outline Snapshot</p>
-            <textarea
-              className="w-full min-h-40 rounded-md border px-2 py-1 text-xs font-mono"
-              placeholder="Outline markdown"
-              value={outlineMarkdown}
-              onChange={(e) => setOutlineMarkdown(e.target.value)}
-            />
-          </div>
-
-          <div className="rounded-md border p-3 space-y-2">
-            <p className="text-xs font-semibold">Workflow Controls</p>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                className="text-xs"
-                onClick={handleSaveWorkflowContext}
-                disabled={workflowSaving || !onUpdateDocument}
-              >
-                {workflowSaving ? 'Saving...' : 'Save Research + Outline'}
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                className="text-xs"
-                onClick={() => handleRerunFrom('writing')}
-                disabled={rerunBusy !== null}
-              >
-                {rerunBusy === 'writing'
-                  ? 'Rerunning...'
-                  : 'Retry Writing from Outline'}
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                className="text-xs"
-                onClick={() => handleRerunFrom('outline_build')}
-                disabled={rerunBusy !== null}
-              >
-                {rerunBusy === 'outline_build'
-                  ? 'Rerunning...'
-                  : 'Regenerate from Outline'}
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                className="text-xs"
-                onClick={() => handleRerunFrom('research')}
-                disabled={rerunBusy !== null}
-              >
-                {rerunBusy === 'research'
-                  ? 'Rerunning...'
-                  : 'Regenerate from Research'}
-              </Button>
-            </div>
-            {workflowMessage && (
-              <p className="text-xs text-muted-foreground">{workflowMessage}</p>
-            )}
-            <p className="text-[11px] text-muted-foreground">
-              Reruns pause before writing so a human can approve prewrite context.
-            </p>
-          </div>
-
-          <div className="rounded-md border p-3 space-y-2">
-            <p className="text-xs font-semibold">Current Prewrite Checklist</p>
-            {document.prewriteChecklist ? (
-              <div className="text-xs text-muted-foreground space-y-0.5">
-                <p>Brand context: {document.prewriteChecklist.brandContextReady ? 'ready' : 'pending'}</p>
-                <p>Internal links: {document.prewriteChecklist.internalLinksReady ? 'ready' : 'pending'}</p>
-                <p>Unresolved questions: {document.prewriteChecklist.unresolvedQuestions}</p>
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">No prewrite checklist yet.</p>
-            )}
-          </div>
-
-          <div className="rounded-md border p-3 space-y-2">
-            <p className="text-xs font-semibold">Agent Questions</p>
-            {document.agentQuestions && document.agentQuestions.length > 0 ? (
-              <div className="space-y-1.5">
-                {document.agentQuestions.slice(0, 8).map((q) => (
-                  <div key={q.id} className="text-xs text-muted-foreground">
-                    <p>{q.question}</p>
-                    <p className="text-[11px]">Status: {q.status}</p>
-                    {q.answer && <p className="text-[11px]">Answer: {q.answer}</p>}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">No agent questions yet.</p>
-            )}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="ai" className={`p-3 mt-0 ${expanded ? 'p-4 max-w-2xl mx-auto' : ''}`}>
-          <AiDetectionPanel
-            result={aiResult}
-            analyzing={analyzing}
-            onOpenReport={onOpenReport}
-          />
-        </TabsContent>
-
-        <TabsContent value="seo" className={`p-3 mt-0 ${expanded ? 'p-4 max-w-2xl mx-auto' : ''}`}>
+        {/* ═══════════ INTEL: SEO + Quality ═══════════ */}
+        <TabsContent value="intel" className={`p-3 mt-0 space-y-4 ${expanded ? 'p-4 max-w-2xl mx-auto' : ''}`}>
           <SemanticPanel
             result={semanticResult}
             serpData={serpData}
             keyword={document.targetKeyword}
             analyzing={analyzing}
           />
-        </TabsContent>
-
-        <TabsContent value="quality" className={`p-3 mt-0 ${expanded ? 'p-4 max-w-2xl mx-auto' : ''}`}>
+          <Separator />
           <QualityPanel result={qualityResult} analyzing={analyzing} />
         </TabsContent>
 
-        <TabsContent value="feed" className="mt-0 h-full">
-          <WorkflowActivityFeed taskId={linkedTaskId} compact />
+        {/* ═══════════ ACTIVITY: Comments + Workflow + Feed ═══════════ */}
+        <TabsContent value="activity" className="mt-0">
+          <CommentsPanel
+            documentId={document.id}
+            editor={editor || null}
+            refreshKey={commentsRefreshKey}
+          />
+
+          <div className={`p-3 space-y-3 border-t border-border ${expanded ? 'p-4 max-w-2xl mx-auto' : ''}`}>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Workflow</p>
+
+            <div className="rounded-md border p-3 space-y-2">
+              <p className="text-xs font-semibold">Research Snapshot</p>
+              <textarea
+                className="w-full min-h-16 rounded-md border px-2 py-1 text-xs"
+                placeholder="Research summary"
+                value={researchSummary}
+                onChange={(e) => setResearchSummary(e.target.value)}
+              />
+              <textarea
+                className="w-full min-h-20 rounded-md border px-2 py-1 text-xs"
+                placeholder="Facts (one per line)"
+                value={researchFacts}
+                onChange={(e) => setResearchFacts(e.target.value)}
+              />
+              <textarea
+                className="w-full min-h-20 rounded-md border px-2 py-1 text-xs"
+                placeholder="Statistics (format: stat | source)"
+                value={researchStats}
+                onChange={(e) => setResearchStats(e.target.value)}
+              />
+              <textarea
+                className="w-full min-h-20 rounded-md border px-2 py-1 text-xs"
+                placeholder="Sources (format: url | title)"
+                value={researchSources}
+                onChange={(e) => setResearchSources(e.target.value)}
+              />
+            </div>
+
+            <div className="rounded-md border p-3 space-y-2">
+              <p className="text-xs font-semibold">Outline Snapshot</p>
+              <textarea
+                className="w-full min-h-40 rounded-md border px-2 py-1 text-xs font-mono"
+                placeholder="Outline markdown"
+                value={outlineMarkdown}
+                onChange={(e) => setOutlineMarkdown(e.target.value)}
+              />
+            </div>
+
+            <div className="rounded-md border p-3 space-y-2">
+              <p className="text-xs font-semibold">Controls</p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  className="text-xs"
+                  onClick={handleSaveWorkflowContext}
+                  disabled={workflowSaving || !onUpdateDocument}
+                >
+                  {workflowSaving ? 'Saving...' : 'Save Research + Outline'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="text-xs"
+                  onClick={() => handleRerunFrom('writing')}
+                  disabled={rerunBusy !== null}
+                >
+                  {rerunBusy === 'writing' ? 'Rerunning...' : 'Retry Writing'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="text-xs"
+                  onClick={() => handleRerunFrom('outline_build')}
+                  disabled={rerunBusy !== null}
+                >
+                  {rerunBusy === 'outline_build' ? 'Rerunning...' : 'Regen Outline'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="text-xs"
+                  onClick={() => handleRerunFrom('research')}
+                  disabled={rerunBusy !== null}
+                >
+                  {rerunBusy === 'research' ? 'Rerunning...' : 'Regen Research'}
+                </Button>
+              </div>
+              {workflowMessage && (
+                <p className="text-xs text-muted-foreground">{workflowMessage}</p>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                Reruns pause before writing so a human can approve prewrite context.
+              </p>
+            </div>
+
+            <div className="rounded-md border p-3 space-y-2">
+              <p className="text-xs font-semibold">Prewrite Checklist</p>
+              {document.prewriteChecklist ? (
+                <div className="text-xs text-muted-foreground space-y-0.5">
+                  <p>Brand context: {document.prewriteChecklist.brandContextReady ? 'ready' : 'pending'}</p>
+                  <p>Internal links: {document.prewriteChecklist.internalLinksReady ? 'ready' : 'pending'}</p>
+                  <p>Unresolved questions: {document.prewriteChecklist.unresolvedQuestions}</p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">No prewrite checklist yet.</p>
+              )}
+            </div>
+
+            <div className="rounded-md border p-3 space-y-2">
+              <p className="text-xs font-semibold">Agent Questions</p>
+              {document.agentQuestions && document.agentQuestions.length > 0 ? (
+                <div className="space-y-1.5">
+                  {document.agentQuestions.slice(0, 8).map((q) => (
+                    <div key={q.id} className="text-xs text-muted-foreground">
+                      <p>{q.question}</p>
+                      <p className="text-[11px]">Status: {q.status}</p>
+                      {q.answer && <p className="text-[11px]">Answer: {q.answer}</p>}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">No agent questions yet.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="border-t border-border">
+            <WorkflowActivityFeed taskId={linkedTaskId} compact />
+          </div>
         </TabsContent>
       </div>
     </Tabs>
@@ -463,9 +474,12 @@ export function AnalysisSidebar({
         commentsRefreshKey={commentsRefreshKey}
       />
 
-      {/* Expanded Dialog */}
+      {/* Expanded Dialog — showCloseButton={false} to avoid overlap with Minimize2 */}
       <Dialog open={expanded} onOpenChange={setExpanded}>
-        <DialogContent className="max-w-4xl w-[90vw] h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
+        <DialogContent
+          className="max-w-4xl w-[90vw] h-[90vh] flex flex-col p-0 gap-0 overflow-hidden"
+          showCloseButton={false}
+        >
           <VisuallyHidden.Root>
             <DialogTitle>Analysis Panel</DialogTitle>
           </VisuallyHidden.Root>

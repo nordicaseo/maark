@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Loader2, Sparkles, X } from 'lucide-react';
+import { Loader2, Bot, ArrowUp, X } from 'lucide-react';
 import type { ContentType } from '@/types/document';
 
 interface AiWritingPanelProps {
@@ -21,6 +21,7 @@ interface AiWritingPanelProps {
   isWriting?: boolean;
   onLiveGenerate: (instruction: string, tone: string) => void;
   onCancel: () => void;
+  hasSelection?: boolean;
 }
 
 const TONES = [
@@ -32,11 +33,32 @@ const TONES = [
   { value: 'conversational', label: 'Conversational' },
 ];
 
+function QuickAction({
+  label,
+  onClick,
+  disabled,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="text-[11px] px-2.5 py-1 rounded-full border border-border hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+    >
+      {label}
+    </button>
+  );
+}
+
 export function AiWritingPanel({
   targetKeyword,
   isWriting,
   onLiveGenerate,
   onCancel,
+  hasSelection,
 }: AiWritingPanelProps) {
   const [instruction, setInstruction] = useState('');
   const [tone, setTone] = useState('professional');
@@ -46,27 +68,35 @@ export function AiWritingPanel({
     onLiveGenerate(instruction, tone);
   }, [instruction, tone, onLiveGenerate]);
 
+  const handleQuickAction = useCallback((text: string) => {
+    setInstruction(text);
+    onLiveGenerate(text, tone);
+  }, [tone, onLiveGenerate]);
+
+  const placeholder = hasSelection
+    ? 'Edit this selection…'
+    : 'Ask Atlas to write…';
+
   return (
     <div className="space-y-3">
-      <div className="space-y-2">
-        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          Instruction
-        </label>
-        <Textarea
-          placeholder="Write an introduction about... / Expand on this point... / Create a full article..."
-          value={instruction}
-          onChange={(e) => setInstruction(e.target.value)}
-          rows={3}
-          className="resize-none text-sm"
-          disabled={isWriting}
-        />
+      {/* Agent header */}
+      <div className="flex items-center gap-2.5">
+        <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+          <Bot className="h-4 w-4 text-primary" />
+        </div>
+        <div>
+          <p className="text-xs font-medium leading-none">Atlas</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Ready to assist</p>
+        </div>
       </div>
 
-      <div className="flex gap-2">
-        <div className="flex-1">
+      {/* Chat-style input */}
+      <div className="rounded-xl border border-border bg-background p-2 space-y-2">
+        {/* Tone pill + keyword pill */}
+        <div className="flex items-center gap-1.5 px-1">
           <Select value={tone} onValueChange={setTone} disabled={isWriting}>
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue placeholder="Tone" />
+            <SelectTrigger className="h-6 w-auto text-[10px] rounded-full border-0 bg-muted px-2.5 gap-1 shadow-none">
+              <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {TONES.map((t) => (
@@ -76,35 +106,77 @@ export function AiWritingPanel({
               ))}
             </SelectContent>
           </Select>
+          {targetKeyword && (
+            <span className="text-[10px] text-muted-foreground bg-muted rounded-full px-2.5 py-0.5 truncate max-w-[120px]">
+              {targetKeyword}
+            </span>
+          )}
         </div>
-        {isWriting ? (
-          <Button size="sm" variant="destructive" onClick={onCancel} className="h-8">
-            <X className="h-3.5 w-3.5 mr-1" />
-            Stop
-          </Button>
-        ) : (
-          <Button
-            size="sm"
-            onClick={handleWrite}
-            disabled={!instruction.trim()}
-            className="h-8"
-          >
-            <Sparkles className="h-3.5 w-3.5 mr-1" />
-            Write
-          </Button>
+
+        {/* Input + send button */}
+        <div className="flex items-end gap-2">
+          <Textarea
+            placeholder={placeholder}
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            rows={2}
+            className="resize-none text-sm border-0 shadow-none focus-visible:ring-0 p-1 min-h-[40px]"
+            disabled={isWriting}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleWrite();
+              }
+            }}
+          />
+          {isWriting ? (
+            <Button
+              size="icon"
+              variant="destructive"
+              className="h-8 w-8 shrink-0 rounded-full"
+              onClick={onCancel}
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          ) : (
+            <Button
+              size="icon"
+              className="h-8 w-8 shrink-0 rounded-full"
+              onClick={handleWrite}
+              disabled={!instruction.trim()}
+            >
+              <ArrowUp className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Quick actions */}
+      <div className="flex gap-1.5 flex-wrap">
+        <QuickAction
+          label="Make punchier"
+          onClick={() => handleQuickAction('Make the content punchier and more engaging')}
+          disabled={isWriting}
+        />
+        <QuickAction
+          label="Expand section"
+          onClick={() => handleQuickAction('Expand this section with more detail and examples')}
+          disabled={isWriting}
+        />
+        {targetKeyword && (
+          <QuickAction
+            label={`Optimize for "${targetKeyword}"`}
+            onClick={() => handleQuickAction(`Optimize the content for the keyword "${targetKeyword}"`)}
+            disabled={isWriting}
+          />
         )}
       </div>
 
-      {targetKeyword && (
-        <p className="text-xs text-muted-foreground">
-          Target keyword: <span className="font-medium text-foreground">{targetKeyword}</span>
-        </p>
-      )}
-
+      {/* Writing status */}
       {isWriting && (
-        <div className="flex items-center gap-2 p-3 rounded-md border border-primary/20 bg-primary/5">
+        <div className="flex items-center gap-2 p-3 rounded-lg border border-primary/20 bg-primary/5">
           <Loader2 className="h-4 w-4 animate-spin text-primary" />
-          <span className="text-xs text-primary">Writing directly into your editor...</span>
+          <span className="text-xs text-primary">Writing directly into your editor…</span>
         </div>
       )}
     </div>

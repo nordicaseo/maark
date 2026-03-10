@@ -77,24 +77,36 @@ function TopIssues({ signals }: { signals: SignalResult[] }) {
           Top Issues
         </h3>
       </div>
-      {issues.map((s) => {
-        const colors = getSignalColors(s.score);
-        return (
-          <div key={s.signalId} className="flex items-start gap-2">
-            <span className={`text-xs font-bold tabular-nums mt-0.5 ${colors.text}`}>
-              {s.score}/5
-            </span>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-foreground truncate">
-                #{s.signalId} {s.name}
-              </p>
-              <p className="text-[11px] text-muted-foreground truncate">
-                {s.detail}
-              </p>
-            </div>
+      {issues.map((s) => (
+        <div
+          key={s.signalId}
+          className="flex items-start gap-2 cursor-pointer hover:bg-accent/20 rounded-md p-1.5 -mx-1.5 transition-colors"
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            // TODO: scroll editor to the first example of this signal
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              // TODO: scroll editor to the first example of this signal
+            }
+          }}
+        >
+          <span className={`inline-flex items-center text-[11px] font-bold tabular-nums rounded-full px-2 py-0.5 shrink-0 ${
+            s.score >= 4 ? 'bg-red-500/15 text-red-400' : 'bg-yellow-500/15 text-yellow-400'
+          }`}>
+            {s.score}/5
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-medium text-foreground truncate">
+              #{s.signalId} {s.name}
+            </p>
+            <p className="text-[11px] text-muted-foreground truncate">
+              {s.detail}
+            </p>
           </div>
-        );
-      })}
+        </div>
+      ))}
     </div>
   );
 }

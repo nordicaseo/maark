@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -12,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, FileText, Trash2, Settings, Eye, Kanban, Search, Globe, LayoutDashboard } from 'lucide-react';
+import { Plus, Trash2, Settings, Eye, Kanban, Search, Globe, LayoutDashboard } from 'lucide-react';
 import Link from 'next/link';
 import { CreateDialog } from './create-dialog';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
@@ -22,10 +21,6 @@ import type { ContentItemCard } from '@/types/content-item';
 import { STATUS_LABELS } from '@/types/document';
 import { withProjectScope } from '@/lib/project-context';
 import { hasRole } from '@/lib/permissions';
-import {
-  WORKFLOW_RUNTIME_STATE_LABELS,
-  WORKFLOW_RUNTIME_STATE_STYLES,
-} from '@/lib/content-workflow-taxonomy';
 
 interface DocumentListProps {
   documents: ContentItemCard[];
@@ -35,57 +30,14 @@ interface DocumentListProps {
   onProjectChange: (projectId: number | null) => void;
 }
 
-const statusColors: Record<DocumentStatus, string> = {
-  draft: 'bg-stone-200 text-stone-700',
-  in_progress: 'bg-emerald-100 text-emerald-700',
-  review: 'bg-amber-100 text-amber-800',
-  publish: 'bg-orange-100 text-orange-800',
-  accepted: 'bg-teal-100 text-teal-700',
-  live: 'bg-green-100 text-green-700',
+const STATUS_DOT_COLORS: Record<DocumentStatus, string> = {
+  draft: 'bg-stone-400',
+  in_progress: 'bg-emerald-500',
+  review: 'bg-amber-500',
+  publish: 'bg-orange-500',
+  accepted: 'bg-teal-500',
+  live: 'bg-green-500',
 };
-
-function timeAgo(dateStr: string): string {
-  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString();
-}
-
-function ScoreBar({ label, score, max, invert }: { label: string; score: number | null; max: number; invert?: boolean }) {
-  if (score === null) return null;
-  const ratio = invert ? (max - score) / (max - 1) : score / max;
-  const color = ratio > 0.66 ? 'bg-green-500' : ratio > 0.33 ? 'bg-yellow-500' : 'bg-red-500';
-  const display = invert ? score.toFixed(1) : Math.round(score);
-  return (
-    <div className="flex items-center gap-1">
-      <span className="text-[9px] text-muted-foreground w-5 shrink-0">{label}</span>
-      <div className="h-1 w-8 bg-muted rounded-full overflow-hidden">
-        <div className={`h-full ${color} rounded-full`} style={{ width: `${Math.min(ratio * 100, 100)}%` }} />
-      </div>
-      <span className="text-[9px] text-muted-foreground">{display}</span>
-    </div>
-  );
-}
-
-const PRIMARY_STATE_LABELS: Record<DocumentStatus, string> = {
-  draft: 'Active',
-  in_progress: 'Working',
-  review: 'Review',
-  accepted: 'Complete',
-  publish: 'Complete',
-  live: 'Complete',
-};
-
-function readinessChip(ready: boolean): string {
-  return ready
-    ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
-    : 'bg-amber-100 text-amber-800 border-amber-200';
-}
 
 export function DocumentList({ documents, activeId, onRefresh, activeProjectId, onProjectChange }: DocumentListProps) {
   const router = useRouter();
@@ -142,7 +94,7 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
 
       <div className="min-h-0 flex-1">
         <ScrollArea className="h-full [scrollbar-gutter:stable_both-edges]">
-          <div className="p-2 pr-3 space-y-1">
+          <div className="p-2 pr-3 space-y-0.5">
             {filtered.map((doc) => (
               <div
                 key={doc.id}
@@ -150,99 +102,27 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
                 tabIndex={0}
                 onClick={() => router.push(withProjectScope(`/documents/${doc.id}`, activeProjectId))}
                 onKeyDown={(e) => { if (e.key === 'Enter') router.push(withProjectScope(`/documents/${doc.id}`, activeProjectId)); }}
-                className={`group w-full text-left rounded-md p-2 transition-colors hover:bg-accent cursor-pointer overflow-visible ${
+                className={`group w-full text-left rounded-md px-2.5 py-2 transition-colors hover:bg-accent cursor-pointer ${
                   activeId === doc.id ? 'bg-accent' : ''
                 }`}
               >
-                <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2 min-w-0 max-w-full">
-                  <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-1" />
-                  <div className="min-w-0 max-w-full">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-1 flex-wrap">
-                        {doc.workflowStageLabel && (
-                          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4">
-                            {doc.workflowStageLabel}
-                          </Badge>
-                        )}
-                        {doc.workflowRuntimeState ? (
-                          <span
-                            className="inline-flex items-center rounded-full border px-1.5 py-0 text-[9px] h-4"
-                            style={{
-                              background: WORKFLOW_RUNTIME_STATE_STYLES[doc.workflowRuntimeState].background,
-                              color: WORKFLOW_RUNTIME_STATE_STYLES[doc.workflowRuntimeState].color,
-                              borderColor: WORKFLOW_RUNTIME_STATE_STYLES[doc.workflowRuntimeState].borderColor,
-                            }}
-                          >
-                            {WORKFLOW_RUNTIME_STATE_LABELS[doc.workflowRuntimeState]}
-                          </span>
-                        ) : (
-                          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 bg-stone-100 text-stone-700">
-                            {PRIMARY_STATE_LABELS[doc.status]}
-                          </Badge>
-                        )}
-                        <Badge
-                          variant="secondary"
-                          className={`text-[9px] px-1 py-0 h-4 shrink-0 whitespace-nowrap ${statusColors[doc.status]}`}
-                        >
-                          {STATUS_LABELS[doc.status]}
-                        </Badge>
-                      </div>
-
-                      <p className="text-sm font-medium leading-5 line-clamp-2 break-words [overflow-wrap:anywhere]">
-                        {doc.title}
-                      </p>
-
-                      <div className="flex items-center gap-x-2 gap-y-1 flex-wrap text-[10px] text-muted-foreground">
-                        <span>{doc.wordCount || 0}w</span>
-                        <span>{timeAgo(doc.updatedAt)}</span>
-                        {doc.authorName && <span>{doc.authorName}</span>}
-                      </div>
-
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className={`inline-flex items-center rounded border px-1.5 py-0 text-[9px] ${readinessChip(doc.deliverableReadiness.researchReady)}`}>
-                          Research {doc.deliverableReadiness.researchReady ? 'Ready' : 'Pending'}
-                        </span>
-                        <span className={`inline-flex items-center rounded border px-1.5 py-0 text-[9px] ${readinessChip(doc.deliverableReadiness.outlineReady)}`}>
-                          Outline {doc.deliverableReadiness.outlineReady ? 'Ready' : 'Pending'}
-                        </span>
-                        <span className={`inline-flex items-center rounded border px-1.5 py-0 text-[9px] ${readinessChip(doc.deliverableReadiness.prewriteReady)}`}>
-                          Prewrite {doc.deliverableReadiness.prewriteReady ? 'Ready' : 'Needs Input'}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2 text-[10px]">
-                        <Link
-                          href={withProjectScope(`/documents/${doc.id}`, activeProjectId)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-amber-700 underline"
-                        >
-                          Open
-                        </Link>
-                        <Link
-                          href={withProjectScope('/review', activeProjectId)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-muted-foreground underline"
-                        >
-                          Quick Review
-                        </Link>
-                        {doc.task?.workflowLastEventText && (
-                          <span className="line-clamp-1 text-muted-foreground">
-                            {doc.task.workflowLastEventText}
-                          </span>
-                        )}
-                      </div>
+                <div className="flex items-start gap-2 min-w-0">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-0.5">
+                      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${STATUS_DOT_COLORS[doc.status]}`} />
+                      <span>{STATUS_LABELS[doc.status]}</span>
+                      <span className="text-muted-foreground/40">·</span>
+                      <span className="tabular-nums">{doc.wordCount || 0}w</span>
                     </div>
-                    <div className="mt-1 flex items-center gap-1.5 flex-wrap border-t border-border/70 pt-1">
-                      <ScoreBar label="AI" score={doc.aiDetectionScore ?? null} max={5} invert />
-                      <ScoreBar label="SEO" score={doc.semanticScore ?? null} max={100} />
-                      <ScoreBar label="Q" score={doc.contentQualityScore ?? null} max={100} />
-                    </div>
+                    <p className="text-sm font-medium leading-5 line-clamp-2 break-words [overflow-wrap:anywhere]">
+                      {doc.title}
+                    </p>
                   </div>
                   <button
                     type="button"
                     onClick={(e) => handleDelete(doc.id, e)}
                     onKeyDown={(e) => { if (e.key === 'Enter') handleDelete(doc.id, e); }}
-                    className="opacity-40 group-hover:opacity-100 hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 text-muted-foreground cursor-pointer shrink-0 mt-0.5"
+                    className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 text-muted-foreground cursor-pointer shrink-0 mt-0.5"
                     title="Delete document"
                     aria-label="Delete document"
                   >
@@ -260,31 +140,31 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
         </ScrollArea>
       </div>
 
-      <div className="shrink-0 border-t border-border bg-card p-2 space-y-0.5">
+      <div className="shrink-0 border-t border-border bg-card p-2 space-y-0">
         <Link
           href={withProjectScope('/mission-control', activeProjectId)}
-          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
         >
           <Kanban className="h-4 w-4" />
           Mission Control
         </Link>
         <Link
           href={withProjectScope('/review', activeProjectId)}
-          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
         >
           <Eye className="h-4 w-4" />
           Review
         </Link>
         <Link
           href={withProjectScope('/keywords', activeProjectId)}
-          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
         >
           <Search className="h-4 w-4" />
           Keywords
         </Link>
         <Link
           href={withProjectScope('/pages', activeProjectId)}
-          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
         >
           <Globe className="h-4 w-4" />
           Pages
@@ -292,7 +172,7 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
         {user?.role === 'client' && (
           <Link
             href={withProjectScope('/client/dashboard', activeProjectId)}
-            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
           >
             <LayoutDashboard className="h-4 w-4" />
             Dashboard
@@ -301,7 +181,7 @@ export function DocumentList({ documents, activeId, onRefresh, activeProjectId, 
         {user?.role && hasRole(user.role, 'admin') && (
           <Link
             href={withProjectScope('/admin', activeProjectId)}
-            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
           >
             <Settings className="h-4 w-4" />
             Admin
