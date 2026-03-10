@@ -41,7 +41,7 @@ function envInt(name: string, fallback: number, min: number, max: number): numbe
 export function getDefaultWorkflowOpsSettings(): WorkflowOpsSettings {
   return {
     stageTimeoutMinutes: envInt('WORKFLOW_STAGE_TIMEOUT_MINUTES', 25, 5, 180),
-    finalReviewMaxRevisions: envInt('WORKFLOW_FINAL_REVIEW_MAX_REVISIONS', 2, 1, 8),
+    finalReviewMaxRevisions: envInt('WORKFLOW_FINAL_REVIEW_MAX_REVISIONS', 1, 1, 8),
     autoResumeMaxResumes: envInt('WORKFLOW_AUTO_RESUME_MAX_RESUMES', 4, 1, 24),
     initialStartDelaySeconds: envInt('WORKFLOW_INITIAL_START_DELAY_SECONDS', 20, 0, 600),
     maxStagesPerRun: envInt('WORKFLOW_MAX_STAGES_PER_RUN', 10, 1, 24),

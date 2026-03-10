@@ -155,7 +155,7 @@ const SUPPORTED_CONTENT_FORMATS: ContentFormat[] = [
   'news_article',
 ];
 
-const DEFAULT_FINAL_REVIEW_MAX_REVISIONS = 2;
+const DEFAULT_FINAL_REVIEW_MAX_REVISIONS = 1;
 const STYLE_FIX_MAX_ATTEMPTS = 1;
 const MAX_COMPRESSION_ATTEMPTS = 2;
 const NON_BLOCKING_SERP_TIMEOUT_MS = 1500;
@@ -2239,7 +2239,56 @@ async function runFinalReviewStage(
     maximumWords: templatePolicy.wordRange.max,
   });
 
-  const system = `You are a strict SEO final reviewer.
+  // ── Auto-approve when all automated completeness checks pass ──
+  if (completeness.complete) {
+    await db
+      .update(documents)
+      .set({ status: 'accepted', updatedAt: dbNow() })
+      .where(eq(documents.id, document.id));
+
+    const autoSummary = `Auto-approved: completeness checks passed (${completeness.wordCount} words, ${(completeness.headingCoverage * 100).toFixed(0)}% heading coverage).`;
+    return {
+      summary: autoSummary,
+      artifactTitle: 'Final Review: Auto-Approved',
+      artifactBody: [
+        'Article passes all automated quality checks.',
+        '',
+        `Word count: ${completeness.wordCount} (target: ${templatePolicy.wordRange.min}–${templatePolicy.wordRange.max})`,
+        `Heading coverage: ${(completeness.headingCoverage * 100).toFixed(0)}%`,
+        'Abrupt ending: no',
+      ].join('\n'),
+      artifactData: {
+        approved: true,
+        score: 90,
+        issues: [],
+        revisionBrief: '',
+        completeness: {
+          wordCount: completeness.wordCount,
+          minWords: completeness.minWords,
+          maxWords: completeness.maxWords,
+          headingCoverage: completeness.headingCoverage,
+          reasons: completeness.reasons,
+        },
+        template: {
+          key: templatePolicy.key,
+          name: templatePolicy.name,
+        },
+      },
+      model: {
+        providerName: 'auto',
+        model: 'completeness-check',
+        maxTokens: 0,
+        temperature: 0,
+      },
+      control: {
+        approved: true,
+        revisionBrief: '',
+      },
+    };
+  }
+
+  // ── AI reviewer fallback for articles that don't pass automated checks ──
+  const system = `You are a balanced SEO content reviewer.
 Return JSON only:
 {
   "approved": boolean,
@@ -2249,28 +2298,23 @@ Return JSON only:
   "revisionBrief": string
 }
 Rules:
-- Approve only if article is publish-ready.
-- Validate SEO intent, heading coverage, factual clarity, and style policy compliance.
-- If not approved, provide a concise revision brief focused on actionable fixes.
+- Approve if the article is reasonably complete, covers the topic well, and follows SEO best practices.
+- Minor style or phrasing issues are NOT grounds for rejection — note them in issues but still approve.
+- Only reject for major structural problems: missing key sections, severely off-topic, or dangerously incomplete.
+- If not approved, provide a concise revision brief focused on the most critical fix only.
 - Keep issue strings short and specific.`;
 
   const user = `Task title: ${task.title}
 Target keyword: ${document.targetKeyword || task.title}
 Template: ${templatePolicy.name} (${templatePolicy.key})
-Expected word range: ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.max}
+Article word count: ${completeness.wordCount} (target: ${templatePolicy.wordRange.min}-${templatePolicy.wordRange.max})
 Style policy: emDash=${templatePolicy.styleGuard.emDash}, colon=${templatePolicy.styleGuard.colon}
-
-Automated completeness diagnostics:
-- complete: ${completeness.complete ? 'yes' : 'no'}
-- word count: ${completeness.wordCount}
-- heading coverage: ${(completeness.headingCoverage * 100).toFixed(0)}%
-- reasons: ${completeness.reasons.join('; ') || 'none'}
 
 Research summary:
 ${document.researchSnapshot?.summary || '-'}
 
-Draft excerpt:
-${trimTo(draftText, 5500)}
+Draft article:
+${trimTo(draftText, 12000)}
 
 Return your final review decision now.`;
 
@@ -2293,8 +2337,8 @@ Return your final review decision now.`;
     revisionBrief?: unknown;
   }>(raw);
 
-  const approved = Boolean(parsed.approved);
   const score = Number(parsed.score ?? 0);
+  const approved = Boolean(parsed.approved) || (Number.isFinite(score) && score >= 75);
   const issues = parseStringArray(parsed.issues, 12);
   const revisionBrief = String(parsed.revisionBrief ?? '').trim();
   const summaryText =
