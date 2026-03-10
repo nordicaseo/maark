@@ -13,6 +13,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Seed Vercel project metadata
+        run: |
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_6JDgeFGHSTs42AjlaXOOXkLNquy4","orgId":"team_12ttcviDMRgJSWVEGXTcFfjp","projectName":"maark"}
+          JSON
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -41,6 +48,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Seed Vercel project metadata
+        run: |
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_6JDgeFGHSTs42AjlaXOOXkLNquy4","orgId":"team_12ttcviDMRgJSWVEGXTcFfjp","projectName":"maark"}
+          JSON
 
       - name: Setup Node
         uses: actions/setup-node@v4
