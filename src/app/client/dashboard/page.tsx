@@ -1,13 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState, type ComponentType } from 'react';
-import Link from 'next/link';
-import { ArrowLeft, BarChart3, FileSearch, Globe, Loader2, Search, Waves } from 'lucide-react';
+import { BarChart3, FileSearch, Globe, Loader2, Search, Waves } from 'lucide-react';
 import { useAuth } from '@/components/auth/auth-provider';
-import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { useActiveProject } from '@/hooks/use-active-project';
 import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
-import { withProjectScope } from '@/lib/project-context';
+import { MainLayout } from '@/components/layout/main-layout';
 
 interface ClientDashboardData {
   projectId: number | null;
@@ -60,26 +58,15 @@ export default function ClientDashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <MainLayout>
       <header className="border-b border-border bg-card">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <Link
-              href={withProjectScope('/documents', activeProjectId)}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Link>
-            <div>
-              <h1 className="text-xl font-bold flex items-center gap-2">
-                <Waves className="h-5 w-5" />
-                Client Dashboard
-              </h1>
-              <p className="text-sm text-muted-foreground">Read-only project health and delivery visibility</p>
-            </div>
-          </div>
-          <div className="w-56">
-            <ProjectSwitcher activeProjectId={activeProjectId} onProjectChange={setActiveProjectId} />
+        <div className="max-w-6xl mx-auto px-6 py-4">
+          <div>
+            <h1 className="text-xl font-bold flex items-center gap-2">
+              <Waves className="h-5 w-5" />
+              Client Dashboard
+            </h1>
+            <p className="text-sm text-muted-foreground">Read-only project health and delivery visibility</p>
           </div>
         </div>
       </header>
@@ -163,7 +150,7 @@ export default function ClientDashboardPage() {
           </>
         )}
       </main>
-    </div>
+    </MainLayout>
   );
 }
 

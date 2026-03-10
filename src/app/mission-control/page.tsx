@@ -10,11 +10,10 @@ import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { TeamMembersProvider } from '@/components/mission-control/team-members-provider';
-import { Loader2, Bot, AlertTriangle, Activity, PenLine, ArrowLeft, LayoutDashboard } from 'lucide-react';
-import Link from 'next/link';
+import { Loader2, Bot, AlertTriangle, Activity } from 'lucide-react';
 import { useActiveProject } from '@/hooks/use-active-project';
 import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
-import { withProjectScope } from '@/lib/project-context';
+import { MainLayout } from '@/components/layout/main-layout';
 import './mission-control-theme.css';
 
 type TaskDoc = Doc<'tasks'>;
@@ -375,19 +374,13 @@ export default function MissionControlPage() {
   // Convex not configured — show setup instructions
   if (!convexAvailable) {
     return (
+      <MainLayout variant="fullscreen">
       <div className="mc-wrapper">
         <header
           className="border-b px-6 py-4"
           style={{ borderColor: 'var(--mc-border)', background: 'var(--mc-surface)' }}
         >
           <div className="flex items-center gap-3">
-            <Link
-              href="/documents"
-              className="p-1.5 rounded-md transition-colors hover:bg-[var(--mc-overlay)]"
-              title="Back to Dashboard"
-            >
-              <ArrowLeft className="h-4.5 w-4.5" style={{ color: 'var(--mc-text-secondary)' }} />
-            </Link>
             <div>
               <h1
                 className="text-xl font-bold"
@@ -399,7 +392,7 @@ export default function MissionControlPage() {
             </div>
           </div>
         </header>
-        <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 80px)' }}>
+        <div className="flex-1 flex items-center justify-center">
           <div className="max-w-md text-center space-y-4 p-8">
             <div
               className="mx-auto w-12 h-12 rounded-full flex items-center justify-center"
@@ -428,20 +421,15 @@ export default function MissionControlPage() {
               <p>2. Copy your deployment URL</p>
               <p>3. Add NEXT_PUBLIC_CONVEX_URL to .env.local</p>
             </div>
-            <Link
-              href="/documents"
-              className="mc-btn-secondary inline-flex items-center gap-2"
-            >
-              <LayoutDashboard className="h-3.5 w-3.5" />
-              Back to Dashboard
-            </Link>
           </div>
         </div>
       </div>
+      </MainLayout>
     );
   }
 
   return (
+    <MainLayout variant="fullscreen">
     <TeamMembersProvider projectId={projectId}>
       <div className="mc-wrapper">
         {/* Header */}
@@ -450,15 +438,8 @@ export default function MissionControlPage() {
           style={{ borderColor: 'var(--mc-border)', background: 'var(--mc-surface)' }}
         >
           <div className="relative flex items-center justify-between gap-4">
-            {/* Left — Back arrow + title + Editor */}
+            {/* Left — Title */}
             <div className="flex items-center gap-3">
-              <Link
-                href="/documents"
-                className="p-1.5 rounded-md transition-colors hover:bg-[var(--mc-overlay)]"
-                title="Back to Dashboard"
-              >
-                <ArrowLeft className="h-4.5 w-4.5" style={{ color: 'var(--mc-text-secondary)' }} />
-              </Link>
               <div>
                 <h1
                   className="text-xl font-bold"
@@ -468,13 +449,6 @@ export default function MissionControlPage() {
                 </h1>
                 <p className="mc-header-mono mt-0.5">Content pipeline &middot; Real-time</p>
               </div>
-              <Link
-                href={withProjectScope('/documents', projectId)}
-                className="mc-btn-secondary flex items-center gap-1.5 ml-1"
-              >
-                <PenLine className="h-3.5 w-3.5" />
-                Editor
-              </Link>
             </div>
 
             {/* Center — Stats pill, absolute-centered */}
@@ -623,5 +597,6 @@ export default function MissionControlPage() {
         />
       </div>
     </TeamMembersProvider>
+    </MainLayout>
   );
 }

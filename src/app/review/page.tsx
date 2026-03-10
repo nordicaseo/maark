@@ -3,10 +3,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/auth/auth-provider';
-import { ProjectSwitcher } from '@/components/projects/project-switcher';
 import { Badge } from '@/components/ui/badge';
 import {
-  ArrowLeft,
   MessageSquare,
   FileText,
   ExternalLink,
@@ -21,6 +19,7 @@ import type { DocumentStatus, ContentFormat } from '@/types/document';
 import { useActiveProject } from '@/hooks/use-active-project';
 import { useProjectScopeSync } from '@/hooks/use-project-scope-sync';
 import { withProjectScope } from '@/lib/project-context';
+import { MainLayout } from '@/components/layout/main-layout';
 
 interface ReviewDocument {
   id: number;
@@ -130,33 +129,17 @@ export default function ReviewPage() {
   const noComments = filtered.filter((d) => d.commentCount === 0);
 
   return (
-    <div className="min-h-screen bg-background">
+    <MainLayout>
       {/* Header */}
       <header className="border-b border-border bg-card">
         <div className="max-w-6xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Link
-                href={withProjectScope('/documents', activeProjectId)}
-                className="text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <ArrowLeft className="h-5 w-5" />
-              </Link>
-              <div>
-                <h1 className="text-xl font-bold">Review Dashboard</h1>
-                <p className="text-sm text-muted-foreground">
-                  {filtered.length} document{filtered.length !== 1 ? 's' : ''}
-                  {withComments.length > 0 && ` \u00b7 ${withComments.length} with open comments`}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-48">
-                <ProjectSwitcher
-                  activeProjectId={activeProjectId}
-                  onProjectChange={setActiveProjectId}
-                />
-              </div>
+            <div>
+              <h1 className="text-xl font-bold">Review Dashboard</h1>
+              <p className="text-sm text-muted-foreground">
+                {filtered.length} document{filtered.length !== 1 ? 's' : ''}
+                {withComments.length > 0 && ` \u00b7 ${withComments.length} with open comments`}
+              </p>
             </div>
           </div>
 
@@ -222,7 +205,7 @@ export default function ReviewPage() {
           </div>
         )}
       </main>
-    </div>
+    </MainLayout>
   );
 }
 

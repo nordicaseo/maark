@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
-  ArrowLeft,
   Circle,
   FileText,
   Globe,
@@ -43,7 +42,7 @@ import type {
   PagePerformancePoint,
   PageTaskAnnotation,
 } from '@/types/page';
-import { OperationsSidebar } from '@/components/layout/operations-sidebar';
+import { MainLayout } from '@/components/layout/main-layout';
 
 type PagesViewMode = 'inventory' | 'discovery';
 
@@ -568,31 +567,17 @@ export default function PagesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex">
-      <OperationsSidebar
-        activeProjectId={activeProjectId}
-        onProjectChange={setActiveProjectId}
-      />
-
-      <div className="flex-1 min-w-0">
+    <MainLayout>
         <header className="border-b border-border bg-card">
           <div className="max-w-6xl mx-auto px-6 py-4">
             <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-4 min-w-0">
-                <Link
-                  href={withProjectScope('/documents', activeProjectId)}
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <ArrowLeft className="h-5 w-5" />
-                </Link>
-                <div className="min-w-0">
-                  <h1 className="text-xl font-bold flex items-center gap-2">
-                    <Globe className="h-5 w-5" /> Pages & Crawler
-                  </h1>
-                  <p className="text-sm text-muted-foreground">
-                    Optimization inventory with discovery ledger for excluded/non-indexable URLs.
-                  </p>
-                </div>
+              <div className="min-w-0">
+                <h1 className="text-xl font-bold flex items-center gap-2">
+                  <Globe className="h-5 w-5" /> Pages & Crawler
+                </h1>
+                <p className="text-sm text-muted-foreground">
+                  Optimization inventory with discovery ledger for excluded/non-indexable URLs.
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <div className="hidden sm:flex items-center gap-2 mr-2">
@@ -870,7 +855,6 @@ export default function PagesPage() {
             )}
           </section>
         </main>
-      </div>
 
       {detailPageId !== null && (
         <>
@@ -1130,6 +1114,6 @@ export default function PagesPage() {
           </aside>
         </>
       )}
-    </div>
+    </MainLayout>
   );
 }

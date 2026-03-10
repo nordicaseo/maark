@@ -443,7 +443,7 @@ ${editorHtml}
   );
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[linear-gradient(180deg,#f7f4ee_0%,#f2ece2_100%)]">
+    <div className="flex h-full overflow-hidden bg-[linear-gradient(180deg,#f7f4ee_0%,#f2ece2_100%)]">
       {/* Left Sidebar */}
       <div
         className={`border-r border-border bg-card/95 backdrop-blur-sm transition-all duration-200 flex flex-col shrink-0 ${
