@@ -35,3 +35,22 @@ npm run release:guard
 ```
 
 `npm run ship:vercel` deploys to production and re-validates the aliases.
+
+## Modal Agent Runtime (Optional)
+
+Maark can be prepared to hand off agent execution to Modal without changing
+default behavior. Local runtime remains default unless you explicitly enable
+Modal.
+
+Environment variables:
+
+- `AGENT_COMPUTE_RUNTIME=modal`
+- `AGENT_MODAL_URL=https://<workspace>--<app>.modal.run`
+- `AGENT_MODAL_SHARED_SECRET=<shared secret>`
+- `AGENT_MODAL_CALLBACK_SECRET=<optional callback secret>` (falls back to shared secret)
+- `AGENT_MODAL_CALLBACK_PATH=/api/agent/runtime/callback` (optional, default shown)
+
+Operational endpoints:
+
+- `GET /api/admin/agents/modal/health` (admin-only runtime health check)
+- `POST /api/agent/runtime/callback` (Modal callback endpoint, secret required)
