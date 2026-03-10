@@ -84,9 +84,9 @@ describe('DocumentList sidebar cards', () => {
 
     const statuses = screen.getAllByText('Working');
     expect(statuses.length).toBeGreaterThan(0);
-    expect(screen.getByText('Outline')).toBeInTheDocument();
-    expect(screen.getByText(/Prewrite Needs Input/)).toBeInTheDocument();
-    expect(screen.getByText('Quick Review')).toBeInTheDocument();
+    expect(screen.getByText('1580w')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Mission Control' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Review' })).toBeInTheDocument();
 
     const card = title.closest('[role="button"]');
     expect(card).toBeInTheDocument();

@@ -41,7 +41,7 @@
     var(--mc-bg);
   color: var(--mc-text-primary);
   font-family: var(--mc-font-sans);
-  height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
